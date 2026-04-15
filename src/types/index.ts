@@ -210,6 +210,7 @@ export interface PageSEOData {
   bodyTextSample?: string; // first ~2000 chars of visible body text, used for content analysis
   genericAnchors: { text: string; href: string }[];
   emptyAnchors: number; // internal links with no usable anchor text and no aria-label
+  hasNoindex: boolean; // meta robots contains "noindex"
 }
 
 export interface AuditResult {

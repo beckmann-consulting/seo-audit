@@ -80,6 +80,11 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // HTML lang
   const lang = root.querySelector('html')?.getAttribute('lang')?.trim();
 
+  // Meta robots — look for noindex in <meta name="robots"> or <meta name="googlebot">
+  const robotsMeta = root.querySelector('meta[name="robots" i]')?.getAttribute('content') || '';
+  const googlebotMeta = root.querySelector('meta[name="googlebot" i]')?.getAttribute('content') || '';
+  const hasNoindex = /\bnoindex\b/i.test(robotsMeta) || /\bnoindex\b/i.test(googlebotMeta);
+
   // Viewport
   const viewportContent = root.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
   const hasViewport = viewportContent.includes('width=device-width');
@@ -287,5 +292,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     bodyTextSample,
     genericAnchors,
     emptyAnchors,
+    hasNoindex,
   };
 }

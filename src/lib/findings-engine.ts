@@ -3,6 +3,7 @@ import type {
   PageSpeedData, SafeBrowsingData, SecurityHeadersInfo,
   AIReadinessInfo, SitemapInfo, Module
 } from '@/types';
+import { parseRobotsTxt, type RobotsGroup } from './external-checks';
 
 let findingCounter = 0;
 function id() { return `f${++findingCounter}`; }
@@ -1456,6 +1457,116 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
       description_en: 'The HTTPS page loads resources over unencrypted HTTP. Browsers partially block these or show warnings — loss of trust and functionality.',
       recommendation_de: 'Alle http://-Referenzen im HTML und in CSS/JS auf https:// umstellen. Protokollrelative URLs (//example.com/…) vermeiden.',
       recommendation_en: 'Switch all http:// references in HTML and in CSS/JS to https://. Avoid protocol-relative URLs (//example.com/…).',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
+//  ROBOTS.TXT CONFLICT FINDINGS (Check 4)
+// ============================================================
+// Matches the union of User-agent:* and User-agent:Googlebot rule
+// groups against crawled URLs using simple prefix matching (the
+// robots.txt wildcard spec would need regex; the overwhelming
+// majority of real-world rules are plain prefixes).
+function getApplicableDisallows(groups: RobotsGroup[]): string[] {
+  const relevant = groups.filter(g =>
+    g.agents.some(a => a === '*' || a.toLowerCase() === 'googlebot')
+  );
+  const disallows = relevant.flatMap(g => g.disallows).filter(d => d && d !== '');
+  return [...new Set(disallows)];
+}
+
+function matchesDisallow(path: string, disallows: string[]): string | undefined {
+  for (const rule of disallows) {
+    if (rule === '/') return rule;
+    if (path.startsWith(rule)) return rule;
+  }
+  return undefined;
+}
+
+const SENSITIVE_PATHS = ['/wp-admin', '/admin', '/login', '/api', '/.env', '/config', '/phpmyadmin'];
+
+export function generateRobotsConflictFindings(
+  pages: PageSEOData[],
+  robotsContent: string | undefined,
+  sitemap?: SitemapInfo
+): Finding[] {
+  const findings: Finding[] = [];
+  if (!robotsContent) return findings;
+
+  const groups = parseRobotsTxt(robotsContent);
+  const disallows = getApplicableDisallows(groups);
+  if (disallows.length === 0) {
+    // Still check sensitive-path coverage — if robots.txt exists but
+    // doesn't cover anything sensitive, that's worth noting.
+    const uncovered = SENSITIVE_PATHS.filter(p => !matchesDisallow(p, disallows));
+    if (uncovered.length === SENSITIVE_PATHS.length) return findings;
+  }
+
+  // 1) Crawled URLs that are disallowed but lack noindex
+  const disallowedCrawled: { url: string; rule: string }[] = [];
+  for (const p of pages) {
+    try {
+      const path = new URL(p.url).pathname;
+      const matchedRule = matchesDisallow(path, disallows);
+      if (matchedRule && !p.hasNoindex) {
+        disallowedCrawled.push({ url: p.url, rule: matchedRule });
+      }
+    } catch {}
+  }
+  if (disallowedCrawled.length > 0) {
+    const sample = disallowedCrawled.slice(0, 5).map(x => `${x.url} (disallowed by "${x.rule}")`).join('; ');
+    findings.push({
+      id: id(), priority: 'critical', module: 'seo', effort: 'medium', impact: 'high',
+      title_de: `${disallowedCrawled.length} gecrawlte Seiten durch robots.txt blockiert ohne noindex`,
+      title_en: `${disallowedCrawled.length} crawled pages blocked by robots.txt without noindex`,
+      description_de: `Diese Seiten sind über interne Links erreichbar, werden aber in robots.txt disallowed. Fehlt zusätzlich der noindex-Tag, kann Google die URL trotzdem aus Backlinks kennen und ohne Inhalt indexieren ("indexed, though blocked by robots.txt" in Search Console). Beispiele: ${sample}`,
+      description_en: `These pages are reachable via internal links but are disallowed in robots.txt. Without an additional noindex tag, Google may still know the URL from backlinks and index it without content ("indexed, though blocked by robots.txt" in Search Console). Examples: ${sample}`,
+      recommendation_de: 'Entweder den Disallow-Eintrag entfernen (wenn die Seite ranken soll) ODER zusätzlich einen noindex-Meta-Tag setzen (wenn sie wirklich raus soll — dann aber die robots.txt-Regel entfernen, damit Google den noindex lesen kann).',
+      recommendation_en: 'Either remove the disallow entry (if the page should rank) OR add a noindex meta tag (if it really should be excluded — then remove the robots.txt rule so Google can read the noindex).',
+      affectedUrl: disallowedCrawled[0].url,
+    });
+  }
+
+  // 2) Sitemap URLs blocked by robots.txt
+  if (sitemap && sitemap.urls.length > 0) {
+    const sitemapBlocked: { url: string; rule: string }[] = [];
+    for (const entry of sitemap.urls) {
+      try {
+        const path = new URL(entry.url).pathname;
+        const rule = matchesDisallow(path, disallows);
+        if (rule) sitemapBlocked.push({ url: entry.url, rule });
+      } catch {}
+    }
+    if (sitemapBlocked.length > 0) {
+      const sample = sitemapBlocked.slice(0, 5).map(x => `${x.url} (rule: ${x.rule})`).join('; ');
+      findings.push({
+        id: id(), priority: 'critical', module: 'seo', effort: 'medium', impact: 'high',
+        title_de: `${sitemapBlocked.length} Sitemap-URLs durch robots.txt blockiert`,
+        title_en: `${sitemapBlocked.length} sitemap URLs blocked by robots.txt`,
+        description_de: `Widersprüchliche Signale: Die Sitemap meldet diese URLs als indexierungswürdig, robots.txt blockt sie aber. Google wertet das als Konfigurationsfehler und rankt sie schlechter. Beispiele: ${sample}`,
+        description_en: `Conflicting signals: the sitemap lists these URLs as worth indexing, but robots.txt blocks them. Google treats this as a configuration error and ranks them worse. Examples: ${sample}`,
+        recommendation_de: 'Entscheiden: soll die URL indexiert werden? → Disallow entfernen. Soll sie nicht? → aus der Sitemap entfernen. Beides gleichzeitig ist immer ein Fehler.',
+        recommendation_en: 'Decide: should the URL be indexed? → remove the disallow. Should it not? → remove it from the sitemap. Both at the same time is always a bug.',
+      });
+    }
+  }
+
+  // 3) Sensitive paths NOT blocked by robots.txt
+  const unprotected = SENSITIVE_PATHS.filter(p => !matchesDisallow(p, disallows));
+  if (unprotected.length > 0 && unprotected.length < SENSITIVE_PATHS.length) {
+    // Only flag when some (but not all) are unprotected — if none are set at all
+    // the site probably doesn't use any of these paths.
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      title_de: `Sensitive Pfade nicht durch robots.txt geschützt: ${unprotected.join(', ')}`,
+      title_en: `Sensitive paths not protected by robots.txt: ${unprotected.join(', ')}`,
+      description_de: 'robots.txt blockt einige Standardpfade bereits, diese potenziell sensiblen Pfade aber nicht. Suchmaschinen und Scraper crawlen sie damit weiterhin — bei Admin-/Login-Pfaden ist das ein Security-Hinweis (kein Schutz, aber weniger Exposure).',
+      description_en: 'robots.txt already blocks some standard paths, but not these potentially sensitive ones. Search engines and scrapers keep crawling them — for admin/login paths this is a security hint (not a protection, but less exposure).',
+      recommendation_de: 'Disallow-Regeln für die genannten Pfade ergänzen (falls die Site sie tatsächlich nutzt). Zur Klarstellung: robots.txt ist KEIN Zugriffsschutz — sensible Bereiche gehören zusätzlich hinter Authentifizierung.',
+      recommendation_en: 'Add disallow rules for the listed paths (if the site actually uses them). To be clear: robots.txt is NOT access protection — sensitive areas additionally belong behind authentication.',
     });
   }
 

@@ -271,13 +271,13 @@ const AI_BOTS: { name: string; purpose: 'training' | 'retrieval' | 'search' | 'm
   { name: 'Diffbot', purpose: 'mixed', vendor: 'Diffbot' },
 ];
 
-interface RobotsGroup {
+export interface RobotsGroup {
   agents: string[];
   disallows: string[];
   allows: string[];
 }
 
-function parseRobotsTxt(content: string): RobotsGroup[] {
+export function parseRobotsTxt(content: string): RobotsGroup[] {
   const groups: RobotsGroup[] = [];
   let current: RobotsGroup | null = null;
   let lastWasAgent = false;
