@@ -31,6 +31,7 @@ export interface PageData {
   redirectedFrom?: string;
   loadTime?: number;
   contentType?: string;
+  depth: number; // click distance from the start URL (0 = start page)
 }
 
 export interface Finding {
@@ -164,6 +165,8 @@ export interface PageSEOData {
   schemaTypes: string[];
   schemas: ParsedSchema[];
   schemaParseErrors: number;
+  depth: number; // propagated from PageData
+  inlinkCount?: number; // set after cross-page analysis
   imagesMissingAlt: number;
   totalImages: number;
   internalLinks: string[];

@@ -29,7 +29,7 @@ export async function crawlSite(
   onProgress?: (crawled: number, total: number, currentUrl: string) => void
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
-  const queue: string[] = [startUrl];
+  const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
   const pages: PageData[] = [];
   const brokenLinks: string[] = [];
   const redirectChains: { from: string; to: string }[] = [];
@@ -40,7 +40,7 @@ export async function crawlSite(
   while (queue.length > 0) {
     if (maxPages > 0 && pages.length >= maxPages) break;
 
-    const url = queue.shift()!;
+    const { url, depth } = queue.shift()!;
     if (visited.has(url)) continue;
     visited.add(url);
 
@@ -78,6 +78,7 @@ export async function crawlSite(
         redirectedFrom: resp.url !== url ? url : undefined,
         loadTime,
         contentType,
+        depth,
       });
 
       // Extract links from this page
@@ -89,8 +90,8 @@ export async function crawlSite(
           const fullUrl = new URL(href, url);
           if (fullUrl.hostname === baseDomain) {
             const normalized = normalizeUrl(href, url);
-            if (normalized && !visited.has(normalized) && !queue.includes(normalized)) {
-              queue.push(normalized);
+            if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
+              queue.push({ url: normalized, depth: depth + 1 });
             }
           } else if (href.startsWith('http')) {
             externalLinkCount++;

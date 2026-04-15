@@ -147,6 +147,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     schemaTypes,
     schemas,
     schemaParseErrors,
+    depth: page.depth,
     imagesMissingAlt,
     totalImages: images.length,
     internalLinks,

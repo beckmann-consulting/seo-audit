@@ -718,6 +718,94 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
 }
 
 // ============================================================
+//  CRAWL STRUCTURE: ORPHAN PAGES & CLICK DEPTH
+// ============================================================
+// Mutates `pages` to populate `inlinkCount` per page based on cross-page
+// internal links from the crawl. Also emits findings for orphan pages
+// (0 inlinks from other crawled pages) and pages buried too deep
+// (click depth >= 4 from the start URL).
+export function generateCrawlStructureFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length < 2) return findings;
+
+  // Build a normalised URL -> page map
+  const urlToPage = new Map<string, PageSEOData>();
+  for (const p of pages) {
+    urlToPage.set(normalizeUrl(p.url), p);
+  }
+
+  // Count inlinks: for each page, how many OTHER pages link to it?
+  const inlinks = new Map<string, number>();
+  for (const p of pages) {
+    const from = normalizeUrl(p.url);
+    const seen = new Set<string>();
+    for (const link of p.internalLinks) {
+      const target = normalizeUrl(link);
+      if (target === from) continue; // self-link doesn't count
+      if (seen.has(target)) continue; // dedupe multi-links from same page
+      seen.add(target);
+      if (urlToPage.has(target)) {
+        inlinks.set(target, (inlinks.get(target) || 0) + 1);
+      }
+    }
+  }
+
+  // Write inlink count back onto each page
+  for (const p of pages) {
+    p.inlinkCount = inlinks.get(normalizeUrl(p.url)) || 0;
+  }
+
+  // --- Orphan pages: pages with 0 inlinks (excluding the start page at depth 0) ---
+  const orphans = pages.filter(p => (p.inlinkCount ?? 0) === 0 && p.depth > 0);
+  if (orphans.length > 0) {
+    const sample = orphans.slice(0, 5).map(p => p.url).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      title_de: `Orphan Pages: ${orphans.length} Seiten ohne interne Links`,
+      title_en: `Orphan pages: ${orphans.length} pages with no internal links`,
+      description_de: `Diese Seiten sind aus anderen gecrawlten Seiten nicht verlinkt — Google wird sie nur über Sitemap oder externe Links finden. Linkjuice geht verloren. Beispiele: ${sample}`,
+      description_en: `These pages are not linked from any other crawled page — Google will only discover them via sitemap or external links. Link equity is lost. Examples: ${sample}`,
+      recommendation_de: 'Orphan Pages von thematisch passenden Hub-Seiten aus verlinken (Menüs, Sidebars, Content-Links). Falls eine Seite wirklich nicht wichtig ist: per noindex entfernen.',
+      recommendation_en: 'Link orphan pages from topically relevant hub pages (menus, sidebars, content links). If a page is truly not important: remove it via noindex.',
+    });
+  }
+
+  // --- Crawl depth: pages deeper than 3 clicks ---
+  // Google generally recommends max 3 clicks from the homepage for important pages.
+  const deepPages = pages.filter(p => p.depth >= 4);
+  if (deepPages.length > 0) {
+    const ratio = deepPages.length / pages.length;
+    const maxDepth = Math.max(...pages.map(p => p.depth));
+    const priority: 'important' | 'recommended' = ratio > 0.3 ? 'important' : 'recommended';
+    findings.push({
+      id: id(), priority, module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `${deepPages.length} Seiten mit Klicktiefe >= 4 (max: ${maxDepth})`,
+      title_en: `${deepPages.length} pages at click depth >= 4 (max: ${maxDepth})`,
+      description_de: `${Math.round(ratio * 100)}% der gecrawlten Seiten sind mindestens 4 Klicks von der Startseite entfernt. Tiefe Seiten werden seltener gecrawlt und bekommen weniger Linkjuice.`,
+      description_en: `${Math.round(ratio * 100)}% of crawled pages are at least 4 clicks from the start page. Deep pages are crawled less often and receive less link equity.`,
+      recommendation_de: 'Flachere Informationsarchitektur anstreben: Hub-Seiten, Kategorieseiten und interne Querverweise nutzen. Wichtige Seiten sollten innerhalb von 3 Klicks erreichbar sein.',
+      recommendation_en: 'Aim for a flatter information architecture: use hub pages, category pages and internal cross-links. Important pages should be reachable within 3 clicks.',
+    });
+  }
+
+  // --- Under-linked pages (1 inlink): less urgent but worth noting ---
+  const underLinked = pages.filter(p => (p.inlinkCount ?? 0) === 1 && p.depth > 0);
+  if (underLinked.length > pages.length * 0.3) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'low',
+      title_de: `${underLinked.length} Seiten mit nur einem internen Inlink`,
+      title_en: `${underLinked.length} pages with only one internal inlink`,
+      description_de: 'Ein Großteil der Seiten wird nur von einer einzigen anderen Seite verlinkt. Mehrfache Verlinkung stärkt die interne Linkstruktur und hilft bei Ranking und Crawlability.',
+      description_en: 'A large share of pages is linked from only one other page. Multiple inlinks strengthen the internal link structure and help ranking and crawlability.',
+      recommendation_de: 'Wichtige Seiten aus mehreren Kontexten heraus verlinken (thematisch verwandte Artikel, Footer, Sitemaps, Breadcrumbs).',
+      recommendation_en: 'Link important pages from multiple contexts (topically related articles, footer, sitemaps, breadcrumbs).',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  DUPLICATE CONTENT & CANONICAL CONFLICTS
 // ============================================================
 function normalizeText(s?: string): string {
