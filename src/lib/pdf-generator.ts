@@ -12,7 +12,7 @@ const COLOR_BORDER: [number, number, number] = [224, 224, 224];
 const COLOR_CRITICAL: [number, number, number] = [211, 47, 47];
 const COLOR_IMPORTANT: [number, number, number] = [245, 158, 11];
 const COLOR_OPTIONAL: [number, number, number] = [136, 136, 136]; // mid-grey — readable but not dominant
-const COLOR_GOOD: [number, number, number] = [56, 142, 60];
+const COLOR_GOOD: [number, number, number] = [74, 155, 142]; // #4A9B8E — softer teal-green
 
 // Recommended and optional share the same grey — muted, clearly secondary
 const PRIORITY_COLORS: Record<string, [number, number, number]> = {
@@ -301,10 +301,11 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     const col = PRIORITY_COLORS[f.priority];
     const label = priorityLabels[f.priority][lang];
 
-    // Inner padding for the orange card border
+    // Inner padding for the orange card border. No leading severity dot any more,
+    // so content starts at pad + small text indent with no reserved icon space.
     const pad = 3;
-    const cardInnerLeft = CONTENT_LEFT + pad + 3; // extra 3mm indent for dot + text
-    const cardInnerW = CONTENT_W - pad * 2 - 3;
+    const cardInnerLeft = CONTENT_LEFT + pad;
+    const cardInnerW = CONTENT_W - pad * 2;
     const titleLines = doc.splitTextToSize(title, cardInnerW);
     const descLinesAll = doc.splitTextToSize(desc, cardInnerW);
     const descLines = descLinesAll.slice(0, 2); // cap at 2 lines per spec
@@ -321,14 +322,12 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     checkPage(cardHeight + 5);
     const cardTop = y;
 
-    // Severity dot + label
+    // Severity label — text-only in the severity colour, no dot
     const labelY = cardTop + pad + 2;
-    setFill(col);
-    doc.circle(CONTENT_LEFT + pad + 1.8, labelY - 0.5, 1.5, 'F');
     setText(col);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
-    doc.text(`${label} · ${f.module.toUpperCase()}`, cardInnerLeft, labelY);
+    doc.text(`${label.toUpperCase()} · ${f.module.toUpperCase()}`, cardInnerLeft, labelY);
     let cursor = cardTop + pad + 5;
 
     // Title
