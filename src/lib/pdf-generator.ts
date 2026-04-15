@@ -255,6 +255,240 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   });
 
   // ============================================================
+  //  TECHNICAL DETAILS (all modules)
+  // ============================================================
+  const techRow = (label: string, value: string, ok: boolean = true) => {
+    checkPage(6);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text(label, margin + 2, y);
+    if (ok) doc.setTextColor(30, 30, 30);
+    else doc.setTextColor(163, 45, 45);
+    const valueLines = doc.splitTextToSize(value, contentW - 60);
+    doc.text(valueLines, margin + 55, y);
+    y += valueLines.length * 4 + 1;
+  };
+
+  const techHeading = (title: string) => {
+    checkPage(14);
+    y += 2;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(15, 15, 15);
+    doc.text(title, margin, y);
+    y += 5;
+    doc.setDrawColor(230, 230, 226);
+    doc.line(margin, y, W - margin, y);
+    y += 3;
+  };
+
+  const hasAnyTechData =
+    result.sslInfo || result.dnsInfo || result.pageSpeedData ||
+    result.securityHeaders || result.aiReadiness || result.sitemapInfo ||
+    result.safeBrowsingData;
+
+  if (hasAnyTechData) {
+    checkPage(20);
+    y += 6;
+    doc.setDrawColor(200, 200, 195);
+    doc.line(margin, y, W - margin, y);
+    y += 8;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(15, 15, 15);
+    doc.text(isDE ? 'Technische Details' : 'Technical Details', margin, y);
+    y += 7;
+
+    // SSL / TLS
+    if (result.sslInfo) {
+      techHeading(isDE ? 'SSL / TLS' : 'SSL / TLS');
+      const ssl = result.sslInfo;
+      techRow(isDE ? 'Grade' : 'Grade', ssl.grade || (isDE ? 'unbekannt' : 'unknown'), ['A+', 'A', 'A-', 'B'].includes(ssl.grade || ''));
+      techRow(isDE ? 'Gültig' : 'Valid', ssl.valid ? '✓' : '✗', ssl.valid);
+      if (ssl.daysUntilExpiry !== undefined) {
+        techRow(
+          isDE ? 'Läuft ab in' : 'Expires in',
+          `${ssl.daysUntilExpiry} ${isDE ? 'Tagen' : 'days'}`,
+          ssl.daysUntilExpiry > 30
+        );
+      }
+      if (ssl.issuer) techRow(isDE ? 'Aussteller' : 'Issuer', ssl.issuer);
+      if (ssl.protocols && ssl.protocols.length > 0) {
+        techRow(isDE ? 'Protokolle' : 'Protocols', ssl.protocols.join(', '));
+      }
+    }
+
+    // DNS
+    if (result.dnsInfo) {
+      techHeading(isDE ? 'DNS & E-Mail' : 'DNS & Email');
+      techRow('SPF', result.dnsInfo.hasSPF ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasSPF);
+      techRow('DKIM', result.dnsInfo.hasDKIM ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasDKIM);
+      techRow('DMARC', result.dnsInfo.hasDMARC ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasDMARC);
+      if (result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0) {
+        techRow('MX', result.dnsInfo.mxRecords.join(', '));
+      }
+    }
+
+    // PageSpeed — includes INP + FID field data alongside lab metrics
+    if (result.pageSpeedData && !result.pageSpeedData.error) {
+      techHeading(isDE ? 'PageSpeed (Mobile) & Core Web Vitals' : 'PageSpeed (Mobile) & Core Web Vitals');
+      const ps = result.pageSpeedData;
+      if (ps.performanceScore !== undefined) {
+        techRow('Performance', `${ps.performanceScore}/100`, ps.performanceScore >= 50);
+      }
+      if (ps.seoScore !== undefined) {
+        techRow('SEO', `${ps.seoScore}/100`, ps.seoScore >= 75);
+      }
+      if (ps.accessibilityScore !== undefined) {
+        techRow(isDE ? 'Zugänglichkeit' : 'Accessibility', `${ps.accessibilityScore}/100`, ps.accessibilityScore >= 75);
+      }
+      if (ps.bestPracticesScore !== undefined) {
+        techRow(isDE ? 'Best Practices' : 'Best Practices', `${ps.bestPracticesScore}/100`, ps.bestPracticesScore >= 75);
+      }
+      if (ps.lcp !== undefined) techRow('LCP', `${Math.round(ps.lcp / 100) / 10}s`, ps.lcp < 2500);
+      if (ps.cls !== undefined) techRow('CLS', ps.cls.toFixed(3), ps.cls < 0.1);
+      if (ps.inp !== undefined) techRow('INP', `${Math.round(ps.inp)}ms`, ps.inp < 200);
+      if (ps.fidField !== undefined) techRow(isDE ? 'FID (Feld)' : 'FID (field)', `${Math.round(ps.fidField)}ms`, ps.fidField < 100);
+      if (ps.fcp !== undefined) techRow('FCP', `${Math.round(ps.fcp / 100) / 10}s`, ps.fcp < 1800);
+      if (ps.ttfb !== undefined) techRow('TTFB', `${Math.round(ps.ttfb)}ms`, ps.ttfb < 800);
+      if (ps.tbt !== undefined) techRow('TBT', `${Math.round(ps.tbt)}ms`, ps.tbt < 200);
+    }
+
+    // Security Headers
+    if (result.securityHeaders && !result.securityHeaders.error) {
+      techHeading(isDE ? 'Security Headers' : 'Security Headers');
+      const sh = result.securityHeaders;
+      techRow(
+        'HSTS',
+        sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : (isDE ? 'gesetzt' : 'set')) : (isDE ? 'fehlt' : 'missing'),
+        !!sh.hsts && (sh.hstsMaxAge ?? 0) >= 15552000
+      );
+      techRow('X-Content-Type-Options', sh.xContentTypeOptions || (isDE ? 'fehlt' : 'missing'), sh.xContentTypeOptions?.toLowerCase() === 'nosniff');
+      const frameOk = !!sh.xFrameOptions || /frame-ancestors/i.test(sh.csp || '');
+      techRow(
+        'X-Frame-Options',
+        sh.xFrameOptions || (frameOk ? (isDE ? 'via CSP' : 'via CSP') : (isDE ? 'fehlt' : 'missing')),
+        frameOk
+      );
+      techRow('CSP', sh.csp ? (isDE ? 'gesetzt' : 'set') : (isDE ? 'fehlt' : 'missing'), !!sh.csp);
+      techRow('Referrer-Policy', sh.referrerPolicy || (isDE ? 'fehlt' : 'missing'), !!sh.referrerPolicy);
+      techRow('Permissions-Policy', sh.permissionsPolicy ? (isDE ? 'gesetzt' : 'set') : (isDE ? 'fehlt' : 'missing'), !!sh.permissionsPolicy);
+      if (sh.hasCookieSecure === false) {
+        techRow(isDE ? 'Cookie Secure-Flag' : 'Cookie Secure flag', isDE ? 'fehlt' : 'missing', false);
+      }
+      if (sh.hasMixedContent) {
+        techRow('Mixed Content', isDE ? 'erkannt' : 'detected', false);
+      }
+    }
+
+    // AI Crawler Readiness
+    if (result.aiReadiness && !result.aiReadiness.error) {
+      techHeading(isDE ? 'AI Crawler Readiness' : 'AI Crawler Readiness');
+      const ai = result.aiReadiness;
+      techRow('llms.txt', ai.hasLlmsTxt ? (isDE ? 'vorhanden' : 'present') : (isDE ? 'fehlt' : 'missing'), ai.hasLlmsTxt);
+      techRow('llms-full.txt', ai.hasLlmsFullTxt ? (isDE ? 'vorhanden' : 'present') : (isDE ? 'fehlt' : 'missing'), ai.hasLlmsFullTxt);
+      for (const b of ai.bots) {
+        const valueText = b.status === 'allowed'
+          ? (isDE ? 'erlaubt' : 'allowed')
+          : b.status === 'blocked'
+            ? (isDE ? 'blockiert' : 'blocked')
+            : b.status === 'partial'
+              ? (isDE ? 'teilweise' : 'partial')
+              : (isDE ? 'nicht geregelt' : 'unspecified');
+        // Training bots blocked = good (opt-out), retrieval bots blocked = bad
+        const ok = b.status === 'allowed' || (b.purpose === 'training' && b.status === 'blocked');
+        techRow(`${b.bot} (${b.purpose})`, valueText, ok);
+      }
+    }
+
+    // Sitemap Coverage
+    if (result.sitemapInfo && !result.sitemapInfo.error) {
+      techHeading(isDE ? 'Sitemap Coverage' : 'Sitemap Coverage');
+      const sm = result.sitemapInfo;
+      techRow(isDE ? 'URLs in Sitemap' : 'URLs in sitemap', String(sm.urls.length));
+      techRow(isDE ? 'Sitemap-Index' : 'Sitemap index', sm.isIndex ? (isDE ? 'ja' : 'yes') : (isDE ? 'nein' : 'no'));
+      if (sm.isIndex) {
+        techRow(isDE ? 'Sub-Sitemaps' : 'Sub-sitemaps', String(sm.subSitemaps.length));
+      }
+      const withLastmod = sm.urls.filter(e => !!e.lastmod).length;
+      techRow(isDE ? 'Mit lastmod' : 'With lastmod', `${withLastmod}/${sm.urls.length}`, withLastmod > 0);
+      const withImages = sm.urls.filter(e => e.imageCount > 0).length;
+      techRow(isDE ? 'Mit Bild-Einträgen' : 'With image entries', String(withImages));
+
+      const crawledSet = new Set(result.pages.map(p => p.url));
+      const sitemapSet = new Set(sm.urls.map(e => e.url));
+      const missingFromCrawl = [...sitemapSet].filter(u => !crawledSet.has(u)).length;
+      const missingFromSitemap = [...crawledSet].filter(u => !sitemapSet.has(u)).length;
+      techRow(
+        isDE ? 'In Sitemap, nicht gecrawlt' : 'In sitemap, not crawled',
+        String(missingFromCrawl),
+        missingFromCrawl === 0
+      );
+      techRow(
+        isDE ? 'Gecrawlt, nicht in Sitemap' : 'Crawled, not in sitemap',
+        String(missingFromSitemap),
+        missingFromSitemap === 0
+      );
+    }
+
+    // Redirects (aggregated from pages + crawlStats)
+    const redirected = result.pages.filter(p => p.redirectChain && p.redirectChain.length > 0);
+    const chainPages = redirected.filter(p => p.redirectChain.length > 1);
+    const loopPages = redirected.filter(p => {
+      const seen = new Set<string>();
+      for (const hop of p.redirectChain) {
+        if (seen.has(hop)) return true;
+        seen.add(hop);
+      }
+      return p.redirectChain.includes(p.finalUrl);
+    });
+    const downgradePages = redirected.filter(p =>
+      p.redirectChain[0]?.startsWith('https://') && p.finalUrl.startsWith('http://')
+    );
+    if (redirected.length > 0 || result.crawlStats.redirectChains.length > 0) {
+      techHeading(isDE ? 'Redirects' : 'Redirects');
+      techRow(isDE ? 'Mit Redirect gecrawlt' : 'Crawled via redirect', String(redirected.length), redirected.length === 0);
+      techRow(isDE ? 'Ketten (>1 Hop)' : 'Chains (>1 hop)', String(chainPages.length), chainPages.length === 0);
+      techRow(isDE ? 'Schleifen' : 'Loops', String(loopPages.length), loopPages.length === 0);
+      techRow('HTTPS → HTTP', String(downgradePages.length), downgradePages.length === 0);
+    }
+
+    // Link Quality (generic anchors + empty anchors + noindex)
+    const totalGeneric = result.pages.reduce((s, p) => s + (p.genericAnchors?.length || 0), 0);
+    const totalEmpty = result.pages.reduce((s, p) => s + (p.emptyAnchors || 0), 0);
+    const noindexPages = result.pages.filter(p => p.hasNoindex).length;
+    if (totalGeneric > 0 || totalEmpty > 0 || noindexPages > 0) {
+      techHeading(isDE ? 'Link Quality' : 'Link Quality');
+      techRow(isDE ? 'Generische Ankertexte' : 'Generic anchor texts', String(totalGeneric), totalGeneric === 0);
+      techRow(isDE ? 'Links ohne Text' : 'Links without text', String(totalEmpty), totalEmpty === 0);
+      techRow(isDE ? 'Seiten mit noindex' : 'Pages with noindex', String(noindexPages));
+    }
+
+    // Safe Browsing
+    if (result.safeBrowsingData) {
+      techHeading(isDE ? 'Google Safe Browsing' : 'Google Safe Browsing');
+      techRow(
+        isDE ? 'Status' : 'Status',
+        result.safeBrowsingData.isSafe ? (isDE ? 'Sicher' : 'Safe') : (isDE ? 'GEFÄHRLICH' : 'DANGEROUS'),
+        result.safeBrowsingData.isSafe
+      );
+      if (result.safeBrowsingData.threats && result.safeBrowsingData.threats.length > 0) {
+        techRow(isDE ? 'Bedrohungen' : 'Threats', result.safeBrowsingData.threats.join(', '), false);
+      }
+    }
+
+    // Crawl Statistics
+    techHeading(isDE ? 'Crawl-Statistik' : 'Crawl Statistics');
+    techRow(isDE ? 'Seiten gecrawlt' : 'Pages crawled', String(result.crawlStats.crawledPages));
+    techRow(isDE ? 'Defekte Links' : 'Broken links', String(result.crawlStats.brokenLinks.length), result.crawlStats.brokenLinks.length === 0);
+    techRow(isDE ? 'Weiterleitungen' : 'Redirects', String(result.crawlStats.redirectChains.length), result.crawlStats.redirectChains.length < 3);
+    techRow(isDE ? 'Externe Links' : 'External links', String(result.crawlStats.externalLinks));
+    y += 4;
+  }
+
+  // ============================================================
   //  PAGE-BY-PAGE APPENDIX
   // ============================================================
   if (result.pages.length > 1) {
@@ -285,7 +519,40 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
         [isDE ? 'Schema' : 'Schema', p.schemaTypes.length > 0 ? p.schemaTypes.join(', ') : (isDE ? 'keines' : 'none')],
         [isDE ? 'Wörter' : 'Words', String(p.wordCount)],
         [isDE ? 'Bilder ohne Alt' : 'Images missing alt', `${p.imagesMissingAlt}/${p.totalImages}`],
+        [isDE ? 'Klicktiefe' : 'Click depth', String(p.depth)],
       ];
+
+      if (p.inlinkCount !== undefined) {
+        rows.push([isDE ? 'Interne Inlinks' : 'Internal inlinks', String(p.inlinkCount)]);
+      }
+      if (p.hasNoindex) {
+        rows.push([isDE ? 'Robots' : 'Robots', 'noindex']);
+      }
+      if (p.redirectChain && p.redirectChain.length > 0) {
+        const chainStr = p.redirectChain.concat(p.finalUrl).join(' → ');
+        rows.push([
+          isDE ? 'Redirect-Kette' : 'Redirect chain',
+          chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr,
+        ]);
+      }
+      if (p.genericAnchors && p.genericAnchors.length > 0) {
+        rows.push([
+          isDE ? 'Generische Anker' : 'Generic anchors',
+          `${p.genericAnchors.length} (${p.genericAnchors.slice(0, 2).map(a => `"${a.text}"`).join(', ')}${p.genericAnchors.length > 2 ? '...' : ''})`,
+        ]);
+      }
+      if (p.hreflangs && p.hreflangs.length > 0) {
+        rows.push([
+          'Hreflang',
+          p.hreflangs.map(h => h.hreflang).join(', '),
+        ]);
+      }
+      if (p.likelyClientRendered) {
+        rows.push([
+          isDE ? 'JS-Rendering' : 'JS rendering',
+          p.clientRenderSignal || (isDE ? 'clientseitig gerendert' : 'client-side rendered'),
+        ]);
+      }
 
       rows.forEach(([label, value]) => {
         doc.setFont('helvetica', 'normal');
