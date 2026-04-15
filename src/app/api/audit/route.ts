@@ -19,7 +19,6 @@ import {
   calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
-import { runClaudeContentAnalysis } from '@/lib/claude-analysis';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -161,17 +160,6 @@ async function runAudit(
   }
   if (safeBrowsingData) {
     allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
-  }
-
-  // ---- STEP 10: Claude content analysis (95%, only if API key) ----
-  if (config.claudeApiKey && config.modules.includes('content')) {
-    progress('claude_analysis', 95);
-    const claudeResult = await runClaudeContentAnalysis(config.claudeApiKey, pages, allFindings);
-    if (claudeResult.error) {
-      console.error('Claude content analysis failed:', claudeResult.error);
-    } else {
-      allFindings.push(...claudeResult.findings);
-    }
   }
 
   // ---- Scores ----

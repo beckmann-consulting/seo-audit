@@ -44,7 +44,6 @@ export default function AuditApp() {
   const [url, setUrl] = useState('');
   const [googleKey, setGoogleKey] = useState('');
   const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false);
-  const [claudeKey, setClaudeKey] = useState('');
   const [modules, setModules] = useState<Module[]>(ALL_MODULES.map(m => m.id).filter(m => m !== 'offers'));
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -81,7 +80,6 @@ export default function AuditApp() {
     security_headers: { de: 'Security Headers werden geprüft…', en: 'Checking security headers…' },
     ai_crawler_check: { de: 'AI-Crawler-Readiness wird geprüft…', en: 'Checking AI crawler readiness…' },
     findings_generation: { de: 'Findings werden generiert…', en: 'Generating findings…' },
-    claude_analysis: { de: 'Claude-Analyse läuft…', en: 'Running Claude analysis…' },
     complete: { de: 'Fertig!', en: 'Done!' },
   };
 
@@ -121,7 +119,6 @@ export default function AuditApp() {
     const config: AuditConfig = {
       url: url.trim(),
       googleApiKey: googleKey.trim() || undefined,
-      claudeApiKey: claudeKey.trim() || undefined,
       modules,
       author: 'TW Beckmann Consultancy Services',
       maxPages: 0,
@@ -284,23 +281,6 @@ export default function AuditApp() {
               </p>
             </div>
           )}
-
-          {/* Claude API Key */}
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={labelStyle}>
-              Claude API Key <span style={{ color: '#9b9b98', fontWeight: 400 }}>({t('optional — für automatisierte Content-Analyse', 'optional — for automated content analysis')})</span>
-            </label>
-            <input
-              value={claudeKey}
-              onChange={e => setClaudeKey(e.target.value)}
-              placeholder="sk-ant-..."
-              type="password"
-              style={{ ...inputStyle, maxWidth: 400 }}
-            />
-            <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9b9b98' }}>
-              {t('Findet Platzhalter, Widersprüche, Tonalitätsprobleme, Lesbarkeit. Braucht "Inhalte"-Modul.', 'Finds placeholders, contradictions, tone issues, readability. Requires "Content" module.')}
-            </p>
-          </div>
 
           {/* Modules */}
           <div>

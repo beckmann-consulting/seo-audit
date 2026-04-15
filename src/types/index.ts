@@ -19,7 +19,6 @@ export type Module =
 export interface AuditConfig {
   url: string;
   googleApiKey?: string;
-  claudeApiKey?: string;
   modules: Module[];
   author: string;
   maxPages: number; // 0 = unlimited
