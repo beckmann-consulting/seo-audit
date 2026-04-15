@@ -538,6 +538,85 @@ export default function AuditApp() {
                 </div>
               )}
 
+              {/* Sitemap Coverage (Checks 1 + 6) */}
+              {result.sitemapInfo && !result.sitemapInfo.error && (
+                <div style={techCardStyle}>
+                  <h3 style={techCardTitle}>{t('Sitemap Coverage', 'Sitemap Coverage')}</h3>
+                  <TechRow label={t('URLs in Sitemap', 'URLs in sitemap')} value={String(result.sitemapInfo.urls.length)} ok={result.sitemapInfo.urls.length > 0} />
+                  <TechRow label={t('Sitemap-Index', 'Sitemap index')} value={result.sitemapInfo.isIndex ? t('ja', 'yes') : t('nein', 'no')} ok={true} />
+                  {result.sitemapInfo.isIndex && (
+                    <TechRow label={t('Sub-Sitemaps', 'Sub-sitemaps')} value={String(result.sitemapInfo.subSitemaps.length)} ok={true} />
+                  )}
+                  <TechRow
+                    label={t('URLs mit lastmod', 'URLs with lastmod')}
+                    value={`${result.sitemapInfo.urls.filter(e => !!e.lastmod).length}/${result.sitemapInfo.urls.length}`}
+                    ok={result.sitemapInfo.urls.some(e => !!e.lastmod)}
+                  />
+                  <TechRow
+                    label={t('Mit Bildern', 'With images')}
+                    value={String(result.sitemapInfo.urls.filter(e => e.imageCount > 0).length)}
+                    ok={true}
+                  />
+                  {(() => {
+                    const crawledSet = new Set(result.pages.map(p => p.url));
+                    const sitemapSet = new Set(result.sitemapInfo!.urls.map(e => e.url));
+                    const missingFromCrawl = [...sitemapSet].filter(u => !crawledSet.has(u)).length;
+                    const missingFromSitemap = [...crawledSet].filter(u => !sitemapSet.has(u)).length;
+                    return (
+                      <>
+                        <TechRow label={t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled')} value={String(missingFromCrawl)} ok={missingFromCrawl === 0} />
+                        <TechRow label={t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap')} value={String(missingFromSitemap)} ok={missingFromSitemap === 0} />
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Redirects (Check 2) */}
+              {(() => {
+                const redirected = result.pages.filter(p => p.redirectChain && p.redirectChain.length > 0);
+                const chains = redirected.filter(p => p.redirectChain.length > 1);
+                const loops = redirected.filter(p => {
+                  const seen = new Set<string>();
+                  for (const hop of p.redirectChain) {
+                    if (seen.has(hop)) return true;
+                    seen.add(hop);
+                  }
+                  return p.redirectChain.includes(p.finalUrl);
+                });
+                const downgrades = redirected.filter(p =>
+                  p.redirectChain[0]?.startsWith('https://') && p.finalUrl.startsWith('http://')
+                );
+                if (redirected.length === 0 && result.crawlStats.redirectChains.length === 0) return null;
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>{t('Redirects', 'Redirects')}</h3>
+                    <TechRow label={t('Mit Redirect gecrawlt', 'Crawled via redirect')} value={String(redirected.length)} ok={redirected.length === 0} />
+                    <TechRow label={t('Ketten (>1 Hop)', 'Chains (>1 hop)')} value={String(chains.length)} ok={chains.length === 0} />
+                    <TechRow label={t('Schleifen', 'Loops')} value={String(loops.length)} ok={loops.length === 0} />
+                    <TechRow label={t('HTTPS → HTTP', 'HTTPS → HTTP')} value={String(downgrades.length)} ok={downgrades.length === 0} />
+                  </div>
+                );
+              })()}
+
+              {/* Link Quality (Checks 3 + 4) */}
+              {(() => {
+                const totalGeneric = result.pages.reduce((s, p) => s + (p.genericAnchors?.length || 0), 0);
+                const totalEmpty = result.pages.reduce((s, p) => s + (p.emptyAnchors || 0), 0);
+                const pagesWithNoindex = result.pages.filter(p => p.hasNoindex).length;
+                const genericPages = result.pages.filter(p => (p.genericAnchors?.length || 0) > 0).length;
+                if (totalGeneric === 0 && totalEmpty === 0 && pagesWithNoindex === 0) return null;
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>{t('Link Quality', 'Link Quality')}</h3>
+                    <TechRow label={t('Generische Ankertexte', 'Generic anchor texts')} value={String(totalGeneric)} ok={totalGeneric === 0} />
+                    <TechRow label={t('Seiten davon betroffen', 'Pages affected')} value={String(genericPages)} ok={genericPages === 0} />
+                    <TechRow label={t('Links ohne Text', 'Links without text')} value={String(totalEmpty)} ok={totalEmpty === 0} />
+                    <TechRow label={t('Seiten mit noindex', 'Pages with noindex')} value={String(pagesWithNoindex)} ok={true} />
+                  </div>
+                );
+              })()}
+
               {/* Crawl stats */}
               <div style={techCardStyle}>
                 <h3 style={techCardTitle}>{t('Crawl-Statistik', 'Crawl Statistics')}</h3>
