@@ -56,7 +56,7 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   const setDraw = (rgb: [number, number, number]) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
 
   // ============================================================
-  //  Page header — white background with thin orange underline
+  //  Page header — plain white background, black text, no underline
   // ============================================================
   const addPageHeader = () => {
     setText(COLOR_TEXT);
@@ -65,10 +65,6 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.text(t('SEO Audit Report', 'SEO Audit Report'), CONTENT_LEFT, 8);
     doc.setFont('helvetica', 'normal');
     doc.text('beckmanndigital.com', CONTENT_RIGHT, 8, { align: 'right' });
-    // Orange underline at the bottom edge of the header band (~1pt)
-    setDraw(BRAND_ORANGE);
-    doc.setLineWidth(0.35);
-    doc.line(CONTENT_LEFT, HEADER_H, CONTENT_RIGHT, HEADER_H);
   };
 
   // Mutable cursor — helpers advance this in place
@@ -82,33 +78,25 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     }
   };
 
-  // H1: orange bold title with a ~1.5pt orange underline spanning the content width
+  // H1: bold black title — no underline
   const h1 = (text: string) => {
-    checkPage(14);
-    setText(BRAND_ORANGE);
+    checkPage(12);
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text(text, CONTENT_LEFT, y + 5);
-    y += 7;
-    setDraw(BRAND_ORANGE);
-    doc.setLineWidth(0.5);
-    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
-    y += 5;
+    y += 10;
   };
 
-  // H2: orange text, thin orange underline
+  // H2: bold black sub-heading — no underline
   const h2 = (text: string) => {
-    checkPage(10);
+    checkPage(9);
     y += 2;
-    setText(BRAND_ORANGE);
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text(text, CONTENT_LEFT, y + 3);
-    y += 5;
-    setDraw(BRAND_ORANGE);
-    doc.setLineWidth(0.4);
-    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
-    y += 4;
+    y += 7;
   };
 
   // Tech row: grey label + value, red when ok === false
@@ -143,11 +131,6 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   setText(COLOR_SUBTEXT);
   doc.setFontSize(11);
   doc.text(dateStr, W / 2, 85, { align: 'center' });
-
-  // Orange divider (~2pt) below the title block
-  setDraw(BRAND_ORANGE);
-  doc.setLineWidth(0.7);
-  doc.line(CONTENT_LEFT, 96, CONTENT_RIGHT, 96);
 
   // ------------------------------------------------------------
   //  Score — centred, big number + "/100" suffix
@@ -210,9 +193,9 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.text(s.label, cx, qsY + 5, { align: 'center' });
   });
 
-  // Bottom area — thin orange top line + muted domain/date text
+  // Bottom area — thin grey top line + muted domain/date text
   const stripLineY = H - 14;
-  setDraw(BRAND_ORANGE);
+  setDraw(COLOR_BORDER);
   doc.setLineWidth(0.35);
   doc.line(CONTENT_LEFT, stripLineY, CONTENT_RIGHT, stripLineY);
   setText(COLOR_SUBTEXT);
@@ -229,41 +212,80 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
   h1(t('Modul-Übersicht', 'Module Overview'));
 
+  // ----- Gauge circle grid (3 columns, PageSpeed Insights style) -----
+  const gaugeRadius = 10; // mm
+  const gaugeCols = 3;
+  const gaugeGapX = 10;
+  const cellW = (CONTENT_W - gaugeGapX * (gaugeCols - 1)) / gaugeCols;
+  const cellH = 42; // 20mm circle + padding for number + label
+  const gaugeRows = Math.ceil(result.moduleScores.length / gaugeCols);
+
+  checkPage(gaugeRows * cellH + 4);
+  const gridTop = y;
+
   result.moduleScores.forEach((ms, idx) => {
-    checkPage(10);
-    setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(isDE ? ms.label_de : ms.label_en, CONTENT_LEFT, y + 5);
+    const col = idx % gaugeCols;
+    const row = Math.floor(idx / gaugeCols);
+    const cellX = CONTENT_LEFT + col * (cellW + gaugeGapX);
+    const cellY = gridTop + row * cellH;
+    const cx = cellX + cellW / 2;
+    const cy = cellY + gaugeRadius + 4;
 
-    // Score bar
-    const labelCol = 55;
-    const scoreCol = 22;
-    const mBarX = CONTENT_LEFT + labelCol;
-    const mBarW = CONTENT_W - labelCol - scoreCol;
-    const mBarY = y + 3;
-    setFill(COLOR_BORDER);
-    doc.roundedRect(mBarX, mBarY, mBarW, 3, 1, 1, 'F');
+    // Background ring — grey full circle
+    setDraw(COLOR_BORDER);
+    doc.setLineWidth(2);
+    doc.circle(cx, cy, gaugeRadius, 'S');
+
+    // Score arc — clockwise from 12 o'clock, approximated as a connected
+    // polyline drawn as a single stroked path so round caps/joins don't
+    // produce bumps at every segment boundary.
     const mCol = scoreColorRgb(ms.score);
-    setFill(mCol);
-    doc.roundedRect(mBarX, mBarY, (mBarW * ms.score) / 100, 3, 1, 1, 'F');
+    if (ms.score > 0) {
+      setDraw(mCol);
+      doc.setLineWidth(2);
+      doc.setLineCap('round');
+      doc.setLineJoin('round');
+      const segments = 48;
+      const startAngle = -Math.PI / 2;
+      const sweep = (ms.score / 100) * 2 * Math.PI;
+      const startX = cx + gaugeRadius * Math.cos(startAngle);
+      const startY = cy + gaugeRadius * Math.sin(startAngle);
+      const deltas: [number, number][] = [];
+      let prevX = startX;
+      let prevY = startY;
+      for (let i = 1; i <= segments; i++) {
+        const a = startAngle + sweep * (i / segments);
+        const px = cx + gaugeRadius * Math.cos(a);
+        const py = cy + gaugeRadius * Math.sin(a);
+        deltas.push([px - prevX, py - prevY]);
+        prevX = px;
+        prevY = py;
+      }
+      doc.lines(deltas, startX, startY, [1, 1], 'S', false);
+      // Reset line style for subsequent drawings
+      doc.setLineCap('butt');
+      doc.setLineJoin('miter');
+    }
 
-    // Score number right-aligned
+    // Score number centred inside the ring
     setText(mCol);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text(`${ms.score}/100`, CONTENT_RIGHT, y + 5, { align: 'right' });
+    doc.setFontSize(16);
+    doc.text(String(ms.score), cx, cy + 2.5, { align: 'center' });
 
-    y += 9;
-
-    // Thin orange divider between module rows (skip after the last row)
-    if (idx < result.moduleScores.length - 1) {
-      setDraw(BRAND_ORANGE);
-      doc.setLineWidth(0.15);
-      doc.line(CONTENT_LEFT, y - 1, CONTENT_RIGHT, y - 1);
-    }
+    // Module label below the circle
+    setText(COLOR_TEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(
+      isDE ? ms.label_de : ms.label_en,
+      cx,
+      cellY + gaugeRadius * 2 + 11,
+      { align: 'center' }
+    );
   });
-  y += 6;
+
+  y = gridTop + gaugeRows * cellH + 6;
 
   // ============================================================
   //  Executive summary
@@ -353,10 +375,10 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.text(recLines, cardInnerLeft + 12, cursor);
     cursor += Math.max(4, recLines.length * 4);
 
-    // Orange card border enclosing the full card height (jsPDF roundedRect
+    // Grey card border enclosing the full card height (jsPDF roundedRect
     // with style 'S' strokes without filling — border radius in mm)
     const actualHeight = cursor + pad - cardTop;
-    setDraw(BRAND_ORANGE);
+    setDraw(COLOR_BORDER);
     doc.setLineWidth(0.3);
     doc.roundedRect(CONTENT_LEFT, cardTop, CONTENT_W, actualHeight, 1, 1, 'S');
 
@@ -628,15 +650,17 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
   // ============================================================
   //  Footers — added last so we know the total page count.
-  //  White background, thin orange top line, muted centred text.
+  //  White background, thin grey top line, centred footer text in
+  //  brand orange (one of the two remaining orange accents in the
+  //  document alongside the cover title).
   // ============================================================
   const totalPages = doc.internal.pages.length - 1; // jsPDF pages array is 1-indexed with a leading null
   for (let i = 2; i <= totalPages; i++) {
     doc.setPage(i);
-    setDraw(BRAND_ORANGE);
+    setDraw(COLOR_BORDER);
     doc.setLineWidth(0.35);
     doc.line(CONTENT_LEFT, H - FOOTER_H, CONTENT_RIGHT, H - FOOTER_H);
-    setText(COLOR_SUBTEXT);
+    setText(BRAND_ORANGE);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(
