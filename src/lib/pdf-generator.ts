@@ -41,6 +41,26 @@ function scoreColorRgb(score: number): [number, number, number] {
   return COLOR_CRITICAL;
 }
 
+// Loads /public/TWB_Logo_Transparent.png as a data URL. Runs in the
+// browser because this module is 'use client' and pdf-generator is
+// dynamically imported from the client-side AuditApp — fs/path are
+// not available in that context, so we fetch the static asset.
+async function loadLogoDataUrl(): Promise<string | undefined> {
+  try {
+    const response = await fetch('/TWB_Logo_Transparent.png');
+    if (!response.ok) return undefined;
+    const blob = await response.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('FileReader failed'));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 export async function generatePDF(result: AuditResult, lang: Lang): Promise<void> {
   const { default: JsPDF } = await import('jspdf');
   const doc = new JsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
@@ -115,22 +135,31 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   // ============================================================
   //  COVER PAGE (page 1) — white background, accents only
   // ============================================================
-  // Title in brand orange
+  // Logo — top of the page, centred horizontally
+  const logoDataUrl = await loadLogoDataUrl();
+  if (logoDataUrl) {
+    const logoH = 18;
+    // Source PNG is 1587x504 → aspect ratio ~3.15
+    const logoW = logoH * (1587 / 504);
+    doc.addImage(logoDataUrl, 'PNG', (W - logoW) / 2, 20, logoW, logoH);
+  }
+
+  // Title in brand orange — shifted down so it never overlaps the logo
   setText(BRAND_ORANGE);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(28);
-  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 55, { align: 'center' });
+  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 62, { align: 'center' });
 
   // URL in primary text colour
   setText(COLOR_TEXT);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(14);
-  doc.text(result.domain, W / 2, 73, { align: 'center' });
+  doc.text(result.domain, W / 2, 80, { align: 'center' });
 
   // Date in subtext
   setText(COLOR_SUBTEXT);
   doc.setFontSize(11);
-  doc.text(dateStr, W / 2, 85, { align: 'center' });
+  doc.text(dateStr, W / 2, 92, { align: 'center' });
 
   // ------------------------------------------------------------
   //  Score — centred, big number + "/100" suffix
@@ -167,7 +196,10 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   doc.setFontSize(10);
   const authorY = barY + 28;
   doc.text(
-    t('Erstellt von TW Beckmann Consultancy Services', 'Created by TW Beckmann Consultancy Services'),
+    t(
+      'Erstellt von der TW Beckmann Consultancy Services Ltd.',
+      'Created by TW Beckmann Consultancy Services Ltd.'
+    ),
     W / 2, authorY, { align: 'center' }
   );
 
@@ -193,15 +225,8 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.text(s.label, cx, qsY + 5, { align: 'center' });
   });
 
-  // Bottom area — thin grey top line + muted domain/date text
-  const stripLineY = H - 14;
-  setDraw(COLOR_BORDER);
-  doc.setLineWidth(0.35);
-  doc.line(CONTENT_LEFT, stripLineY, CONTENT_RIGHT, stripLineY);
-  setText(COLOR_SUBTEXT);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(`${result.domain} · ${dateStr}`, W / 2, stripLineY + 7, { align: 'center' });
+  // Cover page footer is drawn by the unified footer loop at the end of
+  // the document — no separate cover strip any more.
 
   // ============================================================
   //  PAGE 2 — Module overview
@@ -653,22 +678,20 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   }
 
   // ============================================================
-  //  Footers — added last so we know the total page count.
-  //  White background, thin grey top line, centred footer text in
-  //  brand orange (one of the two remaining orange accents in the
-  //  document alongside the cover title).
+  //  Footers — unified across every page including the cover.
+  //  White background, thin grey top line, centred muted text.
   // ============================================================
   const totalPages = doc.internal.pages.length - 1; // jsPDF pages array is 1-indexed with a leading null
-  for (let i = 2; i <= totalPages; i++) {
+  for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     setDraw(COLOR_BORDER);
     doc.setLineWidth(0.35);
     doc.line(CONTENT_LEFT, H - FOOTER_H, CONTENT_RIGHT, H - FOOTER_H);
-    setText(BRAND_ORANGE);
+    setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(
-      `${result.domain} · ${result.config.author} · ${dateStr} · ${t('Seite', 'Page')} ${i}/${totalPages}`,
+      `beckmanndigital.com · TW Beckmann Consultancy Services Ltd. · ${dateStr} · ${t('Seite', 'Page')} ${i}/${totalPages}`,
       W / 2, H - FOOTER_H + 5, { align: 'center' }
     );
   }
