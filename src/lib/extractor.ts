@@ -1,6 +1,18 @@
 import { parse } from 'node-html-parser';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 
+// Generic anchor text blacklist (DE + EN). Normalised to lowercase, trimmed.
+const GENERIC_ANCHOR_TEXTS = new Set([
+  // DE
+  'hier', 'hier klicken', 'mehr erfahren', 'weiter', 'weiterlesen',
+  'klicken sie hier', 'jetzt klicken', 'link', 'seite', 'öffnen',
+  'mehr', 'klick', 'klicken',
+  // EN
+  'click here', 'here', 'read more', 'learn more', 'more',
+  'page', 'click', 'open', 'continue', 'this link', 'this page',
+  'read', 'see more', 'find out more',
+]);
+
 function collectSchemas(node: unknown, out: ParsedSchema[]): void {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) {
@@ -107,18 +119,47 @@ export function extractPageSEO(page: PageData): PageSEOData {
   }).length;
   const lazyLoadedImages = images.filter(img => img.getAttribute('loading') === 'lazy').length;
 
-  // Links
+  // Links + anchor text analysis
   const allLinks = root.querySelectorAll('a[href]');
   const pageHost = (() => { try { return new URL(page.url).hostname; } catch { return ''; } })();
   const internalLinks: string[] = [];
   const externalLinks: string[] = [];
+  const genericAnchors: { text: string; href: string }[] = [];
+  let emptyAnchors = 0;
   allLinks.forEach(a => {
     const href = a.getAttribute('href') || '';
+    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
+
+    let absoluteHref: string | undefined;
+    let isInternal = false;
     try {
       const u = new URL(href, page.url);
-      if (u.hostname === pageHost) internalLinks.push(u.href);
+      absoluteHref = u.href;
+      isInternal = u.hostname === pageHost;
+      if (isInternal) internalLinks.push(u.href);
       else if (href.startsWith('http')) externalLinks.push(u.href);
-    } catch {}
+    } catch {
+      return;
+    }
+
+    if (!isInternal || !absoluteHref) return;
+
+    // Anchor text quality — only for internal links, as external anchors
+    // affect another site's SEO, not ours.
+    const rawText = a.text.replace(/\s+/g, ' ').trim();
+    const ariaLabel = (a.getAttribute('aria-label') || '').trim();
+    const title = (a.getAttribute('title') || '').trim();
+    const hasImgChild = !!a.querySelector('img[alt]');
+
+    if (!rawText && !ariaLabel && !title && !hasImgChild) {
+      emptyAnchors++;
+      return;
+    }
+
+    const normalised = rawText.toLowerCase();
+    if (rawText && GENERIC_ANCHOR_TEXTS.has(normalised)) {
+      genericAnchors.push({ text: rawText, href: absoluteHref });
+    }
   });
 
   // Word count + sample for downstream content analysis
@@ -244,5 +285,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     likelyClientRendered,
     clientRenderSignal,
     bodyTextSample,
+    genericAnchors,
+    emptyAnchors,
   };
 }

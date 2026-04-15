@@ -208,6 +208,8 @@ export interface PageSEOData {
   likelyClientRendered: boolean;
   clientRenderSignal?: string; // what gave it away, for debugging
   bodyTextSample?: string; // first ~2000 chars of visible body text, used for content analysis
+  genericAnchors: { text: string; href: string }[];
+  emptyAnchors: number; // internal links with no usable anchor text and no aria-label
 }
 
 export interface AuditResult {

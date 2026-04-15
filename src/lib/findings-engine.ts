@@ -1463,6 +1463,62 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
 }
 
 // ============================================================
+//  ANCHOR TEXT FINDINGS (Check 3)
+// ============================================================
+export function generateAnchorTextFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Aggregate across the crawl
+  const allGeneric: { text: string; href: string; from: string }[] = [];
+  let totalEmpty = 0;
+  const pagesWithGeneric: PageSEOData[] = [];
+  const pagesWithEmpty: PageSEOData[] = [];
+
+  for (const p of pages) {
+    if (p.genericAnchors.length > 2) pagesWithGeneric.push(p);
+    for (const a of p.genericAnchors) {
+      allGeneric.push({ text: a.text, href: a.href, from: p.url });
+    }
+    if (p.emptyAnchors > 0) {
+      totalEmpty += p.emptyAnchors;
+      pagesWithEmpty.push(p);
+    }
+  }
+
+  if (pagesWithGeneric.length > 0) {
+    const sample = allGeneric
+      .slice(0, 5)
+      .map(a => `"${a.text}" → ${a.href}`)
+      .join('; ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Generische Ankertexte auf ${pagesWithGeneric.length} Seiten (${allGeneric.length} gesamt)`,
+      title_en: `Generic anchor texts on ${pagesWithGeneric.length} pages (${allGeneric.length} total)`,
+      description_de: `Viele interne Links verwenden unspezifische Ankertexte wie "hier klicken", "mehr erfahren", "weiterlesen". Google bewertet Ankertexte als Ranking-Signal — sie sollten beschreiben, worum es auf der Zielseite geht. Beispiele: ${sample}`,
+      description_en: `Many internal links use non-specific anchor texts like "click here", "read more", "learn more". Google evaluates anchor texts as a ranking signal — they should describe what the target page is about. Examples: ${sample}`,
+      recommendation_de: 'Ankertexte durch beschreibende Phrasen ersetzen. Statt "mehr erfahren" → "zur Preisseite", statt "hier klicken" → "SEO-Audit-Report herunterladen". Keyword in den Ankertext einbauen wenn thematisch passend.',
+      recommendation_en: 'Replace anchor texts with descriptive phrases. Instead of "learn more" → "view pricing page", instead of "click here" → "download SEO audit report". Include keywords in the anchor when topically relevant.',
+    });
+  }
+
+  if (totalEmpty > 0) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `Links ohne Ankertext: ${totalEmpty} auf ${pagesWithEmpty.length} Seiten`,
+      title_en: `Links without anchor text: ${totalEmpty} on ${pagesWithEmpty.length} pages`,
+      description_de: 'Diese internen Links haben weder Text-Inhalt noch aria-label, title oder alt-Text auf einem Bild-Kind. Screenreader können sie nicht ansagen, Google kann sie nicht mit einem Ranking-Signal verbinden, und sie sind ein Accessibility-Problem (WCAG 2.4.4).',
+      description_en: 'These internal links have no text content, no aria-label, no title, and no alt text on a child image. Screen readers cannot announce them, Google cannot attach a ranking signal to them, and they are an accessibility problem (WCAG 2.4.4).',
+      recommendation_de: 'Jedem Link einen beschreibenden Text geben. Bei Icon-Links: aria-label="Aktion beschreiben" ergänzen. Bei Bild-Links: img mit alt-Text nutzen.',
+      recommendation_en: 'Give every link a descriptive text. For icon links: add aria-label="describe action". For image links: use img with alt text.',
+      affectedUrl: pagesWithEmpty[0]?.url,
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  REDIRECT FINDINGS (Check 2)
 // ============================================================
 // The crawler records the full redirect chain per page. We flag:
