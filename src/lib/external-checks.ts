@@ -1,6 +1,7 @@
 import type {
   SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData,
   SecurityHeadersInfo, AIReadinessInfo, AIBotRule, AIBotStatus,
+  SitemapInfo, SitemapUrlEntry,
 } from '@/types';
 import { promises as dns } from 'dns';
 
@@ -369,6 +370,107 @@ export async function checkAIReadiness(baseUrl: string, robotsContent?: string):
     return { bots, hasLlmsTxt, hasLlmsFullTxt, llmsTxtUrl, wildcardBlocksAll };
   } catch (err) {
     return { bots: [], hasLlmsTxt: false, hasLlmsFullTxt: false, wildcardBlocksAll: false, error: String(err) };
+  }
+}
+
+// ============================================================
+//  SITEMAP PARSER (urlset + sitemapindex)
+// ============================================================
+// Cap total URLs to something sane to protect the audit from
+// runaway sitemap indexes on very large sites.
+const MAX_SITEMAP_URLS = 5000;
+const MAX_SUB_SITEMAPS = 20;
+
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function extractTag(block: string, tag: string): string | undefined {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  return m ? decodeXmlEntities(m[1].trim()) : undefined;
+}
+
+function parseUrlSetBlock(xml: string): SitemapUrlEntry[] {
+  const out: SitemapUrlEntry[] = [];
+  const urlBlocks = xml.match(/<url\b[^>]*>[\s\S]*?<\/url>/gi) || [];
+  for (const block of urlBlocks) {
+    const loc = extractTag(block, 'loc');
+    if (!loc) continue;
+    const lastmod = extractTag(block, 'lastmod');
+    const changefreq = extractTag(block, 'changefreq');
+    const priorityStr = extractTag(block, 'priority');
+    const priority = priorityStr ? parseFloat(priorityStr) : undefined;
+    const imageMatches = block.match(/<image:image\b/gi) || [];
+    out.push({
+      url: loc,
+      lastmod,
+      changefreq,
+      priority: priority !== undefined && !Number.isNaN(priority) ? priority : undefined,
+      imageCount: imageMatches.length,
+    });
+    if (out.length >= MAX_SITEMAP_URLS) break;
+  }
+  return out;
+}
+
+function parseSitemapIndexBlock(xml: string): string[] {
+  const out: string[] = [];
+  const blocks = xml.match(/<sitemap\b[^>]*>[\s\S]*?<\/sitemap>/gi) || [];
+  for (const block of blocks) {
+    const loc = extractTag(block, 'loc');
+    if (loc) out.push(loc);
+    if (out.length >= MAX_SUB_SITEMAPS) break;
+  }
+  return out;
+}
+
+async function fetchSitemapXml(url: string): Promise<string | undefined> {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return undefined;
+    return await r.text();
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchSitemap(sitemapUrl: string): Promise<SitemapInfo> {
+  try {
+    const xml = await fetchSitemapXml(sitemapUrl);
+    if (!xml) {
+      return { urls: [], sitemapUrl, isIndex: false, subSitemaps: [], error: 'Could not fetch sitemap' };
+    }
+
+    // Detect type
+    if (/<sitemapindex\b/i.test(xml)) {
+      const subs = parseSitemapIndexBlock(xml);
+      const allUrls: SitemapUrlEntry[] = [];
+      for (const sub of subs) {
+        if (allUrls.length >= MAX_SITEMAP_URLS) break;
+        const subXml = await fetchSitemapXml(sub);
+        if (!subXml) continue;
+        const entries = parseUrlSetBlock(subXml);
+        for (const e of entries) {
+          if (allUrls.length >= MAX_SITEMAP_URLS) break;
+          allUrls.push(e);
+        }
+      }
+      return { urls: allUrls, sitemapUrl, isIndex: true, subSitemaps: subs };
+    }
+
+    if (/<urlset\b/i.test(xml)) {
+      const urls = parseUrlSetBlock(xml);
+      return { urls, sitemapUrl, isIndex: false, subSitemaps: [] };
+    }
+
+    return { urls: [], sitemapUrl, isIndex: false, subSitemaps: [], error: 'Unknown sitemap format' };
+  } catch (err) {
+    return { urls: [], sitemapUrl, isIndex: false, subSitemaps: [], error: String(err) };
   }
 }
 

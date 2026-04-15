@@ -126,6 +126,22 @@ export interface AIReadinessInfo {
   error?: string;
 }
 
+export interface SitemapUrlEntry {
+  url: string;
+  lastmod?: string; // ISO 8601 date
+  changefreq?: string;
+  priority?: number;
+  imageCount: number;
+}
+
+export interface SitemapInfo {
+  urls: SitemapUrlEntry[];
+  sitemapUrl?: string;
+  isIndex: boolean;
+  subSitemaps: string[];
+  error?: string;
+}
+
 export interface SecurityHeadersInfo {
   hsts?: string;
   hstsMaxAge?: number;
@@ -206,6 +222,7 @@ export interface AuditResult {
   safeBrowsingData?: SafeBrowsingData;
   securityHeaders?: SecurityHeadersInfo;
   aiReadiness?: AIReadinessInfo;
+  sitemapInfo?: SitemapInfo;
   pages: PageSEOData[];
   claudePrompt: string;
   summary_de: string;

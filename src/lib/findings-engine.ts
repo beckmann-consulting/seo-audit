@@ -1,7 +1,7 @@
 import type {
   Finding, PageSEOData, CrawlStats, SSLInfo, DNSInfo,
   PageSpeedData, SafeBrowsingData, SecurityHeadersInfo,
-  AIReadinessInfo, Module
+  AIReadinessInfo, SitemapInfo, Module
 } from '@/types';
 
 let findingCounter = 0;
@@ -1456,6 +1456,92 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
       description_en: 'The HTTPS page loads resources over unencrypted HTTP. Browsers partially block these or show warnings — loss of trust and functionality.',
       recommendation_de: 'Alle http://-Referenzen im HTML und in CSS/JS auf https:// umstellen. Protokollrelative URLs (//example.com/…) vermeiden.',
       recommendation_en: 'Switch all http:// references in HTML and in CSS/JS to https://. Avoid protocol-relative URLs (//example.com/…).',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
+//  SITEMAP COVERAGE FINDINGS (Check 1)
+// ============================================================
+// Cross-references crawled URLs against sitemap URLs to find gaps:
+// - URLs in sitemap but not crawled (potentially orphan / badly linked)
+// - URLs crawled but not in sitemap (sitemap out of date)
+// Also emits optional findings for lastmod + image-sitemap absence.
+export function generateSitemapCoverageFindings(pages: PageSEOData[], sitemap?: SitemapInfo): Finding[] {
+  const findings: Finding[] = [];
+  if (!sitemap || sitemap.error || sitemap.urls.length === 0) return findings;
+
+  const crawledSet = new Set(pages.map(p => normalizeUrl(p.url)));
+  const sitemapSet = new Set(sitemap.urls.map(e => normalizeUrl(e.url)));
+
+  // 1) In sitemap but not crawled → possible orphan
+  const notCrawled: string[] = [];
+  for (const sUrl of sitemapSet) {
+    if (!crawledSet.has(sUrl)) notCrawled.push(sUrl);
+  }
+
+  if (notCrawled.length > 0) {
+    const sample = notCrawled.slice(0, 5).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `${notCrawled.length} Sitemap-URLs nicht gecrawlt`,
+      title_en: `${notCrawled.length} sitemap URLs not crawled`,
+      description_de: `Diese URLs sind in der Sitemap aufgeführt, wurden aber beim Crawl nicht erreicht. Sehr wahrscheinlich Orphan Pages (nicht intern verlinkt) oder defekt. Beispiele: ${sample}`,
+      description_en: `These URLs are listed in the sitemap but were not reached during the crawl. Most likely orphan pages (not internally linked) or broken. Examples: ${sample}`,
+      recommendation_de: 'Interne Verlinkung prüfen: fehlt ein Menü-Eintrag, ein Hub-Link oder ist die Seite tot? Orphan-Pages sind schwieriger zu ranken, weil kein Linkjuice fließt.',
+      recommendation_en: 'Check internal linking: is a menu entry missing, a hub link broken, or is the page dead? Orphan pages are harder to rank because no link equity flows to them.',
+    });
+  }
+
+  // 2) Crawled but not in sitemap
+  const notInSitemap: string[] = [];
+  for (const cUrl of crawledSet) {
+    if (!sitemapSet.has(cUrl)) notInSitemap.push(cUrl);
+  }
+
+  if (notInSitemap.length > 0) {
+    const ratio = notInSitemap.length / Math.max(crawledSet.size, 1);
+    const priority: 'important' | 'recommended' = ratio > 0.1 ? 'important' : 'recommended';
+    const sample = notInSitemap.slice(0, 5).join(', ');
+    findings.push({
+      id: id(), priority, module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `${notInSitemap.length} gecrawlte Seiten fehlen in der Sitemap`,
+      title_en: `${notInSitemap.length} crawled pages missing from sitemap`,
+      description_de: `${Math.round(ratio * 100)}% der gecrawlten Seiten sind nicht in der Sitemap enthalten. Google findet sie so zwar über interne Links, die Sitemap beschleunigt die Indexierung aber deutlich. Beispiele: ${sample}`,
+      description_en: `${Math.round(ratio * 100)}% of crawled pages are missing from the sitemap. Google will still find them via internal links, but the sitemap accelerates indexing considerably. Examples: ${sample}`,
+      recommendation_de: 'Sitemap-Generator so konfigurieren, dass alle indexierbaren Seiten automatisch aufgenommen werden. Bei statischen Generatoren: Build-Hook prüfen.',
+      recommendation_en: 'Configure the sitemap generator to automatically include all indexable pages. For static generators: check the build hook.',
+    });
+  }
+
+  // 3) lastmod missing — any lastmod at all?
+  const withLastmod = sitemap.urls.filter(e => !!e.lastmod).length;
+  if (withLastmod === 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: 'Sitemap ohne lastmod-Einträge',
+      title_en: 'Sitemap has no lastmod entries',
+      description_de: 'Kein einziger Sitemap-Eintrag hat ein <lastmod>-Element. Google nutzt lastmod, um zu entscheiden, welche Seiten neu gecrawlt werden — ohne Angabe werden Seiten seltener besucht.',
+      description_en: 'Not a single sitemap entry has a <lastmod> element. Google uses lastmod to decide which pages to recrawl — without it, pages are visited less often.',
+      recommendation_de: 'Sitemap-Generator so konfigurieren, dass er pro URL das letzte Änderungsdatum setzt. Bei statischen Sites: Build-Timestamp oder Git-Commit-Datum.',
+      recommendation_en: 'Configure the sitemap generator to set the last-modified date per URL. For static sites: use build timestamp or git commit date.',
+    });
+  }
+
+  // 4) Image sitemap missing for sites with images
+  const hasImages = pages.some(p => p.totalImages > 0);
+  const sitemapHasImages = sitemap.urls.some(e => e.imageCount > 0);
+  if (hasImages && !sitemapHasImages) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'low',
+      title_de: 'Sitemap enthält keine Bild-Einträge',
+      title_en: 'Sitemap contains no image entries',
+      description_de: 'Die Site enthält Bilder, aber die Sitemap hat kein <image:image>-Element. Google Images indexiert Bilder zwar auch ohne, die explizite Angabe beschleunigt die Aufnahme und liefert zusätzliche Metadaten.',
+      description_en: 'The site contains images but the sitemap has no <image:image> element. Google Images indexes images even without it, but explicit declaration speeds up inclusion and provides additional metadata.',
+      recommendation_de: 'Image-Sitemap-Protokoll einbinden (xmlns:image="http://www.google.com/schemas/sitemap-image/1.1") und pro URL die zugehörigen Bild-Locs auflisten.',
+      recommendation_en: 'Include the image sitemap protocol (xmlns:image="http://www.google.com/schemas/sitemap-image/1.1") and list image locations per URL.',
     });
   }
 

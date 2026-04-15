@@ -4,7 +4,7 @@ import { extractPageSEO } from '@/lib/extractor';
 import {
   checkSSL, checkDNS, checkPageSpeed,
   checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders,
-  checkAIReadiness,
+  checkAIReadiness, fetchSitemap,
 } from '@/lib/external-checks';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
@@ -13,7 +13,7 @@ import {
   generateHreflangFindings, generateAIReadinessFindings,
   generateStructuredDataFindings, generateDuplicateContentFindings,
   generateCrawlStructureFindings, generateClientRenderingFindings,
-  calculateModuleScore
+  generateSitemapCoverageFindings, calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import { runClaudeContentAnalysis } from '@/lib/claude-analysis';
@@ -55,9 +55,15 @@ export async function POST(req: NextRequest) {
     const pages = rawPages.map(p => extractPageSEO(p));
 
     // ---- STEP 3: robots.txt + sitemap ----
-    const { hasRobots, hasSitemap, robotsContent } = await checkRobotsAndSitemap(url);
+    const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url);
     pages[0].hasRobots = hasRobots;
     pages[0].hasSitemap = hasSitemap;
+
+    // ---- STEP 3c: Parse sitemap XML for coverage + quality checks ----
+    let sitemapInfo = undefined;
+    if (hasSitemap && sitemapUrl && config.modules.includes('seo')) {
+      sitemapInfo = await fetchSitemap(sitemapUrl);
+    }
 
     // ---- STEP 3b: AI Crawler Readiness ----
     let aiReadiness = undefined;
@@ -106,6 +112,7 @@ export async function POST(req: NextRequest) {
       allFindings.push(...generateStructuredDataFindings(pages));
       allFindings.push(...generateDuplicateContentFindings(pages));
       allFindings.push(...generateCrawlStructureFindings(pages));
+      allFindings.push(...generateSitemapCoverageFindings(pages, sitemapInfo));
     }
     if (config.modules.includes('content')) {
       allFindings.push(...generateContentFindings(pages));
@@ -224,6 +231,7 @@ export async function POST(req: NextRequest) {
       safeBrowsingData,
       securityHeaders,
       aiReadiness,
+      sitemapInfo,
       pages,
       claudePrompt: '',
       summary_de,
