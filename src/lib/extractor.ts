@@ -1,5 +1,26 @@
 import { parse } from 'node-html-parser';
-import type { PageData, PageSEOData } from '@/types';
+import type { PageData, PageSEOData, ParsedSchema } from '@/types';
+
+function collectSchemas(node: unknown, out: ParsedSchema[]): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectSchemas(item, out);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  // @graph is a container, flatten its items
+  if (Array.isArray(obj['@graph'])) {
+    for (const item of obj['@graph']) collectSchemas(item, out);
+  }
+  const rawType = obj['@type'];
+  if (typeof rawType === 'string') {
+    out.push({ type: rawType, data: obj });
+  } else if (Array.isArray(rawType)) {
+    // Schema.org allows multiple types; use the first as the primary
+    const first = rawType.find(t => typeof t === 'string');
+    if (typeof first === 'string') out.push({ type: first, data: obj });
+  }
+}
 
 export function extractPageSEO(page: PageData): PageSEOData {
   const root = parse(page.html, { comment: false });
@@ -56,18 +77,17 @@ export function extractPageSEO(page: PageData): PageSEOData {
 
   // Schema.org
   const schemaScripts = root.querySelectorAll('script[type="application/ld+json"]');
-  const schemaTypes: string[] = [];
+  const schemas: ParsedSchema[] = [];
+  let schemaParseErrors = 0;
   schemaScripts.forEach(s => {
     try {
       const json = JSON.parse(s.text);
-      if (json['@type']) schemaTypes.push(json['@type']);
-      if (Array.isArray(json['@graph'])) {
-        json['@graph'].forEach((item: { '@type'?: string }) => {
-          if (item['@type']) schemaTypes.push(item['@type']);
-        });
-      }
-    } catch {}
+      collectSchemas(json, schemas);
+    } catch {
+      schemaParseErrors++;
+    }
   });
+  const schemaTypes: string[] = schemas.map(s => s.type);
 
   // Images
   const images = root.querySelectorAll('img');
@@ -125,6 +145,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasViewport,
     hasCharset,
     schemaTypes,
+    schemas,
+    schemaParseErrors,
     imagesMissingAlt,
     totalImages: images.length,
     internalLinks,

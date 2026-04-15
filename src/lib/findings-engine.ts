@@ -718,6 +718,162 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
 }
 
 // ============================================================
+//  STRUCTURED DATA DEEP VALIDATION
+// ============================================================
+// Required fields for common Rich Results types (Google guidelines).
+// "author", "image" etc. can be strings or objects — we only check presence.
+const SCHEMA_REQUIRED_FIELDS: Record<string, string[]> = {
+  Organization: ['name', 'url'],
+  LocalBusiness: ['name', 'address', 'telephone'],
+  Person: ['name'],
+  WebSite: ['name', 'url'],
+  Article: ['headline', 'image', 'datePublished', 'author'],
+  NewsArticle: ['headline', 'image', 'datePublished', 'author'],
+  BlogPosting: ['headline', 'image', 'datePublished', 'author'],
+  Product: ['name', 'image'],
+  Offer: ['price', 'priceCurrency', 'availability'],
+  Recipe: ['name', 'image', 'recipeIngredient', 'recipeInstructions'],
+  Event: ['name', 'startDate', 'location'],
+  FAQPage: ['mainEntity'],
+  BreadcrumbList: ['itemListElement'],
+  Review: ['itemReviewed', 'reviewRating', 'author'],
+  AggregateRating: ['ratingValue', 'reviewCount'],
+  VideoObject: ['name', 'description', 'thumbnailUrl', 'uploadDate'],
+  HowTo: ['name', 'step'],
+  JobPosting: ['title', 'description', 'datePosted', 'hiringOrganization'],
+};
+
+function hasField(data: Record<string, unknown>, field: string): boolean {
+  const v = data[field];
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as Record<string, unknown>).length > 0;
+  return true;
+}
+
+export function generateStructuredDataFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // 1) JSON-LD parse errors
+  const pagesWithParseErrors = pages.filter(p => p.schemaParseErrors > 0);
+  if (pagesWithParseErrors.length > 0) {
+    const total = pagesWithParseErrors.reduce((s, p) => s + p.schemaParseErrors, 0);
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `JSON-LD Parse-Fehler: ${total} Block(s) auf ${pagesWithParseErrors.length} Seite(n)`,
+      title_en: `JSON-LD parse errors: ${total} block(s) on ${pagesWithParseErrors.length} page(s)`,
+      description_de: 'Mindestens ein <script type="application/ld+json"> enthält ungültiges JSON. Google ignoriert kaputtes Markup komplett — keine Rich Snippets für diese Seiten.',
+      description_en: 'At least one <script type="application/ld+json"> contains invalid JSON. Google ignores broken markup entirely — no rich snippets for these pages.',
+      recommendation_de: 'JSON-LD mit Google Rich Results Test (search.google.com/test/rich-results) validieren. Häufige Fehler: Trailing Commas, unescaped Anführungszeichen, fehlende Klammern.',
+      recommendation_en: 'Validate JSON-LD with Google Rich Results Test (search.google.com/test/rich-results). Common errors: trailing commas, unescaped quotes, missing brackets.',
+      affectedUrl: pagesWithParseErrors[0].url,
+    });
+  }
+
+  // 2) Per-schema required field validation
+  type MissingPerType = { type: string; missing: string[]; url: string };
+  const issues: MissingPerType[] = [];
+
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      const required = SCHEMA_REQUIRED_FIELDS[schema.type];
+      if (!required) continue; // unknown type, skip
+      const missing = required.filter(f => !hasField(schema.data, f));
+      if (missing.length > 0) {
+        issues.push({ type: schema.type, missing, url: page.url });
+      }
+    }
+  }
+
+  // Group issues by type to avoid one finding per page
+  const byType = new Map<string, MissingPerType[]>();
+  for (const issue of issues) {
+    const list = byType.get(issue.type) || [];
+    list.push(issue);
+    byType.set(issue.type, list);
+  }
+
+  for (const [type, list] of byType) {
+    // Use union of missing fields across all occurrences as a summary
+    const allMissing = new Set<string>();
+    list.forEach(l => l.missing.forEach(f => allMissing.add(f)));
+    const sampleUrl = list[0].url;
+    const priority: 'important' | 'recommended' =
+      ['Article', 'NewsArticle', 'BlogPosting', 'Product', 'Recipe', 'Event', 'JobPosting'].includes(type)
+        ? 'important'
+        : 'recommended';
+
+    findings.push({
+      id: id(), priority, module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `Schema.org ${type}: Pflichtfelder fehlen (${[...allMissing].join(', ')})`,
+      title_en: `Schema.org ${type}: required fields missing (${[...allMissing].join(', ')})`,
+      description_de: `Auf ${list.length} Seite(n) fehlen in ${type}-Schemas die von Google für Rich Results geforderten Felder: ${[...allMissing].join(', ')}. Ohne diese Felder werden keine Rich Snippets ausgespielt.`,
+      description_en: `On ${list.length} page(s), ${type} schemas are missing fields required by Google for Rich Results: ${[...allMissing].join(', ')}. Without these fields, rich snippets are not displayed.`,
+      recommendation_de: `Fehlende Felder (${[...allMissing].join(', ')}) im JSON-LD ergänzen. Spezifikation: schema.org/${type} + developers.google.com/search/docs/appearance/structured-data`,
+      recommendation_en: `Add the missing fields (${[...allMissing].join(', ')}) to the JSON-LD. Spec: schema.org/${type} + developers.google.com/search/docs/appearance/structured-data`,
+      affectedUrl: sampleUrl,
+    });
+  }
+
+  // 3) Article without headline length check (Google: max 110 chars)
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      if (!['Article', 'NewsArticle', 'BlogPosting'].includes(schema.type)) continue;
+      const headline = schema.data['headline'];
+      if (typeof headline === 'string' && headline.length > 110) {
+        findings.push({
+          id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'low',
+          title_de: `Article headline zu lang: ${headline.length} Zeichen`,
+          title_en: `Article headline too long: ${headline.length} characters`,
+          description_de: 'Google empfiehlt Article-headline <= 110 Zeichen. Längere Werte werden für Rich Results abgeschnitten.',
+          description_en: 'Google recommends Article headline <= 110 characters. Longer values are truncated for Rich Results.',
+          recommendation_de: 'headline im JSON-LD kürzen.',
+          recommendation_en: 'Shorten the headline in the JSON-LD.',
+          affectedUrl: page.url,
+        });
+        break; // one finding per page is enough
+      }
+    }
+  }
+
+  // 4) Offer without price or priceCurrency — frequent mistake
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      if (schema.type !== 'Product') continue;
+      const offers = schema.data['offers'];
+      const offerList: Record<string, unknown>[] = Array.isArray(offers)
+        ? (offers as Record<string, unknown>[])
+        : offers && typeof offers === 'object'
+        ? [offers as Record<string, unknown>]
+        : [];
+      for (const offer of offerList) {
+        const missing: string[] = [];
+        if (!hasField(offer, 'price')) missing.push('price');
+        if (!hasField(offer, 'priceCurrency')) missing.push('priceCurrency');
+        if (!hasField(offer, 'availability')) missing.push('availability');
+        if (missing.length > 0) {
+          findings.push({
+            id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+            title_de: `Product/Offer unvollständig: ${missing.join(', ')}`,
+            title_en: `Product/Offer incomplete: ${missing.join(', ')}`,
+            description_de: 'Product-Rich-Snippets benötigen price, priceCurrency und availability — sonst keine Preis-Anzeige im SERP.',
+            description_en: 'Product rich snippets require price, priceCurrency and availability — otherwise no price display in SERP.',
+            recommendation_de: `Im offers-Objekt ergänzen: ${missing.join(', ')}. Format: "price": "29.99", "priceCurrency": "EUR", "availability": "https://schema.org/InStock".`,
+            recommendation_en: `Add to offers object: ${missing.join(', ')}. Format: "price": "29.99", "priceCurrency": "EUR", "availability": "https://schema.org/InStock".`,
+            affectedUrl: page.url,
+          });
+          break; // one per page
+        }
+      }
+    }
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  AI CRAWLER READINESS FINDINGS
 // ============================================================
 export function generateAIReadinessFindings(ai?: AIReadinessInfo): Finding[] {

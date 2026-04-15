@@ -139,6 +139,11 @@ export interface SecurityHeadersInfo {
   error?: string;
 }
 
+export interface ParsedSchema {
+  type: string;
+  data: Record<string, unknown>;
+}
+
 export interface PageSEOData {
   url: string;
   title?: string;
@@ -157,6 +162,8 @@ export interface PageSEOData {
   hasViewport: boolean;
   hasCharset: boolean;
   schemaTypes: string[];
+  schemas: ParsedSchema[];
+  schemaParseErrors: number;
   imagesMissingAlt: number;
   totalImages: number;
   internalLinks: string[];
