@@ -150,6 +150,7 @@ export interface PageSEOData {
   renderBlockingScripts: number;
   modernImageFormats: number;
   lazyLoadedImages: number;
+  hreflangs: { hreflang: string; href: string }[];
 }
 
 export interface AuditResult {

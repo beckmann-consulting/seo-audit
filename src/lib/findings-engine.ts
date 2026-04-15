@@ -557,6 +557,166 @@ export function generateSafeBrowsingFindings(data?: SafeBrowsingData): Finding[]
 }
 
 // ============================================================
+//  HREFLANG FINDINGS
+// ============================================================
+// Valid hreflang values: ISO 639-1 (2-letter language),
+// optionally followed by "-" and ISO 3166-1 alpha-2 region,
+// or the special value "x-default".
+const HREFLANG_PATTERN = /^(x-default|[a-z]{2}(-[A-Z]{2})?)$/;
+
+export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const pagesWithHreflang = pages.filter(p => p.hreflangs.length > 0);
+  const distinctLangs = new Set(pages.map(p => p.lang).filter(Boolean));
+  const siteSeemsMultilingual = pagesWithHreflang.length > 0 || distinctLangs.size > 1;
+
+  // If site doesn't seem multilingual, skip hreflang checks entirely
+  if (!siteSeemsMultilingual) return findings;
+
+  // 1) Some pages have hreflang, others don't → inconsistent implementation
+  if (pagesWithHreflang.length > 0 && pagesWithHreflang.length < pages.length) {
+    const missingOn = pages.filter(p => p.hreflangs.length === 0);
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Hreflang-Tags fehlen auf ${missingOn.length} von ${pages.length} Seiten`,
+      title_en: `Hreflang tags missing on ${missingOn.length} of ${pages.length} pages`,
+      description_de: 'Hreflang muss auf allen Sprachvarianten einer Seite gesetzt sein — sonst kann Google die Sprachbeziehung nicht zuverlässig auflösen und die falsche Variante im SERP ausliefern.',
+      description_en: 'Hreflang must be set on every language variant of a page — otherwise Google cannot reliably resolve the language relationship and may serve the wrong variant in SERPs.',
+      recommendation_de: `Hreflang-Tags auf allen übersetzten Seiten ergänzen. Betroffen u.a.: ${missingOn.slice(0, 3).map(p => p.url).join(', ')}${missingOn.length > 3 ? '...' : ''}`,
+      recommendation_en: `Add hreflang tags on all translated pages. Affected e.g.: ${missingOn.slice(0, 3).map(p => p.url).join(', ')}${missingOn.length > 3 ? '...' : ''}`,
+    });
+  }
+
+  // Per-page checks
+  for (const page of pagesWithHreflang) {
+    const hreflangs = page.hreflangs;
+
+    // 2) Invalid language codes
+    const invalid = hreflangs.filter(h => !HREFLANG_PATTERN.test(h.hreflang));
+    if (invalid.length > 0) {
+      findings.push({
+        id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+        title_de: `Ungültige hreflang-Werte: ${invalid.map(h => `"${h.hreflang}"`).join(', ')}`,
+        title_en: `Invalid hreflang values: ${invalid.map(h => `"${h.hreflang}"`).join(', ')}`,
+        description_de: 'Gültige Werte sind ISO 639-1 Sprachcodes (z.B. "de", "en"), optional mit ISO 3166-1 Region ("de-CH", "en-US"), oder "x-default". Ungültige Werte werden von Google ignoriert.',
+        description_en: 'Valid values are ISO 639-1 language codes (e.g. "de", "en"), optionally with ISO 3166-1 region ("de-CH", "en-US"), or "x-default". Invalid values are ignored by Google.',
+        recommendation_de: 'Sprachcodes auf korrektes Format umstellen. Groß-/Kleinschreibung beachten: Sprache klein, Region groß ("de-DE" statt "DE-de").',
+        recommendation_en: 'Fix language codes to the correct format. Mind the case: language lowercase, region uppercase ("de-DE" not "DE-de").',
+        affectedUrl: page.url,
+      });
+    }
+
+    // 3) Self-reference missing
+    const hasSelfRef = hreflangs.some(h => {
+      try {
+        return new URL(h.href).href === new URL(page.url).href;
+      } catch {
+        return false;
+      }
+    });
+    if (!hasSelfRef) {
+      findings.push({
+        id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+        title_de: 'Hreflang-Selbstreferenz fehlt',
+        title_en: 'Hreflang self-reference missing',
+        description_de: 'Jede Seite muss einen hreflang-Tag haben, der auf sich selbst zeigt. Ohne Selbstreferenz gilt die Sprachgruppe für Google als unvollständig.',
+        description_en: 'Every page must have a hreflang tag pointing to itself. Without self-reference, Google considers the language group incomplete.',
+        recommendation_de: `Auf dieser Seite einen hreflang-Tag mit href="${page.url}" und dem passenden Sprachcode ergänzen.`,
+        recommendation_en: `Add a hreflang tag on this page with href="${page.url}" and the matching language code.`,
+        affectedUrl: page.url,
+      });
+    }
+
+    // 4) x-default missing (only flag once per distinct set to avoid spam — but we check per page anyway)
+    const hasXDefault = hreflangs.some(h => h.hreflang === 'x-default');
+    if (!hasXDefault) {
+      findings.push({
+        id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+        title_de: 'Hreflang "x-default" fehlt',
+        title_en: 'Hreflang "x-default" missing',
+        description_de: '"x-default" legt fest, welche Variante Google ausliefert, wenn keine Sprachversion zur Nutzerpräferenz passt. Empfohlen bei mehrsprachigen Seiten.',
+        description_en: '"x-default" defines which variant Google serves when no language version matches the user preference. Recommended for multilingual sites.',
+        recommendation_de: 'Einen hreflang-Tag mit hreflang="x-default" und href auf die Standard-/Fallback-Variante (meist Englisch oder die Hauptseite) ergänzen.',
+        recommendation_en: 'Add a hreflang tag with hreflang="x-default" and href pointing to the default/fallback variant (usually English or the main page).',
+        affectedUrl: page.url,
+      });
+    }
+
+    // 5) Relative hrefs (should be absolute per Google's guidance)
+    const relative = hreflangs.filter(h => !/^https?:\/\//i.test(h.href));
+    if (relative.length > 0) {
+      findings.push({
+        id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'low',
+        title_de: `Hreflang mit relativen URLs: ${relative.length}`,
+        title_en: `Hreflang with relative URLs: ${relative.length}`,
+        description_de: 'Google empfiehlt absolute URLs in hreflang-Tags. Relative URLs werden zwar oft korrekt aufgelöst, sind aber fehleranfällig bei Basis-Tag-Änderungen.',
+        description_en: 'Google recommends absolute URLs in hreflang tags. Relative URLs are often resolved correctly but are error-prone when base tags change.',
+        recommendation_de: 'Alle hreflang-href-Werte auf vollständige absolute URLs umstellen.',
+        recommendation_en: 'Change all hreflang href values to fully absolute URLs.',
+        affectedUrl: page.url,
+      });
+    }
+  }
+
+  // 6) Bidirectional reciprocity — only checkable across crawled pages.
+  // If page A lists hreflang pointing to page B (within the crawl), B must list A back.
+  const pageUrlSet = new Set(pages.map(p => {
+    try { return new URL(p.url).href; } catch { return p.url; }
+  }));
+  const hreflangsByUrl = new Map<string, { hreflang: string; href: string }[]>();
+  for (const p of pagesWithHreflang) {
+    try {
+      hreflangsByUrl.set(new URL(p.url).href, p.hreflangs);
+    } catch {
+      hreflangsByUrl.set(p.url, p.hreflangs);
+    }
+  }
+
+  const reciprocityIssues: { from: string; to: string }[] = [];
+  for (const [fromUrl, hreflangs] of hreflangsByUrl) {
+    for (const hl of hreflangs) {
+      if (hl.hreflang === 'x-default') continue;
+      let targetUrl: string;
+      try {
+        targetUrl = new URL(hl.href).href;
+      } catch {
+        continue;
+      }
+      if (targetUrl === fromUrl) continue; // self-ref
+      if (!pageUrlSet.has(targetUrl)) continue; // target not in crawl — can't verify
+      const targetHreflangs = hreflangsByUrl.get(targetUrl) || [];
+      const linksBack = targetHreflangs.some(h => {
+        try {
+          return new URL(h.href).href === fromUrl;
+        } catch {
+          return false;
+        }
+      });
+      if (!linksBack) {
+        reciprocityIssues.push({ from: fromUrl, to: targetUrl });
+      }
+    }
+  }
+
+  if (reciprocityIssues.length > 0) {
+    const sample = reciprocityIssues.slice(0, 3).map(r => `${r.from} → ${r.to}`).join('; ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Hreflang nicht bidirektional: ${reciprocityIssues.length} Fälle`,
+      title_en: `Hreflang not bidirectional: ${reciprocityIssues.length} cases`,
+      description_de: `Wenn Seite A per hreflang auf Seite B verweist, muss B auch zurück auf A verweisen. Fehlende Rückverweise werden von Google ignoriert. Beispiele: ${sample}`,
+      description_en: `If page A references page B via hreflang, B must also reference A back. Missing back-references are ignored by Google. Examples: ${sample}`,
+      recommendation_de: 'Auf jeder Seite der Sprachgruppe exakt dieselbe hreflang-Liste ausliefern (einschließlich aller Varianten + x-default + Selbstreferenz).',
+      recommendation_en: 'Serve the exact same hreflang list on every page of the language group (including all variants + x-default + self-reference).',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  SECURITY HEADERS FINDINGS
 // ============================================================
 export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Finding[] {

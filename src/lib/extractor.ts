@@ -19,6 +19,23 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Canonical
   const canonical = root.querySelector('link[rel="canonical"]')?.getAttribute('href')?.trim();
 
+  // Hreflang (link[rel="alternate"][hreflang])
+  const hreflangEls = root.querySelectorAll('link[rel="alternate"][hreflang]');
+  const hreflangs = hreflangEls
+    .map(el => ({
+      hreflang: (el.getAttribute('hreflang') || '').trim(),
+      href: (el.getAttribute('href') || '').trim(),
+    }))
+    .filter(x => x.hreflang && x.href)
+    .map(x => {
+      // Resolve relative URLs to absolute
+      try {
+        return { hreflang: x.hreflang, href: new URL(x.href, page.url).href };
+      } catch {
+        return x;
+      }
+    });
+
   // OG tags
   const ogTitle = root.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim();
   const ogDesc = root.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim();
@@ -117,5 +134,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     renderBlockingScripts,
     modernImageFormats,
     lazyLoadedImages,
+    hreflangs,
   };
 }

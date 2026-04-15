@@ -8,7 +8,8 @@ import {
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
-  generateSafeBrowsingFindings, generateSecurityHeadersFindings, calculateModuleScore
+  generateSafeBrowsingFindings, generateSecurityHeadersFindings,
+  generateHreflangFindings, calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
 
     if (config.modules.includes('seo')) {
       allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
+      allFindings.push(...generateHreflangFindings(pages));
     }
     if (config.modules.includes('content')) {
       allFindings.push(...generateContentFindings(pages));
