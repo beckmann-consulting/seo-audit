@@ -34,224 +34,291 @@ const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   offers: { de: 'Angebote', en: 'Offers' },
 };
 
-export async function POST(req: NextRequest) {
-  try {
-    const config: AuditConfig = await req.json();
+type StreamEvent =
+  | { type: 'progress'; step: string; percent: number; detail?: string }
+  | { type: 'result'; payload: AuditResult }
+  | { type: 'error'; message: string };
 
-    if (!config.url) {
-      return NextResponse.json({ error: 'URL required' }, { status: 400 });
+function encodeSSE(event: StreamEvent): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+// ============================================================
+//  Audit runner — emits progress via `send`, returns the result.
+// ============================================================
+async function runAudit(
+  config: AuditConfig,
+  send: (event: StreamEvent) => void
+): Promise<AuditResult | null> {
+  const progress = (step: string, percent: number, detail?: string) =>
+    send({ type: 'progress', step, percent, detail });
+
+  // Normalize URL
+  let url = config.url.trim();
+  if (!url.startsWith('http')) url = 'https://' + url;
+  const domain = new URL(url).hostname;
+
+  // ---- STEP 1: DNS (5%) ----
+  progress('dns_check', 5);
+  const dnsInfo = config.modules.includes('tech') ? await checkDNS(domain) : undefined;
+
+  // ---- STEP 2: SSL (10%) ----
+  progress('ssl_check', 10);
+  const sslInfo = config.modules.includes('tech') ? await checkSSL(domain) : undefined;
+
+  // ---- STEP 3: robots.txt (15%) ----
+  progress('robots_fetch', 15);
+  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url);
+
+  // ---- STEP 4: sitemap.xml (20%) ----
+  progress('sitemap_fetch', 20);
+  const sitemapInfo = (hasSitemap && sitemapUrl && config.modules.includes('seo'))
+    ? await fetchSitemap(sitemapUrl)
+    : undefined;
+
+  // ---- STEP 5: Crawl (25% → 70%) ----
+  progress('crawl_start', 25);
+  let lastCrawlPercent = 25;
+  const { pages: rawPages, stats: crawlStats } = await crawlSite(
+    url,
+    config.maxPages || 0,
+    (crawled, total, currentUrl) => {
+      const ratio = total > 0 ? crawled / total : 0;
+      const raw = Math.round(25 + ratio * 45);
+      // Monotonic clamp — progress must only go forward
+      const clamped = Math.max(lastCrawlPercent, Math.min(70, raw));
+      lastCrawlPercent = clamped;
+      progress('crawl_progress', clamped, currentUrl);
     }
+  );
 
-    // Normalize URL
-    let url = config.url.trim();
-    if (!url.startsWith('http')) url = 'https://' + url;
-    const domain = new URL(url).hostname;
-
-    // ---- STEP 1: Crawl ----
-    const { pages: rawPages, stats: crawlStats } = await crawlSite(url, config.maxPages || 0);
-
-    if (rawPages.length === 0) {
-      return NextResponse.json({ error: `Could not fetch ${url}. Check the URL.` }, { status: 422 });
-    }
-
-    // ---- STEP 2: Extract SEO data from all pages ----
-    const pages = rawPages.map(p => extractPageSEO(p));
-
-    // ---- STEP 3: robots.txt + sitemap ----
-    const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url);
-    pages[0].hasRobots = hasRobots;
-    pages[0].hasSitemap = hasSitemap;
-
-    // ---- STEP 3c: Parse sitemap XML for coverage + quality checks ----
-    let sitemapInfo = undefined;
-    if (hasSitemap && sitemapUrl && config.modules.includes('seo')) {
-      sitemapInfo = await fetchSitemap(sitemapUrl);
-    }
-
-    // ---- STEP 3b: AI Crawler Readiness ----
-    let aiReadiness = undefined;
-    if (config.modules.includes('seo')) {
-      aiReadiness = await checkAIReadiness(url, robotsContent);
-    }
-
-    // ---- STEP 4: SSL ----
-    let sslInfo = undefined;
-    if (config.modules.includes('tech')) {
-      sslInfo = await checkSSL(domain);
-    }
-
-    // ---- STEP 5: DNS ----
-    let dnsInfo = undefined;
-    if (config.modules.includes('tech')) {
-      dnsInfo = await checkDNS(domain);
-    }
-
-    // ---- STEP 5b: Security Headers ----
-    let securityHeaders = undefined;
-    if (config.modules.includes('tech')) {
-      securityHeaders = await checkSecurityHeaders(url, rawPages[0]?.html);
-    }
-
-    // ---- STEP 6: PageSpeed (optional) ----
-    let pageSpeedData = undefined;
-    if (config.googleApiKey && config.modules.includes('performance')) {
-      pageSpeedData = await checkPageSpeed(url, config.googleApiKey);
-    }
-
-    // ---- STEP 7: Safe Browsing (optional) ----
-    let safeBrowsingData = undefined;
-    if (config.googleApiKey) {
-      safeBrowsingData = await checkSafeBrowsing(url, config.googleApiKey);
-    }
-
-    // ---- STEP 8: Generate findings ----
-    const allHtml = rawPages.map(p => p.html).join('\n');
-    const allFindings: Finding[] = [];
-
-    if (config.modules.includes('seo')) {
-      allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
-      allFindings.push(...generateHreflangFindings(pages));
-      allFindings.push(...generateAIReadinessFindings(aiReadiness));
-      allFindings.push(...generateStructuredDataFindings(pages));
-      allFindings.push(...generateDuplicateContentFindings(pages));
-      allFindings.push(...generateCrawlStructureFindings(pages));
-      allFindings.push(...generateSitemapCoverageFindings(pages, sitemapInfo));
-      allFindings.push(...generateAnchorTextFindings(pages));
-      allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo));
-      allFindings.push(...generateOpenGraphFindings(pages));
-      allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
-    }
-    if (config.modules.includes('content')) {
-      allFindings.push(...generateContentFindings(pages));
-    }
-    if (config.modules.includes('tech')) {
-      allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
-      allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
-      allFindings.push(...generateClientRenderingFindings(pages));
-      allFindings.push(...generateRedirectFindings(pages, url));
-    }
-    if (config.modules.includes('legal')) {
-      allFindings.push(...generateLegalFindings(pages, allHtml));
-    }
-    if (config.modules.includes('ux')) {
-      allFindings.push(...generateUXFindings(pages));
-    }
-    if (config.modules.includes('performance')) {
-      allFindings.push(...generatePerformanceFindings(pageSpeedData));
-    }
-    if (safeBrowsingData) {
-      allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
-    }
-
-    // ---- STEP 8b: Claude content analysis (optional) ----
-    if (config.claudeApiKey && config.modules.includes('content')) {
-      const result = await runClaudeContentAnalysis(config.claudeApiKey, pages, allFindings);
-      if (result.error) {
-        console.error('Claude content analysis failed:', result.error);
-      } else {
-        allFindings.push(...result.findings);
-      }
-    }
-
-    // ---- STEP 9: Scores ----
-    const moduleScores: ModuleScore[] = config.modules.map(m => ({
-      module: m,
-      score: calculateModuleScore(allFindings, m),
-      label_de: MODULE_LABELS[m].de,
-      label_en: MODULE_LABELS[m].en,
-    }));
-
-    // Boost score if PageSpeed is good
-    if (pageSpeedData?.seoScore) {
-      const seoModule = moduleScores.find(m => m.module === 'seo');
-      if (seoModule) {
-        seoModule.score = Math.round((seoModule.score + pageSpeedData.seoScore) / 2);
-      }
-    }
-
-    const totalScore = moduleScores.length > 0
-      ? Math.round(moduleScores.reduce((s, m) => s + m.score, 0) / moduleScores.length)
-      : 50;
-
-    // ---- STEP 10: Strengths ----
-    const strengths_de: string[] = [];
-    const strengths_en: string[] = [];
-
-    if (url.startsWith('https://')) {
-      strengths_de.push('HTTPS aktiv — sichere Verbindung für alle Besucher.');
-      strengths_en.push('HTTPS active — secure connection for all visitors.');
-    }
-    if (hasRobots) {
-      strengths_de.push('robots.txt vorhanden — Suchmaschinen-Crawling korrekt konfiguriert.');
-      strengths_en.push('robots.txt present — search engine crawling correctly configured.');
-    }
-    if (hasSitemap) {
-      strengths_de.push('XML-Sitemap vorhanden — hilft Google alle Seiten zu finden.');
-      strengths_en.push('XML sitemap present — helps Google find all pages.');
-    }
-    if (pages.some(p => p.schemaTypes.length > 0)) {
-      const types = [...new Set(pages.flatMap(p => p.schemaTypes))].slice(0, 3).join(', ');
-      strengths_de.push(`Schema.org Markup vorhanden (${types}) — ermöglicht Rich Snippets.`);
-      strengths_en.push(`Schema.org markup present (${types}) — enables rich snippets.`);
-    }
-    if (sslInfo?.grade && ['A+', 'A', 'A-'].includes(sslInfo.grade)) {
-      strengths_de.push(`Hervorragende SSL-Konfiguration (Grade ${sslInfo.grade}).`);
-      strengths_en.push(`Excellent SSL configuration (Grade ${sslInfo.grade}).`);
-    }
-    if (pageSpeedData?.performanceScore && pageSpeedData.performanceScore >= 75) {
-      strengths_de.push(`Guter PageSpeed Score: ${pageSpeedData.performanceScore}/100.`);
-      strengths_en.push(`Good PageSpeed score: ${pageSpeedData.performanceScore}/100.`);
-    }
-    if (crawlStats.brokenLinks.length === 0) {
-      strengths_de.push('Keine defekten Links gefunden — saubere Link-Struktur.');
-      strengths_en.push('No broken links found — clean link structure.');
-    }
-
-    // Ensure at least 3 strengths
-    if (strengths_de.length < 3) {
-      strengths_de.push(`${crawlStats.crawledPages} Seiten erfolgreich gecrawlt.`);
-      strengths_en.push(`${crawlStats.crawledPages} pages successfully crawled.`);
-    }
-
-    // ---- STEP 11: Summary ----
-    const criticalCount = allFindings.filter(f => f.priority === 'critical').length;
-    const importantCount = allFindings.filter(f => f.priority === 'important').length;
-    const scoreLabel_de = totalScore >= 75 ? 'gut' : totalScore >= 50 ? 'verbesserungswürdig' : 'kritisch';
-    const scoreLabel_en = totalScore >= 75 ? 'good' : totalScore >= 50 ? 'needs improvement' : 'critical';
-
-    const summary_de = `${domain} erreicht einen Gesamt-SEO-Score von ${totalScore}/100 (${scoreLabel_de}). Es wurden ${crawlStats.crawledPages} Seiten gecrawlt und ${allFindings.length} Findings identifiziert — davon ${criticalCount} kritische und ${importantCount} wichtige. ${criticalCount > 0 ? 'Die kritischen Punkte sollten sofort behoben werden.' : 'Die wichtigsten Verbesserungspotenziale liegen in den unten aufgeführten Empfehlungen.'}`;
-    const summary_en = `${domain} achieves an overall SEO score of ${totalScore}/100 (${scoreLabel_en}). ${crawlStats.crawledPages} pages were crawled and ${allFindings.length} findings were identified — ${criticalCount} critical and ${importantCount} important. ${criticalCount > 0 ? 'The critical issues should be addressed immediately.' : 'The main improvement potential lies in the recommendations listed below.'}`;
-
-    // ---- STEP 12: Claude prompt ----
-    const auditResult: AuditResult = {
-      config: { ...config, url },
-      auditedAt: new Date().toISOString(),
-      domain,
-      totalScore,
-      moduleScores,
-      findings: allFindings,
-      strengths_de,
-      strengths_en,
-      crawlStats,
-      sslInfo,
-      dnsInfo,
-      pageSpeedData,
-      safeBrowsingData,
-      securityHeaders,
-      aiReadiness,
-      sitemapInfo,
-      pages,
-      claudePrompt: '',
-      summary_de,
-      summary_en,
-    };
-
-    auditResult.claudePrompt = generateClaudePrompt(auditResult);
-
-    return NextResponse.json(auditResult);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('Audit error:', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+  if (rawPages.length === 0) {
+    send({ type: 'error', message: `Could not fetch ${url}. Check the URL.` });
+    return null;
   }
+
+  // Extract SEO data and annotate homepage
+  const pages = rawPages.map(p => extractPageSEO(p));
+  pages[0].hasRobots = hasRobots;
+  pages[0].hasSitemap = hasSitemap;
+
+  // ---- STEP 6: PageSpeed + Safe Browsing (75%) ----
+  progress('pagespeed_check', 75);
+  const pageSpeedData = (config.googleApiKey && config.modules.includes('performance'))
+    ? await checkPageSpeed(url, config.googleApiKey)
+    : undefined;
+  const safeBrowsingData = config.googleApiKey
+    ? await checkSafeBrowsing(url, config.googleApiKey)
+    : undefined;
+
+  // ---- STEP 7: Security Headers (80%) ----
+  progress('security_headers', 80);
+  const securityHeaders = config.modules.includes('tech')
+    ? await checkSecurityHeaders(url, rawPages[0]?.html)
+    : undefined;
+
+  // ---- STEP 8: AI Crawler Readiness (85%) ----
+  progress('ai_crawler_check', 85);
+  const aiReadiness = config.modules.includes('seo')
+    ? await checkAIReadiness(url, robotsContent)
+    : undefined;
+
+  // ---- STEP 9: Findings generation (90%) ----
+  progress('findings_generation', 90);
+  const allHtml = rawPages.map(p => p.html).join('\n');
+  const allFindings: Finding[] = [];
+
+  if (config.modules.includes('seo')) {
+    allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
+    allFindings.push(...generateHreflangFindings(pages));
+    allFindings.push(...generateAIReadinessFindings(aiReadiness));
+    allFindings.push(...generateStructuredDataFindings(pages));
+    allFindings.push(...generateDuplicateContentFindings(pages));
+    allFindings.push(...generateCrawlStructureFindings(pages));
+    allFindings.push(...generateSitemapCoverageFindings(pages, sitemapInfo));
+    allFindings.push(...generateAnchorTextFindings(pages));
+    allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo));
+    allFindings.push(...generateOpenGraphFindings(pages));
+    allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
+  }
+  if (config.modules.includes('content')) {
+    allFindings.push(...generateContentFindings(pages));
+  }
+  if (config.modules.includes('tech')) {
+    allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
+    allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
+    allFindings.push(...generateClientRenderingFindings(pages));
+    allFindings.push(...generateRedirectFindings(pages, url));
+  }
+  if (config.modules.includes('legal')) {
+    allFindings.push(...generateLegalFindings(pages, allHtml));
+  }
+  if (config.modules.includes('ux')) {
+    allFindings.push(...generateUXFindings(pages));
+  }
+  if (config.modules.includes('performance')) {
+    allFindings.push(...generatePerformanceFindings(pageSpeedData));
+  }
+  if (safeBrowsingData) {
+    allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
+  }
+
+  // ---- STEP 10: Claude content analysis (95%, only if API key) ----
+  if (config.claudeApiKey && config.modules.includes('content')) {
+    progress('claude_analysis', 95);
+    const claudeResult = await runClaudeContentAnalysis(config.claudeApiKey, pages, allFindings);
+    if (claudeResult.error) {
+      console.error('Claude content analysis failed:', claudeResult.error);
+    } else {
+      allFindings.push(...claudeResult.findings);
+    }
+  }
+
+  // ---- Scores ----
+  const moduleScores: ModuleScore[] = config.modules.map(m => ({
+    module: m,
+    score: calculateModuleScore(allFindings, m),
+    label_de: MODULE_LABELS[m].de,
+    label_en: MODULE_LABELS[m].en,
+  }));
+
+  if (pageSpeedData?.seoScore) {
+    const seoModule = moduleScores.find(m => m.module === 'seo');
+    if (seoModule) {
+      seoModule.score = Math.round((seoModule.score + pageSpeedData.seoScore) / 2);
+    }
+  }
+
+  const totalScore = moduleScores.length > 0
+    ? Math.round(moduleScores.reduce((s, m) => s + m.score, 0) / moduleScores.length)
+    : 50;
+
+  // ---- Strengths ----
+  const strengths_de: string[] = [];
+  const strengths_en: string[] = [];
+
+  if (url.startsWith('https://')) {
+    strengths_de.push('HTTPS aktiv — sichere Verbindung für alle Besucher.');
+    strengths_en.push('HTTPS active — secure connection for all visitors.');
+  }
+  if (hasRobots) {
+    strengths_de.push('robots.txt vorhanden — Suchmaschinen-Crawling korrekt konfiguriert.');
+    strengths_en.push('robots.txt present — search engine crawling correctly configured.');
+  }
+  if (hasSitemap) {
+    strengths_de.push('XML-Sitemap vorhanden — hilft Google alle Seiten zu finden.');
+    strengths_en.push('XML sitemap present — helps Google find all pages.');
+  }
+  if (pages.some(p => p.schemaTypes.length > 0)) {
+    const types = [...new Set(pages.flatMap(p => p.schemaTypes))].slice(0, 3).join(', ');
+    strengths_de.push(`Schema.org Markup vorhanden (${types}) — ermöglicht Rich Snippets.`);
+    strengths_en.push(`Schema.org markup present (${types}) — enables rich snippets.`);
+  }
+  if (sslInfo?.grade && ['A+', 'A', 'A-'].includes(sslInfo.grade)) {
+    strengths_de.push(`Hervorragende SSL-Konfiguration (Grade ${sslInfo.grade}).`);
+    strengths_en.push(`Excellent SSL configuration (Grade ${sslInfo.grade}).`);
+  }
+  if (pageSpeedData?.performanceScore && pageSpeedData.performanceScore >= 75) {
+    strengths_de.push(`Guter PageSpeed Score: ${pageSpeedData.performanceScore}/100.`);
+    strengths_en.push(`Good PageSpeed score: ${pageSpeedData.performanceScore}/100.`);
+  }
+  if (crawlStats.brokenLinks.length === 0) {
+    strengths_de.push('Keine defekten Links gefunden — saubere Link-Struktur.');
+    strengths_en.push('No broken links found — clean link structure.');
+  }
+  if (strengths_de.length < 3) {
+    strengths_de.push(`${crawlStats.crawledPages} Seiten erfolgreich gecrawlt.`);
+    strengths_en.push(`${crawlStats.crawledPages} pages successfully crawled.`);
+  }
+
+  // ---- Summary ----
+  const criticalCount = allFindings.filter(f => f.priority === 'critical').length;
+  const importantCount = allFindings.filter(f => f.priority === 'important').length;
+  const scoreLabel_de = totalScore >= 75 ? 'gut' : totalScore >= 50 ? 'verbesserungswürdig' : 'kritisch';
+  const scoreLabel_en = totalScore >= 75 ? 'good' : totalScore >= 50 ? 'needs improvement' : 'critical';
+
+  const summary_de = `${domain} erreicht einen Gesamt-SEO-Score von ${totalScore}/100 (${scoreLabel_de}). Es wurden ${crawlStats.crawledPages} Seiten gecrawlt und ${allFindings.length} Findings identifiziert — davon ${criticalCount} kritische und ${importantCount} wichtige. ${criticalCount > 0 ? 'Die kritischen Punkte sollten sofort behoben werden.' : 'Die wichtigsten Verbesserungspotenziale liegen in den unten aufgeführten Empfehlungen.'}`;
+  const summary_en = `${domain} achieves an overall SEO score of ${totalScore}/100 (${scoreLabel_en}). ${crawlStats.crawledPages} pages were crawled and ${allFindings.length} findings were identified — ${criticalCount} critical and ${importantCount} important. ${criticalCount > 0 ? 'The critical issues should be addressed immediately.' : 'The main improvement potential lies in the recommendations listed below.'}`;
+
+  const auditResult: AuditResult = {
+    config: { ...config, url },
+    auditedAt: new Date().toISOString(),
+    domain,
+    totalScore,
+    moduleScores,
+    findings: allFindings,
+    strengths_de,
+    strengths_en,
+    crawlStats,
+    sslInfo,
+    dnsInfo,
+    pageSpeedData,
+    safeBrowsingData,
+    securityHeaders,
+    aiReadiness,
+    sitemapInfo,
+    pages,
+    claudePrompt: '',
+    summary_de,
+    summary_en,
+  };
+
+  auditResult.claudePrompt = generateClaudePrompt(auditResult);
+
+  progress('complete', 100);
+  return auditResult;
+}
+
+// ============================================================
+//  POST handler — always responds with an SSE stream
+// ============================================================
+export async function POST(req: NextRequest) {
+  let config: AuditConfig;
+  try {
+    config = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  if (!config.url) {
+    return NextResponse.json({ error: 'URL required' }, { status: 400 });
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      const send = (event: StreamEvent) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encodeSSE(event));
+        } catch {
+          // Controller already closed (client disconnected)
+          closed = true;
+        }
+      };
+
+      try {
+        const result = await runAudit(config, send);
+        if (result) {
+          send({ type: 'result', payload: result });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('Audit error:', message);
+        send({ type: 'error', message });
+      } finally {
+        closed = true;
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }

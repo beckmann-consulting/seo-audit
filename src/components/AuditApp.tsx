@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { AuditResult, Module, AuditConfig, Lang } from '@/types';
 
 const ALL_MODULES: { id: Module; label_de: string; label_en: string; desc_de: string; desc_en: string }[] = [
@@ -49,13 +49,15 @@ export default function AuditApp() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
+  const [progressDetail, setProgressDetail] = useState('');
   const [result, setResult] = useState<AuditResult | null>(null);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'prompt'>('findings');
   const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   const [showConfig, setShowConfig] = useState(true);
   const [copied, setCopied] = useState(false);
-  const progressInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  // progressInterval previously held a fake setInterval; progress now
+  // comes from an SSE-style stream so the ref is no longer needed.
 
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
@@ -66,32 +68,44 @@ export default function AuditApp() {
   const isDE = lang === 'de';
   const t = (de: string, en: string) => isDE ? de : en;
 
-  const STAGES = [
-    t('Website wird gecrawlt…', 'Crawling website…'),
-    t('SEO-Daten werden extrahiert…', 'Extracting SEO data…'),
-    t('SSL & DNS werden geprüft…', 'Checking SSL & DNS…'),
-    t('Findings werden generiert…', 'Generating findings…'),
-    t('Report wird erstellt…', 'Building report…'),
-  ];
+  // Server step keys → human label (DE/EN). Keys match the progress
+  // events emitted by POST /api/audit.
+  const STEP_LABELS: Record<string, { de: string; en: string }> = {
+    dns_check: { de: 'DNS wird geprüft…', en: 'Checking DNS…' },
+    ssl_check: { de: 'SSL-Zertifikat wird geprüft…', en: 'Checking SSL certificate…' },
+    robots_fetch: { de: 'robots.txt wird geladen…', en: 'Fetching robots.txt…' },
+    sitemap_fetch: { de: 'Sitemap wird geparst…', en: 'Parsing sitemap…' },
+    crawl_start: { de: 'Crawl startet…', en: 'Starting crawl…' },
+    crawl_progress: { de: 'Seiten werden gecrawlt…', en: 'Crawling pages…' },
+    pagespeed_check: { de: 'PageSpeed wird geprüft…', en: 'Checking PageSpeed…' },
+    security_headers: { de: 'Security Headers werden geprüft…', en: 'Checking security headers…' },
+    ai_crawler_check: { de: 'AI-Crawler-Readiness wird geprüft…', en: 'Checking AI crawler readiness…' },
+    findings_generation: { de: 'Findings werden generiert…', en: 'Generating findings…' },
+    claude_analysis: { de: 'Claude-Analyse läuft…', en: 'Running Claude analysis…' },
+    complete: { de: 'Fertig!', en: 'Done!' },
+  };
 
-  function startProgress() {
-    let stage = 0;
-    setProgress(2);
-    setProgressText(STAGES[0]);
-    progressInterval.current = setInterval(() => {
-      setProgress(p => {
-        const next = Math.min(p + Math.random() * 4, 90);
-        const newStage = Math.floor((next / 90) * (STAGES.length - 1));
-        if (newStage !== stage) { stage = newStage; setProgressText(STAGES[stage]); }
-        return next;
-      });
-    }, 500);
-  }
+  type StreamEvent =
+    | { type: 'progress'; step: string; percent: number; detail?: string }
+    | { type: 'result'; payload: AuditResult }
+    | { type: 'error'; message: string };
 
-  function stopProgress() {
-    if (progressInterval.current) clearInterval(progressInterval.current);
-    setProgress(100);
-    setProgressText(t('Fertig!', 'Done!'));
+  function applyStreamEvent(ev: StreamEvent) {
+    if (ev.type === 'progress') {
+      setProgress(ev.percent);
+      const label = STEP_LABELS[ev.step];
+      if (label) setProgressText(isDE ? label.de : label.en);
+      else setProgressText(ev.step);
+      setProgressDetail(ev.detail || '');
+    } else if (ev.type === 'result') {
+      setResult(ev.payload);
+      setActiveTab('findings');
+      setProgress(100);
+      setProgressText(t('Fertig!', 'Done!'));
+    } else if (ev.type === 'error') {
+      setError(ev.message);
+      setShowConfig(true);
+    }
   }
 
   async function runAudit() {
@@ -100,7 +114,9 @@ export default function AuditApp() {
     setError('');
     setResult(null);
     setShowConfig(false);
-    startProgress();
+    setProgress(2);
+    setProgressText(t('Audit startet…', 'Starting audit…'));
+    setProgressDetail('');
 
     const config: AuditConfig = {
       url: url.trim(),
@@ -111,24 +127,66 @@ export default function AuditApp() {
       maxPages: 0,
     };
 
-
     try {
       const resp = await fetch('/api/audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
-      const data = await resp.json();
-      stopProgress();
-      if (!resp.ok || data.error) {
+
+      // Validation / JSON error path — non-stream response
+      if (!resp.ok && !(resp.headers.get('content-type') || '').includes('text/event-stream')) {
+        const data = await resp.json().catch(() => ({ error: 'Unknown error' }));
         setError(data.error || 'Unknown error');
         setShowConfig(true);
-      } else {
-        setResult(data);
-        setActiveTab('findings');
+        setLoading(false);
+        return;
+      }
+
+      if (!resp.body) {
+        setError(t('Kein Response-Body erhalten', 'No response body received'));
+        setShowConfig(true);
+        setLoading(false);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let sawResult = false;
+      let sawError = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by a blank line (\n\n)
+        let sep = buffer.indexOf('\n\n');
+        while (sep !== -1) {
+          const chunk = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          const dataLine = chunk.split('\n').find(line => line.startsWith('data: '));
+          if (dataLine) {
+            const json = dataLine.slice(6);
+            try {
+              const ev = JSON.parse(json) as StreamEvent;
+              applyStreamEvent(ev);
+              if (ev.type === 'result') sawResult = true;
+              if (ev.type === 'error') sawError = true;
+            } catch {
+              // ignore malformed event
+            }
+          }
+          sep = buffer.indexOf('\n\n');
+        }
+      }
+
+      if (!sawResult && !sawError) {
+        setError(t('Stream beendet ohne Ergebnis', 'Stream ended without a result'));
+        setShowConfig(true);
       }
     } catch (e) {
-      stopProgress();
       setError(String(e));
       setShowConfig(true);
     }
@@ -273,7 +331,13 @@ export default function AuditApp() {
           <div style={{ height: 4, background: '#e0ddd8', borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
             <div style={{ height: '100%', width: `${progress}%`, background: '#ff7a00', borderRadius: 2, transition: 'width 0.4s ease' }} />
           </div>
-          <p style={{ fontSize: 12, color: '#6b6b68', margin: 0 }}>{progressText}</p>
+          <p style={{ fontSize: 12, color: '#6b6b68', margin: 0 }}>
+            {progressText}
+            {progressDetail && (
+              <span style={{ marginLeft: 6, color: '#9b9b98', fontSize: 11 }}>· {progressDetail}</span>
+            )}
+            <span style={{ marginLeft: 6, color: '#9b9b98', fontSize: 11 }}>({Math.round(progress)}%)</span>
+          </p>
         </div>
       )}
 
