@@ -16,6 +16,9 @@ import {
   generateSitemapCoverageFindings, generateRedirectFindings,
   generateAnchorTextFindings, generateRobotsConflictFindings,
   generateOpenGraphFindings, generateSitemapQualityFindings,
+  generateRichResultsFindings, generateImageDetailFindings,
+  generateFontLoadingFindings, generateThirdPartyScriptFindings,
+  generateFaviconFindings,
   calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
@@ -139,21 +142,26 @@ async function runAudit(
     allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo));
     allFindings.push(...generateOpenGraphFindings(pages));
     allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
+    allFindings.push(...generateRichResultsFindings(pages, pageSpeedData));
   }
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
+    allFindings.push(...generateImageDetailFindings(pages));
   }
   if (config.modules.includes('tech')) {
     allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
     allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
     allFindings.push(...generateClientRenderingFindings(pages));
     allFindings.push(...generateRedirectFindings(pages, url));
+    allFindings.push(...generateThirdPartyScriptFindings(pages));
   }
   if (config.modules.includes('legal')) {
     allFindings.push(...generateLegalFindings(pages, allHtml));
   }
   if (config.modules.includes('ux')) {
     allFindings.push(...generateUXFindings(pages));
+    allFindings.push(...generateFontLoadingFindings(pages));
+    allFindings.push(...generateFaviconFindings(pages));
   }
   if (config.modules.includes('performance')) {
     allFindings.push(...generatePerformanceFindings(pageSpeedData));

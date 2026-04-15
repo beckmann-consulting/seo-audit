@@ -2031,6 +2031,247 @@ export function generateSitemapCoverageFindings(pages: PageSEOData[], sitemap?: 
 }
 
 // ============================================================
+//  QUICK WIN CHECKS (Block C2)
+// ============================================================
+
+// Check 1 — Rich Results / structured data presence
+export function generateRichResultsFindings(pages: PageSEOData[], pageSpeed?: PageSpeedData): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const anySchemas = pages.some(p => p.schemas.length > 0);
+  if (!anySchemas) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      title_de: 'Keine strukturierten Daten (JSON-LD) gefunden',
+      title_en: 'No structured data (JSON-LD) found',
+      description_de: 'Auf keiner gecrawlten Seite wurde Schema.org-Markup gefunden. Strukturierte Daten sind die Grundlage für Google Rich Results (Sterne-Bewertungen, FAQ-Snippets, Breadcrumb-Darstellung im SERP) und deutliche CTR-Booster.',
+      description_en: 'No Schema.org markup was found on any crawled page. Structured data is the foundation for Google Rich Results (star ratings, FAQ snippets, breadcrumb display in SERP) and a significant CTR booster.',
+      recommendation_de: 'Mindestens Organization auf der Startseite, BreadcrumbList site-weit und ein passender Typ pro Page (Article / Product / Service / LocalBusiness) als JSON-LD ergänzen. Mit dem Google Rich Results Test validieren.',
+      recommendation_en: 'Add at least Organization on the homepage, BreadcrumbList site-wide, and a matching type per page (Article / Product / Service / LocalBusiness) as JSON-LD. Validate with the Google Rich Results Test.',
+    });
+  }
+
+  if (pageSpeed?.structuredDataAuditWarning) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: 'PageSpeed Insights meldet Probleme mit strukturierten Daten',
+      title_en: 'PageSpeed Insights reports structured data issues',
+      description_de: `Lighthouse-Audit "structured-data": ${pageSpeed.structuredDataAuditWarning}. Dies bedeutet, dass Google die Daten zwar findet, aber syntaktische oder semantische Fehler erkennt, die Rich Results verhindern können.`,
+      description_en: `Lighthouse "structured-data" audit: ${pageSpeed.structuredDataAuditWarning}. This means Google finds the data but detects syntactic or semantic errors that may prevent rich results.`,
+      recommendation_de: 'Mit dem Google Rich Results Test (search.google.com/test/rich-results) validieren und die gemeldeten Fehler beheben.',
+      recommendation_en: 'Validate with Google Rich Results Test (search.google.com/test/rich-results) and fix reported errors.',
+    });
+  }
+
+  return findings;
+}
+
+// Check 2 — Image optimisation details
+export function generateImageDetailFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Missing width+height attributes — CLS risk
+  let totalImages = 0;
+  let missingDimensions = 0;
+  for (const p of pages) {
+    totalImages += p.imageDetails.length;
+    for (const img of p.imageDetails) {
+      if (!img.hasWidth || !img.hasHeight) missingDimensions++;
+    }
+  }
+  if (totalImages > 0 && missingDimensions / totalImages > 0.2) {
+    const ratio = Math.round((missingDimensions / totalImages) * 100);
+    findings.push({
+      id: id(), priority: 'important', module: 'content', effort: 'low', impact: 'medium',
+      title_de: `${missingDimensions} von ${totalImages} Bildern ohne width/height (${ratio}%)`,
+      title_en: `${missingDimensions} of ${totalImages} images without width/height (${ratio}%)`,
+      description_de: 'Bilder ohne explizite width- und height-Attribute verursachen Cumulative Layout Shift (CLS), weil der Browser beim ersten Paint nicht weiß, wie viel Platz er reservieren soll. CLS ist ein Google Core Web Vital und Ranking-Faktor.',
+      description_en: 'Images without explicit width and height attributes cause Cumulative Layout Shift (CLS) because the browser cannot reserve space at first paint. CLS is a Google Core Web Vital and ranking factor.',
+      recommendation_de: 'Allen <img>-Tags width- und height-Attribute mit den intrinsischen Pixel-Maßen geben. Per CSS responsive machen mit height: auto. Das verhindert CLS komplett.',
+      recommendation_en: 'Give every <img> tag width and height attributes with the intrinsic pixel dimensions. Make responsive via CSS height: auto. This prevents CLS entirely.',
+    });
+  }
+
+  // Too many non-lazy images (skip the first per page — potential LCP candidate)
+  let eagerlyLoaded = 0;
+  for (const p of pages) {
+    const nonLcpImages = p.imageDetails.slice(1);
+    eagerlyLoaded += nonLcpImages.filter(i => !i.isLazy).length;
+  }
+  if (eagerlyLoaded > 3) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'content', effort: 'low', impact: 'low',
+      title_de: `${eagerlyLoaded} Bilder ohne loading="lazy"`,
+      title_en: `${eagerlyLoaded} images without loading="lazy"`,
+      description_de: 'Bilder jenseits des Viewports sollten via loading="lazy" erst geladen werden, wenn sie relevant werden. Das erste Bild (LCP-Kandidat) sollte allerdings bewusst eager bleiben.',
+      description_en: 'Images below the fold should be lazy-loaded via loading="lazy" so they only download when needed. The first image (LCP candidate) should however be kept eager deliberately.',
+      recommendation_de: 'Allen <img>-Tags außer dem Hero-Bild loading="lazy" hinzufügen. Moderne Browser unterstützen das nativ, kein JS nötig.',
+      recommendation_en: 'Add loading="lazy" to all <img> tags except the hero image. Modern browsers support it natively, no JS needed.',
+    });
+  }
+
+  // Wide images without srcset
+  let wideNoSrcset = 0;
+  for (const p of pages) {
+    for (const img of p.imageDetails) {
+      if (img.declaredWidth && img.declaredWidth > 500 && !img.hasSrcset) wideNoSrcset++;
+    }
+  }
+  if (wideNoSrcset > 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'content', effort: 'medium', impact: 'low',
+      title_de: `${wideNoSrcset} breite Bilder (>500px) ohne srcset`,
+      title_en: `${wideNoSrcset} wide images (>500px) without srcset`,
+      description_de: 'Große Bilder ohne srcset werden auf Mobilgeräten mit der vollen Desktop-Auflösung ausgeliefert — unnötiger Download, langsames LCP.',
+      description_en: 'Large images without srcset are served at full desktop resolution on mobile — unnecessary download, slow LCP.',
+      recommendation_de: 'srcset und sizes-Attribute ergänzen, oder auf <picture> umstellen. Moderne Image-Services (Cloudinary, imgix, Next/image) übernehmen das automatisch.',
+      recommendation_en: 'Add srcset and sizes attributes, or switch to <picture>. Modern image services (Cloudinary, imgix, Next/image) handle this automatically.',
+    });
+  }
+
+  return findings;
+}
+
+// Check 3 — Font loading
+export function generateFontLoadingFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  const homepage = pages[0];
+  if (!homepage) return findings;
+
+  if (homepage.hasExternalFonts && homepage.fontPreloads === 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
+      title_de: 'Externe Fonts ohne <link rel="preload">',
+      title_en: 'External fonts without <link rel="preload">',
+      description_de: 'Es werden externe Fonts (z.B. Google Fonts, Adobe Fonts) geladen, aber keine per <link rel="preload" as="font"> vorangestellt. Das verzögert das erste Rendern kritischer Typografie und sorgt für FOUT/FOIT.',
+      description_en: 'External fonts (e.g. Google Fonts, Adobe Fonts) are loaded, but none are preloaded via <link rel="preload" as="font">. This delays first paint of critical typography and causes FOUT/FOIT.',
+      recommendation_de: 'Kritische Fonts (z.B. den Haupt-Body-Font) im <head> als preload deklarieren: <link rel="preload" href="/fonts/main.woff2" as="font" type="font/woff2" crossorigin>.',
+      recommendation_en: 'Preload critical fonts (e.g. the main body font) in <head>: <link rel="preload" href="/fonts/main.woff2" as="font" type="font/woff2" crossorigin>.',
+    });
+  }
+
+  if (!homepage.hasFontDisplaySwap && homepage.hasExternalFonts) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
+      title_de: 'Kein font-display: swap erkannt',
+      title_en: 'No font-display: swap detected',
+      description_de: 'Inline-CSS enthält keine font-display: swap-Deklaration. Ohne swap zeigen Browser bis zu 3 Sekunden unsichtbaren Text (FOIT), bis die Webfont geladen ist — LCP leidet.',
+      description_en: 'Inline CSS has no font-display: swap declaration. Without swap, browsers show invisible text for up to 3 seconds (FOIT) until the webfont loads — LCP suffers.',
+      recommendation_de: 'Bei selbst gehosteten Fonts: @font-face { ... font-display: swap; }. Bei Google Fonts: &display=swap an die URL anhängen. So zeigt der Browser sofort eine Fallback-Schrift und tauscht sie nahtlos aus.',
+      recommendation_en: 'For self-hosted fonts: @font-face { ... font-display: swap; }. For Google Fonts: append &display=swap to the URL. The browser then shows a fallback font immediately and swaps seamlessly.',
+    });
+  }
+
+  return findings;
+}
+
+// Check 4 — Third-party scripts
+export function generateThirdPartyScriptFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Collect unique third-party domains across the crawl (CDN excluded from "many" heuristic)
+  const domainMap = new Map<string, { category: string; isRenderBlocking: boolean; seenOn: string }>();
+  for (const p of pages) {
+    for (const s of p.thirdPartyScripts) {
+      const existing = domainMap.get(s.domain);
+      if (!existing) {
+        domainMap.set(s.domain, { category: s.category, isRenderBlocking: s.isRenderBlocking, seenOn: p.url });
+      } else if (s.isRenderBlocking) {
+        existing.isRenderBlocking = true;
+      }
+    }
+  }
+
+  // Render-blocking third-party scripts
+  const renderBlocking = [...domainMap.entries()].filter(([, v]) => v.isRenderBlocking && v.category !== 'cdn');
+  if (renderBlocking.length > 0) {
+    const list = renderBlocking.slice(0, 5).map(([d, v]) => `${d} (${v.category})`).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'high',
+      title_de: `${renderBlocking.length} render-blockierende Dritt-Scripts`,
+      title_en: `${renderBlocking.length} render-blocking third-party scripts`,
+      description_de: `Diese externen Scripts blockieren das initiale Rendering weil sie weder async noch defer gesetzt haben: ${list}. Jeder blockierende Script kostet direkt LCP und INP.`,
+      description_en: `These external scripts block initial rendering because they have neither async nor defer: ${list}. Every blocking script directly costs LCP and INP.`,
+      recommendation_de: 'async oder defer auf dem Script-Tag setzen. Bei GTM und Analytics: defer ist meist OK. Bei kritisch-interaktiven Scripts: async. Tracking-Code in einen Tag Manager auslagern falls möglich.',
+      recommendation_en: 'Set async or defer on the script tag. For GTM and analytics: defer is usually OK. For critical interactive scripts: async. Move tracking code into a tag manager if possible.',
+    });
+  }
+
+  // Too many third-party domains (excluding CDN which is fine)
+  const nonCdnCount = [...domainMap.entries()].filter(([, v]) => v.category !== 'cdn').length;
+  if (nonCdnCount > 5) {
+    const byCategory: Record<string, number> = {};
+    for (const [, v] of domainMap) {
+      if (v.category !== 'cdn') byCategory[v.category] = (byCategory[v.category] || 0) + 1;
+    }
+    const breakdown = Object.entries(byCategory).map(([c, n]) => `${c}: ${n}`).join(', ');
+    findings.push({
+      id: id(), priority: 'optional', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: `${nonCdnCount} externe Script-Domains (${breakdown})`,
+      title_en: `${nonCdnCount} external script domains (${breakdown})`,
+      description_de: 'Jede zusätzliche Script-Domain bedeutet einen DNS-Lookup, ein TLS-Handshake und ein weiteres Third-Party-Performance-Risiko. Viele Tracker erhöhen auch die DSGVO-Fläche.',
+      description_en: 'Every additional script domain means a DNS lookup, a TLS handshake and another third-party performance risk. Many trackers also increase your GDPR surface.',
+      recommendation_de: 'Audit: welche Trackings werden wirklich gebraucht? Nicht-essenzielle Scripts (Heatmaps während aktiver Entwicklung, alte Ad-Pixel) entfernen. Rest via Server-Side-Tracking oder Consent-Mode konsolidieren.',
+      recommendation_en: 'Audit: which tracking is actually needed? Remove non-essential scripts (heatmaps during active development, stale ad pixels). Consolidate the rest via server-side tracking or consent mode.',
+    });
+  }
+
+  return findings;
+}
+
+// Check 5 — Favicon / touch icons / web manifest
+export function generateFaviconFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  // Only check the homepage (depth 0) — per-page checks would be noise
+  const homepage = pages.find(p => p.depth === 0) || pages[0];
+  if (!homepage) return findings;
+
+  if (!homepage.hasFavicon) {
+    findings.push({
+      id: id(), priority: 'important', module: 'ux', effort: 'low', impact: 'medium',
+      title_de: 'Kein Favicon',
+      title_en: 'No favicon',
+      description_de: 'Es wurde kein <link rel="icon"> oder <link rel="shortcut icon"> gefunden. Browser zeigen ohne Favicon ein generisches Platzhalter-Icon im Tab, Bookmarks und Browser-History — ein sofortiger Vertrauensverlust und Brand-Signal.',
+      description_en: 'No <link rel="icon"> or <link rel="shortcut icon"> was found. Without a favicon, browsers show a generic placeholder icon in the tab, bookmarks and browser history — an immediate loss of trust and brand signal.',
+      recommendation_de: 'Favicon im <head> ergänzen: <link rel="icon" href="/favicon.ico">. Zusätzlich empfohlen: <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"> für hochauflösende Displays.',
+      recommendation_en: 'Add a favicon in <head>: <link rel="icon" href="/favicon.ico">. Additionally recommended: <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"> for high-DPI displays.',
+      affectedUrl: homepage.url,
+    });
+  }
+
+  if (!homepage.hasAppleTouchIcon) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
+      title_de: 'Kein Apple Touch Icon',
+      title_en: 'No apple-touch-icon',
+      description_de: 'Wenn iOS-Nutzer die Seite zum Home-Screen hinzufügen, fällt iOS auf einen Screenshot der Seite zurück. Ein explizites apple-touch-icon sorgt für ein professionelles App-ähnliches Icon.',
+      description_en: 'When iOS users add the site to their home screen, iOS falls back to a screenshot of the page. An explicit apple-touch-icon provides a professional app-like icon.',
+      recommendation_de: 'Im <head> ergänzen: <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">. PNG mit 180x180 Pixeln, ohne transparenten Hintergrund.',
+      recommendation_en: 'Add to <head>: <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">. PNG at 180x180 pixels, without transparent background.',
+      affectedUrl: homepage.url,
+    });
+  }
+
+  if (!homepage.hasWebManifest) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
+      title_de: 'Kein Web-App-Manifest',
+      title_en: 'No web app manifest',
+      description_de: 'Ein manifest.json macht die Seite zur installierbaren PWA und verbessert das Verhalten auf Android-Home-Screens (eigener Splash-Screen, Theme-Color, App-Name).',
+      description_en: 'A manifest.json turns the site into an installable PWA and improves Android home-screen behaviour (custom splash screen, theme color, app name).',
+      recommendation_de: 'Ein minimales /manifest.json erstellen (name, icons, theme_color, background_color) und per <link rel="manifest" href="/manifest.json"> einbinden.',
+      recommendation_en: 'Create a minimal /manifest.json (name, icons, theme_color, background_color) and link it via <link rel="manifest" href="/manifest.json">.',
+      affectedUrl: homepage.url,
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  SCORING
 // ============================================================
 export function calculateModuleScore(findings: Finding[], module: Module, maxPossible: number = 100): number {

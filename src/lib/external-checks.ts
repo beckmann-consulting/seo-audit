@@ -131,6 +131,13 @@ export async function checkPageSpeed(url: string, apiKey: string): Promise<PageS
     const audits = data.lighthouseResult?.audits;
     const cruxMetrics = data.loadingExperience?.metrics;
 
+    // Lighthouse 'structured-data' is typically a manual audit (scoreDisplayMode: 'manual')
+    // — when present with a <1 score or with warnings, we surface the title string.
+    const structuredDataAudit = audits?.['structured-data'];
+    const structuredDataAuditWarning = structuredDataAudit && structuredDataAudit.score !== null && structuredDataAudit.score < 1
+      ? (structuredDataAudit.title || 'Structured data audit flagged issues')
+      : undefined;
+
     return {
       performanceScore: cats?.performance?.score != null ? Math.round(cats.performance.score * 100) : undefined,
       accessibilityScore: cats?.accessibility?.score != null ? Math.round(cats.accessibility.score * 100) : undefined,
@@ -145,6 +152,7 @@ export async function checkPageSpeed(url: string, apiKey: string): Promise<PageS
       fcp: audits?.['first-contentful-paint']?.numericValue,
       si: audits?.['speed-index']?.numericValue,
       tbt: audits?.['total-blocking-time']?.numericValue,
+      structuredDataAuditWarning,
     };
   } catch (err) {
     return { error: String(err) };

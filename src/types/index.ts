@@ -100,6 +100,7 @@ export interface PageSpeedData {
   fcp?: number;
   si?: number;
   tbt?: number;
+  structuredDataAuditWarning?: string; // Lighthouse 'structured-data' audit surfaces a warning
   error?: string;
 }
 
@@ -217,6 +218,30 @@ export interface PageSEOData {
   genericAnchors: { text: string; href: string }[];
   emptyAnchors: number; // internal links with no usable anchor text and no aria-label
   hasNoindex: boolean; // meta robots contains "noindex"
+  // Check 2 — image optimisation details (per page)
+  imageDetails: {
+    src: string;
+    hasWidth: boolean;
+    hasHeight: boolean;
+    isLazy: boolean;
+    hasSrcset: boolean;
+    declaredWidth?: number;
+  }[];
+  // Check 3 — font loading
+  fontPreloads: number;
+  hasFontDisplaySwap: boolean;
+  hasExternalFonts: boolean;
+  // Check 4 — third-party scripts
+  thirdPartyScripts: {
+    domain: string;
+    category: string;
+    isRenderBlocking: boolean;
+  }[];
+  // Check 5 — favicon / web app manifest
+  hasFavicon: boolean;
+  hasAppleTouchIcon: boolean;
+  hasWebManifest: boolean;
+  hasThemeColor: boolean;
 }
 
 export interface AuditResult {

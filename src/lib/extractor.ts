@@ -1,6 +1,21 @@
 import { parse } from 'node-html-parser';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 
+// Third-party script domain → category (used by Check 4).
+// CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
+// are NOT counted against the "too many trackers" heuristic.
+function categorizeScriptDomain(host: string): string | null {
+  const h = host.toLowerCase();
+  if (/(google-analytics\.com|googletagmanager\.com|gtag)/i.test(h)) return 'analytics';
+  if (/(doubleclick\.net|googlesyndication\.com|adsystem|adservice)/i.test(h)) return 'ads';
+  if (/facebook\.net\/tr|facebook\.com\/tr/i.test(h)) return 'ads';
+  if (/(hotjar\.com|clarity\.ms|fullstory\.com|mouseflow\.com|luckyorange\.com)/i.test(h)) return 'heatmap';
+  if (/(connect\.facebook\.net|platform\.twitter\.com|platform\.linkedin\.com|apis\.google\.com)/i.test(h)) return 'social';
+  if (/(cdnjs\.cloudflare\.com|unpkg\.com|jsdelivr\.net|cdn\.jsdelivr\.net|bootstrapcdn\.com)/i.test(h)) return 'cdn';
+  // Generic external script that we can't classify yet
+  return 'other';
+}
+
 // Generic anchor text blacklist (DE + EN). Normalised to lowercase, trimmed.
 const GENERIC_ANCHOR_TEXTS = new Set([
   // DE
@@ -121,7 +136,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
   });
   const schemaTypes: string[] = schemas.map(s => s.type);
 
-  // Images
+  // Images + per-image details for Check 2
   const images = root.querySelectorAll('img');
   const imagesMissingAlt = images.filter(img => {
     const alt = img.getAttribute('alt');
@@ -132,6 +147,18 @@ export function extractPageSEO(page: PageData): PageSEOData {
     return /\.(webp|avif)(\?|$)/i.test(src);
   }).length;
   const lazyLoadedImages = images.filter(img => img.getAttribute('loading') === 'lazy').length;
+  const imageDetails = images.map(img => {
+    const widthAttr = img.getAttribute('width');
+    const declaredWidth = widthAttr ? parseInt(widthAttr, 10) : undefined;
+    return {
+      src: img.getAttribute('src') || '',
+      hasWidth: !!widthAttr,
+      hasHeight: !!img.getAttribute('height'),
+      isLazy: img.getAttribute('loading') === 'lazy',
+      hasSrcset: !!img.getAttribute('srcset'),
+      declaredWidth: declaredWidth !== undefined && !Number.isNaN(declaredWidth) ? declaredWidth : undefined,
+    };
+  });
 
   // Links + anchor text analysis
   const allLinks = root.querySelectorAll('a[href]');
@@ -222,6 +249,60 @@ export function extractPageSEO(page: PageData): PageSEOData {
     s => !s.getAttribute('async') && !s.getAttribute('defer')
   ).length;
 
+  // Check 3 — Font loading
+  const fontPreloads = root.querySelectorAll('link[rel="preload"][as="font"]').length;
+  const inlineStyleTags = root.querySelectorAll('style');
+  let hasFontDisplaySwap = false;
+  for (const s of inlineStyleTags) {
+    if (/font-display\s*:\s*swap/i.test(s.text)) {
+      hasFontDisplaySwap = true;
+      break;
+    }
+  }
+  // External font stylesheets (Google Fonts, Adobe Fonts etc.) count as external fonts
+  const stylesheetLinks = root.querySelectorAll('link[rel="stylesheet"]');
+  const hasExternalFonts = stylesheetLinks.some(l => {
+    const href = l.getAttribute('href') || '';
+    return /(fonts\.googleapis\.com|fonts\.gstatic\.com|use\.typekit\.net|use\.fontawesome\.com)/i.test(href);
+  });
+
+  // Check 4 — Third-party scripts
+  const allScripts = root.querySelectorAll('script[src]');
+  const thirdPartyScripts: { domain: string; category: string; isRenderBlocking: boolean }[] = [];
+  const seenDomains = new Set<string>();
+  for (const s of allScripts) {
+    const src = s.getAttribute('src') || '';
+    if (!src || src.startsWith('/') || src.startsWith('./') || src.startsWith('#')) continue;
+    let host: string;
+    try {
+      const u = new URL(src, page.url);
+      host = u.hostname;
+    } catch {
+      continue;
+    }
+    if (!host || host === pageHost) continue;
+    const category = categorizeScriptDomain(host);
+    if (category === null) continue;
+    const isRenderBlocking = !s.getAttribute('async') && !s.getAttribute('defer');
+    if (!seenDomains.has(host)) {
+      seenDomains.add(host);
+      thirdPartyScripts.push({ domain: host, category, isRenderBlocking });
+    } else if (isRenderBlocking) {
+      // Upgrade an existing entry to render-blocking if any instance blocks
+      const existing = thirdPartyScripts.find(e => e.domain === host);
+      if (existing) existing.isRenderBlocking = true;
+    }
+  }
+
+  // Check 5 — Favicon / touch icons / manifest / theme color
+  const hasFavicon = !!(
+    root.querySelector('link[rel="icon"]') ||
+    root.querySelector('link[rel="shortcut icon"]')
+  );
+  const hasAppleTouchIcon = !!root.querySelector('link[rel="apple-touch-icon"]');
+  const hasWebManifest = !!root.querySelector('link[rel="manifest"]');
+  const hasThemeColor = !!root.querySelector('meta[name="theme-color"]');
+
   // Client-side rendering detection
   // SPAs usually ship an HTML shell with an empty root element that gets
   // filled in by JS at runtime. Crawlers without JS execution (AI retrieval
@@ -309,5 +390,14 @@ export function extractPageSEO(page: PageData): PageSEOData {
     genericAnchors,
     emptyAnchors,
     hasNoindex,
+    imageDetails,
+    fontPreloads,
+    hasFontDisplaySwap,
+    hasExternalFonts,
+    thirdPartyScripts,
+    hasFavicon,
+    hasAppleTouchIcon,
+    hasWebManifest,
+    hasThemeColor,
   };
 }
