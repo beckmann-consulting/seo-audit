@@ -9,13 +9,12 @@ const BRAND_ORANGE: [number, number, number] = [255, 122, 0];
 const COLOR_TEXT: [number, number, number] = [26, 26, 26];
 const COLOR_SUBTEXT: [number, number, number] = [85, 85, 85];
 const COLOR_BORDER: [number, number, number] = [224, 224, 224];
-const COLOR_WHITE: [number, number, number] = [255, 255, 255];
 const COLOR_CRITICAL: [number, number, number] = [211, 47, 47];
 const COLOR_IMPORTANT: [number, number, number] = [245, 158, 11];
-const COLOR_OPTIONAL: [number, number, number] = [33, 150, 243];
+const COLOR_OPTIONAL: [number, number, number] = [136, 136, 136]; // mid-grey — readable but not dominant
 const COLOR_GOOD: [number, number, number] = [56, 142, 60];
 
-// Recommended / optional share the same blue to match the cover legend
+// Recommended and optional share the same grey — muted, clearly secondary
 const PRIORITY_COLORS: Record<string, [number, number, number]> = {
   critical: COLOR_CRITICAL,
   important: COLOR_IMPORTANT,
@@ -57,17 +56,19 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   const setDraw = (rgb: [number, number, number]) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
 
   // ============================================================
-  //  Page header (orange bar on every non-cover page)
+  //  Page header — white background with thin orange underline
   // ============================================================
   const addPageHeader = () => {
-    setFill(BRAND_ORANGE);
-    doc.rect(0, 0, W, HEADER_H, 'F');
-    setText(COLOR_WHITE);
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text(t('SEO Audit Report', 'SEO Audit Report'), CONTENT_LEFT, 8);
     doc.setFont('helvetica', 'normal');
     doc.text('beckmanndigital.com', CONTENT_RIGHT, 8, { align: 'right' });
+    // Orange underline at the bottom edge of the header band (~1pt)
+    setDraw(BRAND_ORANGE);
+    doc.setLineWidth(0.35);
+    doc.line(CONTENT_LEFT, HEADER_H, CONTENT_RIGHT, HEADER_H);
   };
 
   // Mutable cursor — helpers advance this in place
@@ -81,16 +82,18 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     }
   };
 
-  // H1: full-width orange bar, white bold title
+  // H1: orange bold title with a ~1.5pt orange underline spanning the content width
   const h1 = (text: string) => {
     checkPage(14);
-    setFill(BRAND_ORANGE);
-    doc.rect(CONTENT_LEFT, y, CONTENT_W, 8, 'F');
-    setText(COLOR_WHITE);
+    setText(BRAND_ORANGE);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
-    doc.text(text, CONTENT_LEFT + 4, y + 5.5);
-    y += 12;
+    doc.text(text, CONTENT_LEFT, y + 5);
+    y += 7;
+    setDraw(BRAND_ORANGE);
+    doc.setLineWidth(0.5);
+    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
+    y += 5;
   };
 
   // H2: orange text, thin orange underline
@@ -122,29 +125,34 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   };
 
   // ============================================================
-  //  COVER PAGE (page 1) — no header/footer bar
+  //  COVER PAGE (page 1) — white background, accents only
   // ============================================================
-  // Upper half: orange fill
-  setFill(BRAND_ORANGE);
-  doc.rect(0, 0, W, H / 2, 'F');
-
-  // Title
-  setText(COLOR_WHITE);
+  // Title in brand orange
+  setText(BRAND_ORANGE);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(28);
-  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 60, { align: 'center' });
+  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 55, { align: 'center' });
 
-  // URL
+  // URL in primary text colour
+  setText(COLOR_TEXT);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(14);
-  doc.text(result.domain, W / 2, 78, { align: 'center' });
+  doc.text(result.domain, W / 2, 73, { align: 'center' });
 
-  // Date
+  // Date in subtext
+  setText(COLOR_SUBTEXT);
   doc.setFontSize(11);
-  doc.text(dateStr, W / 2, 90, { align: 'center' });
+  doc.text(dateStr, W / 2, 85, { align: 'center' });
 
-  // Lower half — score
-  const scoreY = 170;
+  // Orange divider (~2pt) below the title block
+  setDraw(BRAND_ORANGE);
+  doc.setLineWidth(0.7);
+  doc.line(CONTENT_LEFT, 96, CONTENT_RIGHT, 96);
+
+  // ------------------------------------------------------------
+  //  Score — centred, big number + "/100" suffix
+  // ------------------------------------------------------------
+  const scoreY = 155;
   const mainScoreCol = scoreColorRgb(result.totalScore);
 
   setText(mainScoreCol);
@@ -155,78 +163,62 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   const scoreStartX = (W - scoreTextWidth - 22) / 2;
   doc.text(scoreStr, scoreStartX, scoreY);
 
-  // "/100" next to the big number
   setText(COLOR_SUBTEXT);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(20);
   doc.text('/100', scoreStartX + scoreTextWidth + 2, scoreY);
 
-  // Horizontal score bar
-  const barY = scoreY + 10;
+  // Horizontal score bar (grey track + coloured fill — track colour is OK,
+  // only orange fills were removed per the redesign spec)
+  const barY = scoreY + 12;
   const barH = 4;
   setFill(COLOR_BORDER);
   doc.roundedRect(CONTENT_LEFT, barY, CONTENT_W, barH, 2, 2, 'F');
   setFill(mainScoreCol);
   doc.roundedRect(CONTENT_LEFT, barY, (CONTENT_W * result.totalScore) / 100, barH, 2, 2, 'F');
 
-  // Legend — three coloured dots
-  const legendY = barY + 14;
-  const legendItems: { color: [number, number, number]; label: string }[] = [
-    { color: COLOR_CRITICAL, label: t('Kritisch', 'Critical') },
-    { color: COLOR_IMPORTANT, label: t('Wichtig', 'Important') },
-    { color: COLOR_OPTIONAL, label: t('Optional', 'Optional') },
-  ];
-  const legendSpacing = 40;
-  const legendTotalW = (legendItems.length - 1) * legendSpacing;
-  const legendStartX = (W - legendTotalW) / 2;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  legendItems.forEach((it, i) => {
-    const cx = legendStartX + i * legendSpacing;
-    setFill(it.color);
-    doc.circle(cx - 10, legendY - 1.3, 1.4, 'F');
-    setText(COLOR_SUBTEXT);
-    doc.text(it.label, cx - 6, legendY);
-  });
-
-  // Author
+  // Author — pushed down to share the newly freed space evenly with the
+  // quick stats (the severity legend that used to live here is gone)
   setText(COLOR_SUBTEXT);
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
+  const authorY = barY + 28;
   doc.text(
     t('Erstellt von TW Beckmann Consultancy Services', 'Created by TW Beckmann Consultancy Services'),
-    W / 2, legendY + 22, { align: 'center' }
+    W / 2, authorY, { align: 'center' }
   );
 
-  // Quick stats below the author
+  // Quick stats row
   const quickStats = [
     { label: t('Gecrawlt', 'Crawled'), value: String(result.crawlStats.crawledPages) },
     { label: t('Findings', 'Findings'), value: String(result.findings.length) },
     { label: t('Kritisch', 'Critical'), value: String(result.findings.filter(f => f.priority === 'critical').length) },
     { label: t('Wichtig', 'Important'), value: String(result.findings.filter(f => f.priority === 'important').length) },
   ];
-  const qsY = legendY + 32;
+  const qsY = authorY + 28;
   const qsSpacing = 40;
   const qsStartX = (W - (quickStats.length - 1) * qsSpacing) / 2;
   quickStats.forEach((s, i) => {
     const cx = qsStartX + i * qsSpacing;
     setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
+    doc.setFontSize(14);
     doc.text(s.value, cx, qsY, { align: 'center' });
     setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(s.label, cx, qsY + 4.5, { align: 'center' });
+    doc.text(s.label, cx, qsY + 5, { align: 'center' });
   });
 
-  // Bottom orange strip with domain + date
-  const stripY = H - 14;
-  setFill(BRAND_ORANGE);
-  doc.rect(0, stripY, W, 14, 'F');
-  setText(COLOR_WHITE);
+  // Bottom area — thin orange top line + muted domain/date text
+  const stripLineY = H - 14;
+  setDraw(BRAND_ORANGE);
+  doc.setLineWidth(0.35);
+  doc.line(CONTENT_LEFT, stripLineY, CONTENT_RIGHT, stripLineY);
+  setText(COLOR_SUBTEXT);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text(`${result.domain} · ${dateStr}`, W / 2, stripY + 9, { align: 'center' });
+  doc.text(`${result.domain} · ${dateStr}`, W / 2, stripLineY + 7, { align: 'center' });
 
   // ============================================================
   //  PAGE 2 — Module overview
@@ -237,8 +229,8 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
   h1(t('Modul-Übersicht', 'Module Overview'));
 
-  for (const ms of result.moduleScores) {
-    checkPage(9);
+  result.moduleScores.forEach((ms, idx) => {
+    checkPage(10);
     setText(COLOR_TEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
@@ -263,7 +255,14 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.text(`${ms.score}/100`, CONTENT_RIGHT, y + 5, { align: 'right' });
 
     y += 9;
-  }
+
+    // Thin orange divider between module rows (skip after the last row)
+    if (idx < result.moduleScores.length - 1) {
+      setDraw(BRAND_ORANGE);
+      doc.setLineWidth(0.15);
+      doc.line(CONTENT_LEFT, y - 1, CONTENT_RIGHT, y - 1);
+    }
+  });
   y += 6;
 
   // ============================================================
@@ -302,53 +301,67 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     const col = PRIORITY_COLORS[f.priority];
     const label = priorityLabels[f.priority][lang];
 
-    // Wrapping widths — leave 6mm left padding for the icon/indent
-    const innerW = CONTENT_W - 10;
-    const titleLines = doc.splitTextToSize(title, innerW);
-    const descLinesAll = doc.splitTextToSize(desc, innerW);
+    // Inner padding for the orange card border
+    const pad = 3;
+    const cardInnerLeft = CONTENT_LEFT + pad + 3; // extra 3mm indent for dot + text
+    const cardInnerW = CONTENT_W - pad * 2 - 3;
+    const titleLines = doc.splitTextToSize(title, cardInnerW);
+    const descLinesAll = doc.splitTextToSize(desc, cardInnerW);
     const descLines = descLinesAll.slice(0, 2); // cap at 2 lines per spec
-    const recLines = doc.splitTextToSize(rec, innerW - 12);
+    const recLines = doc.splitTextToSize(rec, cardInnerW - 12);
 
-    const needed = 5 + titleLines.length * 4.5 + 1 + descLines.length * 4 + 3 + recLines.length * 4 + 6;
-    checkPage(needed);
+    const cardHeight =
+      pad +
+      5 /* severity label row */ +
+      titleLines.length * 4.5 + 0.5 +
+      descLines.length * 4 + 3 +
+      Math.max(4, recLines.length * 4) +
+      pad;
 
-    // Severity dot + label line
+    checkPage(cardHeight + 5);
+    const cardTop = y;
+
+    // Severity dot + label
+    const labelY = cardTop + pad + 2;
     setFill(col);
-    doc.circle(CONTENT_LEFT + 2.2, y + 1.6, 1.5, 'F');
+    doc.circle(CONTENT_LEFT + pad + 1.8, labelY - 0.5, 1.5, 'F');
     setText(col);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
-    doc.text(`${label} · ${f.module.toUpperCase()}`, CONTENT_LEFT + 6, y + 2.2);
-    y += 5;
+    doc.text(`${label} · ${f.module.toUpperCase()}`, cardInnerLeft, labelY);
+    let cursor = cardTop + pad + 5;
 
     // Title
     setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text(titleLines, CONTENT_LEFT + 6, y);
-    y += titleLines.length * 4.5 + 0.5;
+    doc.text(titleLines, cardInnerLeft, cursor);
+    cursor += titleLines.length * 4.5 + 0.5;
 
     // Description (subtext, max 2 lines)
     setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(descLines, CONTENT_LEFT + 6, y + 1);
-    y += descLines.length * 4 + 3;
+    doc.text(descLines, cardInnerLeft, cursor + 1);
+    cursor += descLines.length * 4 + 3;
 
-    // Todo line — "Todo:" bold then recommendation text wrapping to the indent
+    // Todo line — bold "Todo:" label then recommendation with indent
     setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
-    doc.text(t('Todo:', 'Todo:'), CONTENT_LEFT + 6, y);
+    doc.text(t('Todo:', 'Todo:'), cardInnerLeft, cursor);
     doc.setFont('helvetica', 'normal');
-    doc.text(recLines, CONTENT_LEFT + 18, y);
-    y += Math.max(4, recLines.length * 4) + 4;
+    doc.text(recLines, cardInnerLeft + 12, cursor);
+    cursor += Math.max(4, recLines.length * 4);
 
-    // Divider
-    setDraw(COLOR_BORDER);
-    doc.setLineWidth(0.2);
-    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
-    y += 3.5;
+    // Orange card border enclosing the full card height (jsPDF roundedRect
+    // with style 'S' strokes without filling — border radius in mm)
+    const actualHeight = cursor + pad - cardTop;
+    setDraw(BRAND_ORANGE);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(CONTENT_LEFT, cardTop, CONTENT_W, actualHeight, 1, 1, 'S');
+
+    y = cardTop + actualHeight + 4;
   };
 
   sortedFindings.forEach(renderFinding);
@@ -615,14 +628,16 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   }
 
   // ============================================================
-  //  Footers — added last so we know the total page count
+  //  Footers — added last so we know the total page count.
+  //  White background, thin orange top line, muted centred text.
   // ============================================================
   const totalPages = doc.internal.pages.length - 1; // jsPDF pages array is 1-indexed with a leading null
   for (let i = 2; i <= totalPages; i++) {
     doc.setPage(i);
-    setFill(BRAND_ORANGE);
-    doc.rect(0, H - FOOTER_H, W, FOOTER_H, 'F');
-    setText(COLOR_WHITE);
+    setDraw(BRAND_ORANGE);
+    doc.setLineWidth(0.35);
+    doc.line(CONTENT_LEFT, H - FOOTER_H, CONTENT_RIGHT, H - FOOTER_H);
+    setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(
