@@ -327,9 +327,9 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     const col = PRIORITY_COLORS[f.priority];
     const label = priorityLabels[f.priority][lang];
 
-    // Inner padding for the orange card border. No leading severity dot any more,
+    // Inner padding for the card border. No leading severity dot any more,
     // so content starts at pad + small text indent with no reserved icon space.
-    const pad = 3;
+    const pad = 4;
     const cardInnerLeft = CONTENT_LEFT + pad;
     const cardInnerW = CONTENT_W - pad * 2;
     const titleLines = doc.splitTextToSize(title, cardInnerW);
@@ -339,9 +339,9 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
     const cardHeight =
       pad +
-      5 /* severity label row */ +
+      6.5 /* severity label row — gap to title */ +
       titleLines.length * 4.5 + 0.5 +
-      descLines.length * 4 + 3 +
+      descLines.length * 4 + 4.5 /* gap before todo */ +
       Math.max(4, recLines.length * 4) +
       pad;
 
@@ -354,7 +354,7 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.text(`${label.toUpperCase()} · ${f.module.toUpperCase()}`, cardInnerLeft, labelY);
-    let cursor = cardTop + pad + 5;
+    let cursor = cardTop + pad + 6.5;
 
     // Title
     setText(COLOR_TEXT);
@@ -368,7 +368,7 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(descLines, cardInnerLeft, cursor + 1);
-    cursor += descLines.length * 4 + 3;
+    cursor += descLines.length * 4 + 4.5;
 
     // Todo line — bold "Todo:" label then recommendation with indent
     setText(COLOR_TEXT);
