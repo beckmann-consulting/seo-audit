@@ -1464,6 +1464,115 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
 }
 
 // ============================================================
+//  OPEN GRAPH & TWITTER CARD DEEP FINDINGS (Check 5)
+// ============================================================
+export function generateOpenGraphFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const homepage = pages[0];
+
+  // og:image dimensions missing
+  const imagesMissingDimensions = pages.filter(p => p.ogImage && (p.ogImageWidth === undefined || p.ogImageHeight === undefined));
+  if (imagesMissingDimensions.length > 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `og:image ohne Dimensionen auf ${imagesMissingDimensions.length} Seiten`,
+      title_en: `og:image missing dimensions on ${imagesMissingDimensions.length} pages`,
+      description_de: 'og:image ist gesetzt, aber og:image:width und og:image:height fehlen. Ohne Dimensionen müssen Social-Plattformen das Bild herunterladen bevor sie die Vorschau rendern können — das verzögert Link-Previews in Slack, LinkedIn und Facebook.',
+      description_en: 'og:image is set, but og:image:width and og:image:height are missing. Without dimensions, social platforms must download the image before rendering the preview — this delays link previews on Slack, LinkedIn and Facebook.',
+      recommendation_de: 'og:image:width und og:image:height direkt im HTML mitliefern. Empfohlene Größe: 1200x630 Pixel (1.91:1 Ratio).',
+      recommendation_en: 'Include og:image:width and og:image:height directly in the HTML. Recommended size: 1200x630 pixels (1.91:1 ratio).',
+      affectedUrl: imagesMissingDimensions[0].url,
+    });
+  }
+
+  // og:image wrong ratio — target 1.91:1 ± 20%
+  const TARGET_RATIO = 1.91;
+  const TOLERANCE = 0.2;
+  const wrongRatio = pages.filter(p => {
+    if (!p.ogImageWidth || !p.ogImageHeight || p.ogImageHeight === 0) return false;
+    const ratio = p.ogImageWidth / p.ogImageHeight;
+    return Math.abs(ratio - TARGET_RATIO) / TARGET_RATIO > TOLERANCE;
+  });
+  if (wrongRatio.length > 0) {
+    const first = wrongRatio[0];
+    const ratio = first.ogImageWidth && first.ogImageHeight ? (first.ogImageWidth / first.ogImageHeight).toFixed(2) : '?';
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `og:image mit ungewöhnlichem Seitenverhältnis auf ${wrongRatio.length} Seiten`,
+      title_en: `og:image with unusual aspect ratio on ${wrongRatio.length} pages`,
+      description_de: `Empfohlenes Seitenverhältnis für og:image ist 1.91:1 (1200x630). Gefunden z.B.: ${ratio}:1 (${first.ogImageWidth}x${first.ogImageHeight}). Plattformen croppen oder skalieren das Bild, was zu unschönen Previews führt.`,
+      description_en: `Recommended aspect ratio for og:image is 1.91:1 (1200x630). Found e.g.: ${ratio}:1 (${first.ogImageWidth}x${first.ogImageHeight}). Platforms crop or scale the image, leading to ugly previews.`,
+      recommendation_de: 'og:image in 1200x630 exportieren oder zumindest ein Verhältnis nahe 1.91:1 wählen.',
+      recommendation_en: 'Export og:image as 1200x630 or at least choose a ratio close to 1.91:1.',
+      affectedUrl: first.url,
+    });
+  }
+
+  // og:locale missing — only flag on homepage level to avoid spam
+  if (homepage.ogImage && !homepage.ogLocale) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: 'og:locale fehlt',
+      title_en: 'og:locale missing',
+      description_de: 'og:locale hilft Plattformen wie Facebook, die richtige Sprache für die Link-Vorschau zu wählen. Ohne Angabe fällt auf en_US zurück, was bei DE-Seiten zu Mix-Ups führen kann.',
+      description_en: 'og:locale helps platforms like Facebook pick the right language for link previews. Without it, they fall back to en_US which can cause mismatches on non-English sites.',
+      recommendation_de: 'Im <head> ergänzen: <meta property="og:locale" content="de_DE"> (oder der passenden Sprache).',
+      recommendation_en: 'Add to <head>: <meta property="og:locale" content="en_US"> (or the matching locale).',
+      affectedUrl: homepage.url,
+    });
+  }
+
+  // twitter:card missing
+  const missingTwitterCard = pages.filter(p => !p.twitterCard);
+  if (missingTwitterCard.length === pages.length) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: 'Kein twitter:card Tag auf dem gesamten Crawl',
+      title_en: 'No twitter:card tag across the entire crawl',
+      description_de: 'Ohne twitter:card fällt Twitter/X auf die og:-Tags zurück. Das funktioniert meist, aber ein expliziter twitter:card="summary_large_image" sorgt für bessere Kontrolle über die Darstellung.',
+      description_en: 'Without twitter:card, Twitter/X falls back to og: tags. That usually works, but explicit twitter:card="summary_large_image" gives better control over the display.',
+      recommendation_de: 'Im <head> ergänzen: <meta name="twitter:card" content="summary_large_image">.',
+      recommendation_en: 'Add to <head>: <meta name="twitter:card" content="summary_large_image">.',
+      affectedUrl: homepage.url,
+    });
+  }
+
+  // twitter:image differs from og:image — informational only
+  const divergentImages = pages.filter(p => p.ogImage && p.twitterImage && p.ogImage !== p.twitterImage);
+  if (divergentImages.length > 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `twitter:image weicht von og:image ab auf ${divergentImages.length} Seiten`,
+      title_en: `twitter:image differs from og:image on ${divergentImages.length} pages`,
+      description_de: 'twitter:image und og:image sind beide gesetzt, zeigen aber auf unterschiedliche Bilder. Das ist meist unbeabsichtigt und führt dazu, dass Social-Previews je nach Plattform anders aussehen.',
+      description_en: 'twitter:image and og:image are both set but point to different images. This is usually unintended and causes social previews to look different depending on platform.',
+      recommendation_de: 'Entweder nur og:image setzen (twitter:image wegnehmen) oder beide bewusst identisch halten.',
+      recommendation_en: 'Either only set og:image (remove twitter:image) or deliberately keep both identical.',
+      affectedUrl: divergentImages[0].url,
+    });
+  }
+
+  // og:description > 200 chars
+  const longDescriptions = pages.filter(p => p.ogDescription && p.ogDescription.length > 200);
+  if (longDescriptions.length > 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `og:description zu lang auf ${longDescriptions.length} Seiten`,
+      title_en: `og:description too long on ${longDescriptions.length} pages`,
+      description_de: 'og:description > 200 Zeichen wird von Facebook und LinkedIn abgeschnitten. Für optimale Vorschauen zwischen 55 und 200 Zeichen halten.',
+      description_en: 'og:description > 200 characters is truncated by Facebook and LinkedIn. Keep between 55 and 200 characters for optimal previews.',
+      recommendation_de: 'og:description kürzen. Der wichtigste Teil sollte in den ersten 100 Zeichen stehen.',
+      recommendation_en: 'Shorten og:description. The most important part should be in the first 100 characters.',
+      affectedUrl: longDescriptions[0].url,
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  ROBOTS.TXT CONFLICT FINDINGS (Check 4)
 // ============================================================
 // Matches the union of User-agent:* and User-agent:Googlebot rule

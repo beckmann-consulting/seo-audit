@@ -177,7 +177,14 @@ export interface PageSEOData {
   ogTitle?: string;
   ogDescription?: string;
   ogImage?: string;
+  ogImageWidth?: number;
+  ogImageHeight?: number;
+  ogImageType?: string;
+  ogLocale?: string;
   twitterCard?: string;
+  twitterTitle?: string;
+  twitterDescription?: string;
+  twitterImage?: string;
   lang?: string;
   hasViewport: boolean;
   hasCharset: boolean;

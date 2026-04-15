@@ -69,13 +69,22 @@ export function extractPageSEO(page: PageData): PageSEOData {
       }
     });
 
-  // OG tags
+  // OG tags (Open Graph)
   const ogTitle = root.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim();
   const ogDesc = root.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim();
   const ogImage = root.querySelector('meta[property="og:image"]')?.getAttribute('content')?.trim();
+  const ogImageWidthStr = root.querySelector('meta[property="og:image:width"]')?.getAttribute('content')?.trim();
+  const ogImageHeightStr = root.querySelector('meta[property="og:image:height"]')?.getAttribute('content')?.trim();
+  const ogImageWidth = ogImageWidthStr ? parseInt(ogImageWidthStr, 10) : undefined;
+  const ogImageHeight = ogImageHeightStr ? parseInt(ogImageHeightStr, 10) : undefined;
+  const ogImageType = root.querySelector('meta[property="og:image:type"]')?.getAttribute('content')?.trim();
+  const ogLocale = root.querySelector('meta[property="og:locale"]')?.getAttribute('content')?.trim();
 
   // Twitter card
   const twitterCard = root.querySelector('meta[name="twitter:card"]')?.getAttribute('content')?.trim();
+  const twitterTitle = root.querySelector('meta[name="twitter:title"]')?.getAttribute('content')?.trim();
+  const twitterDescription = root.querySelector('meta[name="twitter:description"]')?.getAttribute('content')?.trim();
+  const twitterImage = root.querySelector('meta[name="twitter:image"]')?.getAttribute('content')?.trim();
 
   // HTML lang
   const lang = root.querySelector('html')?.getAttribute('lang')?.trim();
@@ -262,7 +271,14 @@ export function extractPageSEO(page: PageData): PageSEOData {
     ogTitle,
     ogDescription: ogDesc,
     ogImage,
+    ogImageWidth: ogImageWidth !== undefined && !Number.isNaN(ogImageWidth) ? ogImageWidth : undefined,
+    ogImageHeight: ogImageHeight !== undefined && !Number.isNaN(ogImageHeight) ? ogImageHeight : undefined,
+    ogImageType,
+    ogLocale,
     twitterCard,
+    twitterTitle,
+    twitterDescription,
+    twitterImage,
     lang,
     hasViewport,
     hasCharset,
