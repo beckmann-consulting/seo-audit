@@ -1,356 +1,429 @@
 'use client';
 
-import type { AuditResult, Lang, Finding, ModuleScore } from '@/types';
+import type { AuditResult, Lang, Finding } from '@/types';
 
+// ============================================================
+//  Brand palette
+// ============================================================
+const BRAND_ORANGE: [number, number, number] = [255, 122, 0];
+const COLOR_TEXT: [number, number, number] = [26, 26, 26];
+const COLOR_SUBTEXT: [number, number, number] = [85, 85, 85];
+const COLOR_BORDER: [number, number, number] = [224, 224, 224];
+const COLOR_WHITE: [number, number, number] = [255, 255, 255];
+const COLOR_CRITICAL: [number, number, number] = [211, 47, 47];
+const COLOR_IMPORTANT: [number, number, number] = [245, 158, 11];
+const COLOR_OPTIONAL: [number, number, number] = [33, 150, 243];
+const COLOR_GOOD: [number, number, number] = [56, 142, 60];
+
+// Recommended / optional share the same blue to match the cover legend
 const PRIORITY_COLORS: Record<string, [number, number, number]> = {
-  critical: [163, 45, 45],
-  important: [133, 79, 11],
-  recommended: [24, 95, 165],
-  optional: [80, 80, 80],
+  critical: COLOR_CRITICAL,
+  important: COLOR_IMPORTANT,
+  recommended: COLOR_OPTIONAL,
+  optional: COLOR_OPTIONAL,
 };
 
-const PRIORITY_LABELS: Record<string, Record<Lang, string>> = {
-  critical: { de: 'Kritisch', en: 'Critical' },
-  important: { de: 'Wichtig', en: 'Important' },
-  recommended: { de: 'Empfohlen', en: 'Recommended' },
-  optional: { de: 'Optional', en: 'Optional' },
-};
+// ============================================================
+//  Page geometry
+// ============================================================
+const W = 210; // A4 portrait width
+const H = 297; // A4 portrait height
+const HEADER_H = 12;
+const FOOTER_H = 8;
+const CONTENT_TOP = HEADER_H + 6; // 18
+const CONTENT_BOTTOM = H - FOOTER_H - 6; // 283
+const CONTENT_LEFT = 15;
+const CONTENT_RIGHT = 195;
+const CONTENT_W = CONTENT_RIGHT - CONTENT_LEFT; // 180
 
-const EFFORT_LABELS: Record<string, Record<Lang, string>> = {
-  low: { de: 'Aufwand: gering', en: 'Effort: low' },
-  medium: { de: 'Aufwand: mittel', en: 'Effort: medium' },
-  high: { de: 'Aufwand: hoch', en: 'Effort: high' },
-};
-
-const IMPACT_LABELS: Record<string, Record<Lang, string>> = {
-  low: { de: 'Impact: gering', en: 'Impact: low' },
-  medium: { de: 'Impact: mittel', en: 'Impact: medium' },
-  high: { de: 'Impact: hoch', en: 'Impact: high' },
-};
+function scoreColorRgb(score: number): [number, number, number] {
+  if (score >= 80) return COLOR_GOOD;
+  if (score >= 50) return COLOR_IMPORTANT;
+  return COLOR_CRITICAL;
+}
 
 export async function generatePDF(result: AuditResult, lang: Lang): Promise<void> {
   const { default: JsPDF } = await import('jspdf');
   const doc = new JsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
   const isDE = lang === 'de';
-  const W = 210;
-  const margin = 18;
-  const contentW = W - margin * 2;
-  let y = margin;
+  const t = (de: string, en: string) => isDE ? de : en;
+  const dateStr = new Date(result.auditedAt).toLocaleDateString(isDE ? 'de-DE' : 'en-GB', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
 
-  const checkPage = (needed: number = 12) => {
-    if (y + needed > 283) { doc.addPage(); y = margin; }
+  const setFill = (rgb: [number, number, number]) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  const setText = (rgb: [number, number, number]) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+  const setDraw = (rgb: [number, number, number]) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+
+  // ============================================================
+  //  Page header (orange bar on every non-cover page)
+  // ============================================================
+  const addPageHeader = () => {
+    setFill(BRAND_ORANGE);
+    doc.rect(0, 0, W, HEADER_H, 'F');
+    setText(COLOR_WHITE);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(t('SEO Audit Report', 'SEO Audit Report'), CONTENT_LEFT, 8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('beckmanndigital.com', CONTENT_RIGHT, 8, { align: 'right' });
   };
 
-  const scoreColor = (s: number): [number, number, number] =>
-    s >= 75 ? [55, 109, 17] : s >= 50 ? [133, 79, 11] : [163, 45, 45];
+  // Mutable cursor — helpers advance this in place
+  let y = 0;
+
+  const checkPage = (needed: number) => {
+    if (y + needed > CONTENT_BOTTOM) {
+      doc.addPage();
+      addPageHeader();
+      y = CONTENT_TOP;
+    }
+  };
+
+  // H1: full-width orange bar, white bold title
+  const h1 = (text: string) => {
+    checkPage(14);
+    setFill(BRAND_ORANGE);
+    doc.rect(CONTENT_LEFT, y, CONTENT_W, 8, 'F');
+    setText(COLOR_WHITE);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(text, CONTENT_LEFT + 4, y + 5.5);
+    y += 12;
+  };
+
+  // H2: orange text, thin orange underline
+  const h2 = (text: string) => {
+    checkPage(10);
+    y += 2;
+    setText(BRAND_ORANGE);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(text, CONTENT_LEFT, y + 3);
+    y += 5;
+    setDraw(BRAND_ORANGE);
+    doc.setLineWidth(0.4);
+    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
+    y += 4;
+  };
+
+  // Tech row: grey label + value, red when ok === false
+  const techRow = (label: string, value: string, ok: boolean = true) => {
+    checkPage(5);
+    setText(COLOR_SUBTEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(label, CONTENT_LEFT + 2, y);
+    setText(ok ? COLOR_TEXT : COLOR_CRITICAL);
+    const valueLines = doc.splitTextToSize(value, CONTENT_W - 65);
+    doc.text(valueLines, CONTENT_LEFT + 60, y);
+    y += valueLines.length * 4 + 0.8;
+  };
 
   // ============================================================
-  //  COVER PAGE
+  //  COVER PAGE (page 1) — no header/footer bar
   // ============================================================
-  doc.setFillColor(15, 15, 15);
-  doc.rect(0, 0, W, 75, 'F');
+  // Upper half: orange fill
+  setFill(BRAND_ORANGE);
+  doc.rect(0, 0, W, H / 2, 'F');
 
   // Title
-  doc.setTextColor(255, 255, 255);
+  setText(COLOR_WHITE);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(24);
-  doc.text(isDE ? 'Website Audit Bericht' : 'Website Audit Report', margin, 28);
+  doc.setFontSize(28);
+  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 60, { align: 'center' });
 
+  // URL
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(13);
-  doc.setTextColor(200, 200, 200);
-  doc.text(result.domain, margin, 39);
-
-  doc.setFontSize(9);
-  doc.setTextColor(150, 150, 150);
-  const dateStr = new Date(result.auditedAt).toLocaleDateString(isDE ? 'de-DE' : 'en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
-  doc.text(`${isDE ? 'Erstellt' : 'Created'}: ${dateStr} · ${result.config.author} · ${isDE ? 'Deutsch' : 'English'}`, margin, 49);
-  doc.text(`${isDE ? 'Gecrawlte Seiten' : 'Pages crawled'}: ${result.crawlStats.crawledPages} · ${isDE ? 'Defekte Links' : 'Broken links'}: ${result.crawlStats.brokenLinks.length}`, margin, 57);
-
-  // Overall score — big
-  const [sr, sg, sb] = scoreColor(result.totalScore);
-  doc.setTextColor(sr, sg, sb);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(52);
-  doc.text(String(result.totalScore), W - margin - 28, 52, { align: 'right' });
   doc.setFontSize(14);
-  doc.setTextColor(180, 180, 180);
-  doc.text(isDE ? 'Gesamtscore' : 'Overall Score', W - margin - 28, 62, { align: 'right' });
-  doc.setFontSize(10);
-  doc.text('· out of 100', W - margin - 28, 69, { align: 'right' });
+  doc.text(result.domain, W / 2, 78, { align: 'center' });
 
-  y = 88;
+  // Date
+  doc.setFontSize(11);
+  doc.text(dateStr, W / 2, 90, { align: 'center' });
 
-  // Module score tiles
-  const tileW = (contentW - 10) / 3;
-  const tileH = 22;
-  result.moduleScores.forEach((ms, i) => {
-    const col = i % 3;
-    const row = Math.floor(i / 3);
-    const tx = margin + col * (tileW + 5);
-    const ty = y + row * (tileH + 5);
-    const [mr, mg, mb] = scoreColor(ms.score);
+  // Lower half — score
+  const scoreY = 170;
+  const mainScoreCol = scoreColorRgb(result.totalScore);
 
-    doc.setFillColor(245, 245, 243);
-    doc.roundedRect(tx, ty, tileW, tileH, 2, 2, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
-    doc.setTextColor(mr, mg, mb);
-    doc.text(String(ms.score), tx + tileW / 2, ty + 12, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(80, 80, 80);
-    doc.text(isDE ? ms.label_de : ms.label_en, tx + tileW / 2, ty + 18.5, { align: 'center' });
+  setText(mainScoreCol);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(48);
+  const scoreStr = String(result.totalScore);
+  const scoreTextWidth = doc.getTextWidth(scoreStr);
+  const scoreStartX = (W - scoreTextWidth - 22) / 2;
+  doc.text(scoreStr, scoreStartX, scoreY);
+
+  // "/100" next to the big number
+  setText(COLOR_SUBTEXT);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(20);
+  doc.text('/100', scoreStartX + scoreTextWidth + 2, scoreY);
+
+  // Horizontal score bar
+  const barY = scoreY + 10;
+  const barH = 4;
+  setFill(COLOR_BORDER);
+  doc.roundedRect(CONTENT_LEFT, barY, CONTENT_W, barH, 2, 2, 'F');
+  setFill(mainScoreCol);
+  doc.roundedRect(CONTENT_LEFT, barY, (CONTENT_W * result.totalScore) / 100, barH, 2, 2, 'F');
+
+  // Legend — three coloured dots
+  const legendY = barY + 14;
+  const legendItems: { color: [number, number, number]; label: string }[] = [
+    { color: COLOR_CRITICAL, label: t('Kritisch', 'Critical') },
+    { color: COLOR_IMPORTANT, label: t('Wichtig', 'Important') },
+    { color: COLOR_OPTIONAL, label: t('Optional', 'Optional') },
+  ];
+  const legendSpacing = 40;
+  const legendTotalW = (legendItems.length - 1) * legendSpacing;
+  const legendStartX = (W - legendTotalW) / 2;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  legendItems.forEach((it, i) => {
+    const cx = legendStartX + i * legendSpacing;
+    setFill(it.color);
+    doc.circle(cx - 10, legendY - 1.3, 1.4, 'F');
+    setText(COLOR_SUBTEXT);
+    doc.text(it.label, cx - 6, legendY);
   });
 
-  const tileRows = Math.ceil(result.moduleScores.length / 3);
-  y += tileRows * (tileH + 5) + 10;
+  // Author
+  setText(COLOR_SUBTEXT);
+  doc.setFontSize(10);
+  doc.text(
+    t('Erstellt von TW Beckmann Consultancy Services', 'Created by TW Beckmann Consultancy Services'),
+    W / 2, legendY + 22, { align: 'center' }
+  );
+
+  // Quick stats below the author
+  const quickStats = [
+    { label: t('Gecrawlt', 'Crawled'), value: String(result.crawlStats.crawledPages) },
+    { label: t('Findings', 'Findings'), value: String(result.findings.length) },
+    { label: t('Kritisch', 'Critical'), value: String(result.findings.filter(f => f.priority === 'critical').length) },
+    { label: t('Wichtig', 'Important'), value: String(result.findings.filter(f => f.priority === 'important').length) },
+  ];
+  const qsY = legendY + 32;
+  const qsSpacing = 40;
+  const qsStartX = (W - (quickStats.length - 1) * qsSpacing) / 2;
+  quickStats.forEach((s, i) => {
+    const cx = qsStartX + i * qsSpacing;
+    setText(COLOR_TEXT);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(s.value, cx, qsY, { align: 'center' });
+    setText(COLOR_SUBTEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(s.label, cx, qsY + 4.5, { align: 'center' });
+  });
+
+  // Bottom orange strip with domain + date
+  const stripY = H - 14;
+  setFill(BRAND_ORANGE);
+  doc.rect(0, stripY, W, 14, 'F');
+  setText(COLOR_WHITE);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`${result.domain} · ${dateStr}`, W / 2, stripY + 9, { align: 'center' });
 
   // ============================================================
-  //  EXECUTIVE SUMMARY
+  //  PAGE 2 — Module overview
   // ============================================================
-  checkPage(30);
-  doc.setDrawColor(220, 220, 218);
-  doc.setLineWidth(0.3);
-  doc.line(margin, y, W - margin, y);
-  y += 8;
+  doc.addPage();
+  addPageHeader();
+  y = CONTENT_TOP;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(15, 15, 15);
-  doc.text(isDE ? 'Zusammenfassung' : 'Executive Summary', margin, y);
+  h1(t('Modul-Übersicht', 'Module Overview'));
+
+  for (const ms of result.moduleScores) {
+    checkPage(9);
+    setText(COLOR_TEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(isDE ? ms.label_de : ms.label_en, CONTENT_LEFT, y + 5);
+
+    // Score bar
+    const labelCol = 55;
+    const scoreCol = 22;
+    const mBarX = CONTENT_LEFT + labelCol;
+    const mBarW = CONTENT_W - labelCol - scoreCol;
+    const mBarY = y + 3;
+    setFill(COLOR_BORDER);
+    doc.roundedRect(mBarX, mBarY, mBarW, 3, 1, 1, 'F');
+    const mCol = scoreColorRgb(ms.score);
+    setFill(mCol);
+    doc.roundedRect(mBarX, mBarY, (mBarW * ms.score) / 100, 3, 1, 1, 'F');
+
+    // Score number right-aligned
+    setText(mCol);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(`${ms.score}/100`, CONTENT_RIGHT, y + 5, { align: 'right' });
+
+    y += 9;
+  }
   y += 6;
 
+  // ============================================================
+  //  Executive summary
+  // ============================================================
+  h1(t('Zusammenfassung', 'Executive Summary'));
+  setText(COLOR_TEXT);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9.5);
-  doc.setTextColor(50, 50, 50);
+  doc.setFontSize(9);
   const summary = isDE ? result.summary_de : result.summary_en;
-  const summaryLines = doc.splitTextToSize(summary, contentW);
-  checkPage(summaryLines.length * 5 + 10);
-  doc.text(summaryLines, margin, y);
-  y += summaryLines.length * 5 + 10;
-
-  // Quick stats bar
-  checkPage(12);
-  const stats = [
-    { label: isDE ? 'Findings' : 'Findings', value: String(result.findings.length) },
-    { label: isDE ? 'Kritisch' : 'Critical', value: String(result.findings.filter(f => f.priority === 'critical').length), color: [163, 45, 45] as [number, number, number] },
-    { label: isDE ? 'Wichtig' : 'Important', value: String(result.findings.filter(f => f.priority === 'important').length), color: [133, 79, 11] as [number, number, number] },
-    { label: isDE ? 'Seiten gecrawlt' : 'Pages crawled', value: String(result.crawlStats.crawledPages) },
-  ];
-  const statW = contentW / stats.length;
-  stats.forEach((s, i) => {
-    const sx = margin + i * statW;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    if (s.color) doc.setTextColor(...s.color);
-    else doc.setTextColor(15, 15, 15);
-    doc.text(s.value, sx + statW / 2, y + 6, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(100, 100, 100);
-    doc.text(s.label, sx + statW / 2, y + 11, { align: 'center' });
-  });
-  y += 18;
-
-  doc.line(margin, y, W - margin, y);
-  y += 8;
+  const summaryLines = doc.splitTextToSize(summary, CONTENT_W);
+  checkPage(summaryLines.length * 4.5 + 6);
+  doc.text(summaryLines, CONTENT_LEFT, y);
+  y += summaryLines.length * 4.5 + 8;
 
   // ============================================================
-  //  FINDINGS
+  //  Findings
   // ============================================================
-  checkPage(10);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(15, 15, 15);
-  doc.text(isDE ? 'Verbesserungsempfehlungen' : 'Improvement Recommendations', margin, y);
-  y += 8;
+  h1(t('Verbesserungsempfehlungen', 'Improvement Recommendations'));
 
-  // Sort: critical first
   const priorityOrder = { critical: 0, important: 1, recommended: 2, optional: 3 };
-  const sortedFindings = [...result.findings].sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+  const sortedFindings = [...result.findings].sort(
+    (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
+  );
+  const priorityLabels: Record<string, { de: string; en: string }> = {
+    critical: { de: 'Kritisch', en: 'Critical' },
+    important: { de: 'Wichtig', en: 'Important' },
+    recommended: { de: 'Optional', en: 'Optional' },
+    optional: { de: 'Optional', en: 'Optional' },
+  };
 
-  sortedFindings.forEach((finding: Finding) => {
-    const title = isDE ? finding.title_de : finding.title_en;
-    const desc = isDE ? finding.description_de : finding.description_en;
-    const rec = isDE ? finding.recommendation_de : finding.recommendation_en;
-    const module = finding.module.charAt(0).toUpperCase() + finding.module.slice(1);
+  const renderFinding = (f: Finding) => {
+    const title = isDE ? f.title_de : f.title_en;
+    const desc = isDE ? f.description_de : f.description_en;
+    const rec = isDE ? f.recommendation_de : f.recommendation_en;
+    const col = PRIORITY_COLORS[f.priority];
+    const label = priorityLabels[f.priority][lang];
 
-    const descLines = doc.splitTextToSize(desc, contentW - 4);
-    const recLines = doc.splitTextToSize(`→ ${rec}`, contentW - 4);
-    const rowH = 10 + descLines.length * 4.2 + recLines.length * 4.2 + 6;
-    checkPage(rowH + 4);
+    // Wrapping widths — leave 6mm left padding for the icon/indent
+    const innerW = CONTENT_W - 10;
+    const titleLines = doc.splitTextToSize(title, innerW);
+    const descLinesAll = doc.splitTextToSize(desc, innerW);
+    const descLines = descLinesAll.slice(0, 2); // cap at 2 lines per spec
+    const recLines = doc.splitTextToSize(rec, innerW - 12);
 
-    // Priority badge
-    const [pr, pg, pb] = PRIORITY_COLORS[finding.priority];
-    doc.setFillColor(pr, pg, pb);
-    doc.roundedRect(margin, y - 4, 22, 5.5, 1, 1, 'F');
+    const needed = 5 + titleLines.length * 4.5 + 1 + descLines.length * 4 + 3 + recLines.length * 4 + 6;
+    checkPage(needed);
+
+    // Severity dot + label line
+    setFill(col);
+    doc.circle(CONTENT_LEFT + 2.2, y + 1.6, 1.5, 'F');
+    setText(col);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    doc.setTextColor(255, 255, 255);
-    doc.text(PRIORITY_LABELS[finding.priority][lang], margin + 11, y, { align: 'center' });
-
-    // Module + effort + impact
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
-    doc.setTextColor(100, 100, 100);
-    doc.text(`${module} · ${EFFORT_LABELS[finding.effort][lang]} · ${IMPACT_LABELS[finding.impact][lang]}`, margin + 25, y);
-
+    doc.text(`${label} · ${f.module.toUpperCase()}`, CONTENT_LEFT + 6, y + 2.2);
     y += 5;
 
     // Title
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 15, 15);
-    const titleLines = doc.splitTextToSize(title, contentW);
-    checkPage(titleLines.length * 5 + 2);
-    doc.text(titleLines, margin, y);
-    y += titleLines.length * 5;
-
-    // Description
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor(55, 55, 55);
-    checkPage(descLines.length * 4.2 + 2);
-    doc.text(descLines, margin, y);
-    y += descLines.length * 4.2 + 1;
-
-    // Recommendation
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8.5);
-    doc.setTextColor(pr, pg, pb);
-    checkPage(recLines.length * 4.2 + 2);
-    doc.text(recLines, margin, y);
-    y += recLines.length * 4.2 + 6;
-
-    // Divider
-    doc.setDrawColor(235, 235, 230);
-    doc.line(margin, y, W - margin, y);
-    y += 5;
-  });
-
-  // ============================================================
-  //  STRENGTHS
-  // ============================================================
-  checkPage(20);
-  y += 4;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(15, 15, 15);
-  doc.text(isDE ? 'Was gut ist' : "What's Working Well", margin, y);
-  y += 7;
-
-  const strengths = isDE ? result.strengths_de : result.strengths_en;
-  strengths.forEach(s => {
-    checkPage(10);
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(55, 109, 17);
-    doc.text('✓', margin, y);
-    doc.setTextColor(40, 40, 40);
-    const lines = doc.splitTextToSize(s, contentW - 6);
-    doc.text(lines, margin + 5, y);
-    y += lines.length * 4.8 + 2;
-  });
+    doc.text(titleLines, CONTENT_LEFT + 6, y);
+    y += titleLines.length * 4.5 + 0.5;
 
-  // ============================================================
-  //  TECHNICAL DETAILS (all modules)
-  // ============================================================
-  const techRow = (label: string, value: string, ok: boolean = true) => {
-    checkPage(6);
+    // Description (subtext, max 2 lines)
+    setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text(label, margin + 2, y);
-    if (ok) doc.setTextColor(30, 30, 30);
-    else doc.setTextColor(163, 45, 45);
-    const valueLines = doc.splitTextToSize(value, contentW - 60);
-    doc.text(valueLines, margin + 55, y);
-    y += valueLines.length * 4 + 1;
-  };
+    doc.text(descLines, CONTENT_LEFT + 6, y + 1);
+    y += descLines.length * 4 + 3;
 
-  const techHeading = (title: string) => {
-    checkPage(14);
-    y += 2;
+    // Todo line — "Todo:" bold then recommendation text wrapping to the indent
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(15, 15, 15);
-    doc.text(title, margin, y);
-    y += 5;
-    doc.setDrawColor(230, 230, 226);
-    doc.line(margin, y, W - margin, y);
-    y += 3;
+    doc.setFontSize(8);
+    doc.text(t('Todo:', 'Todo:'), CONTENT_LEFT + 6, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(recLines, CONTENT_LEFT + 18, y);
+    y += Math.max(4, recLines.length * 4) + 4;
+
+    // Divider
+    setDraw(COLOR_BORDER);
+    doc.setLineWidth(0.2);
+    doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
+    y += 3.5;
   };
 
+  sortedFindings.forEach(renderFinding);
+
+  // ============================================================
+  //  Strengths
+  // ============================================================
+  y += 4;
+  h1(t('Was gut ist', "What's Working Well"));
+
+  const strengths = isDE ? result.strengths_de : result.strengths_en;
+  for (const s of strengths) {
+    checkPage(7);
+    setText(COLOR_GOOD);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('✓', CONTENT_LEFT, y);
+    setText(COLOR_TEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const lines = doc.splitTextToSize(s, CONTENT_W - 8);
+    doc.text(lines, CONTENT_LEFT + 6, y);
+    y += lines.length * 4.5 + 1.5;
+  }
+
+  // ============================================================
+  //  Technical Details (all tech-data blocks)
+  // ============================================================
   const hasAnyTechData =
     result.sslInfo || result.dnsInfo || result.pageSpeedData ||
     result.securityHeaders || result.aiReadiness || result.sitemapInfo ||
     result.safeBrowsingData;
 
   if (hasAnyTechData) {
-    checkPage(20);
-    y += 6;
-    doc.setDrawColor(200, 200, 195);
-    doc.line(margin, y, W - margin, y);
-    y += 8;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.setTextColor(15, 15, 15);
-    doc.text(isDE ? 'Technische Details' : 'Technical Details', margin, y);
-    y += 7;
+    y += 4;
+    h1(t('Technische Details', 'Technical Details'));
 
     // SSL / TLS
     if (result.sslInfo) {
-      techHeading(isDE ? 'SSL / TLS' : 'SSL / TLS');
+      h2(t('SSL / TLS', 'SSL / TLS'));
       const ssl = result.sslInfo;
-      techRow(isDE ? 'Grade' : 'Grade', ssl.grade || (isDE ? 'unbekannt' : 'unknown'), ['A+', 'A', 'A-', 'B'].includes(ssl.grade || ''));
-      techRow(isDE ? 'Gültig' : 'Valid', ssl.valid ? '✓' : '✗', ssl.valid);
+      techRow(t('Grade', 'Grade'), ssl.grade || t('unbekannt', 'unknown'), ['A+', 'A', 'A-', 'B'].includes(ssl.grade || ''));
+      techRow(t('Gültig', 'Valid'), ssl.valid ? '✓' : '✗', ssl.valid);
       if (ssl.daysUntilExpiry !== undefined) {
-        techRow(
-          isDE ? 'Läuft ab in' : 'Expires in',
-          `${ssl.daysUntilExpiry} ${isDE ? 'Tagen' : 'days'}`,
-          ssl.daysUntilExpiry > 30
-        );
+        techRow(t('Läuft ab in', 'Expires in'), `${ssl.daysUntilExpiry} ${t('Tagen', 'days')}`, ssl.daysUntilExpiry > 30);
       }
-      if (ssl.issuer) techRow(isDE ? 'Aussteller' : 'Issuer', ssl.issuer);
+      if (ssl.issuer) techRow(t('Aussteller', 'Issuer'), ssl.issuer);
       if (ssl.protocols && ssl.protocols.length > 0) {
-        techRow(isDE ? 'Protokolle' : 'Protocols', ssl.protocols.join(', '));
+        techRow(t('Protokolle', 'Protocols'), ssl.protocols.join(', '));
       }
     }
 
     // DNS
     if (result.dnsInfo) {
-      techHeading(isDE ? 'DNS & E-Mail' : 'DNS & Email');
-      techRow('SPF', result.dnsInfo.hasSPF ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasSPF);
-      techRow('DKIM', result.dnsInfo.hasDKIM ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasDKIM);
-      techRow('DMARC', result.dnsInfo.hasDMARC ? '✓' : (isDE ? 'fehlt' : 'missing'), result.dnsInfo.hasDMARC);
+      h2(t('DNS & E-Mail', 'DNS & Email'));
+      techRow('SPF', result.dnsInfo.hasSPF ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasSPF);
+      techRow('DKIM', result.dnsInfo.hasDKIM ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasDKIM);
+      techRow('DMARC', result.dnsInfo.hasDMARC ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasDMARC);
       if (result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0) {
         techRow('MX', result.dnsInfo.mxRecords.join(', '));
       }
     }
 
-    // PageSpeed — includes INP + FID field data alongside lab metrics
+    // PageSpeed
     if (result.pageSpeedData && !result.pageSpeedData.error) {
-      techHeading(isDE ? 'PageSpeed (Mobile) & Core Web Vitals' : 'PageSpeed (Mobile) & Core Web Vitals');
+      h2(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'));
       const ps = result.pageSpeedData;
-      if (ps.performanceScore !== undefined) {
-        techRow('Performance', `${ps.performanceScore}/100`, ps.performanceScore >= 50);
-      }
-      if (ps.seoScore !== undefined) {
-        techRow('SEO', `${ps.seoScore}/100`, ps.seoScore >= 75);
-      }
-      if (ps.accessibilityScore !== undefined) {
-        techRow(isDE ? 'Zugänglichkeit' : 'Accessibility', `${ps.accessibilityScore}/100`, ps.accessibilityScore >= 75);
-      }
-      if (ps.bestPracticesScore !== undefined) {
-        techRow(isDE ? 'Best Practices' : 'Best Practices', `${ps.bestPracticesScore}/100`, ps.bestPracticesScore >= 75);
-      }
+      if (ps.performanceScore !== undefined) techRow('Performance', `${ps.performanceScore}/100`, ps.performanceScore >= 50);
+      if (ps.seoScore !== undefined) techRow('SEO', `${ps.seoScore}/100`, ps.seoScore >= 75);
+      if (ps.accessibilityScore !== undefined) techRow(t('Zugänglichkeit', 'Accessibility'), `${ps.accessibilityScore}/100`, ps.accessibilityScore >= 75);
+      if (ps.bestPracticesScore !== undefined) techRow(t('Best Practices', 'Best Practices'), `${ps.bestPracticesScore}/100`, ps.bestPracticesScore >= 75);
       if (ps.lcp !== undefined) techRow('LCP', `${Math.round(ps.lcp / 100) / 10}s`, ps.lcp < 2500);
       if (ps.cls !== undefined) techRow('CLS', ps.cls.toFixed(3), ps.cls < 0.1);
       if (ps.inp !== undefined) techRow('INP', `${Math.round(ps.inp)}ms`, ps.inp < 200);
-      if (ps.fidField !== undefined) techRow(isDE ? 'FID (Feld)' : 'FID (field)', `${Math.round(ps.fidField)}ms`, ps.fidField < 100);
+      if (ps.fidField !== undefined) techRow(t('FID (Feld)', 'FID (field)'), `${Math.round(ps.fidField)}ms`, ps.fidField < 100);
       if (ps.fcp !== undefined) techRow('FCP', `${Math.round(ps.fcp / 100) / 10}s`, ps.fcp < 1800);
       if (ps.ttfb !== undefined) techRow('TTFB', `${Math.round(ps.ttfb)}ms`, ps.ttfb < 800);
       if (ps.tbt !== undefined) techRow('TBT', `${Math.round(ps.tbt)}ms`, ps.tbt < 200);
@@ -358,46 +431,41 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
     // Security Headers
     if (result.securityHeaders && !result.securityHeaders.error) {
-      techHeading(isDE ? 'Security Headers' : 'Security Headers');
+      h2(t('Security Headers', 'Security Headers'));
       const sh = result.securityHeaders;
       techRow(
         'HSTS',
-        sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : (isDE ? 'gesetzt' : 'set')) : (isDE ? 'fehlt' : 'missing'),
+        sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing'),
         !!sh.hsts && (sh.hstsMaxAge ?? 0) >= 15552000
       );
-      techRow('X-Content-Type-Options', sh.xContentTypeOptions || (isDE ? 'fehlt' : 'missing'), sh.xContentTypeOptions?.toLowerCase() === 'nosniff');
+      techRow('X-Content-Type-Options', sh.xContentTypeOptions || t('fehlt', 'missing'), sh.xContentTypeOptions?.toLowerCase() === 'nosniff');
       const frameOk = !!sh.xFrameOptions || /frame-ancestors/i.test(sh.csp || '');
-      techRow(
-        'X-Frame-Options',
-        sh.xFrameOptions || (frameOk ? (isDE ? 'via CSP' : 'via CSP') : (isDE ? 'fehlt' : 'missing')),
-        frameOk
-      );
-      techRow('CSP', sh.csp ? (isDE ? 'gesetzt' : 'set') : (isDE ? 'fehlt' : 'missing'), !!sh.csp);
-      techRow('Referrer-Policy', sh.referrerPolicy || (isDE ? 'fehlt' : 'missing'), !!sh.referrerPolicy);
-      techRow('Permissions-Policy', sh.permissionsPolicy ? (isDE ? 'gesetzt' : 'set') : (isDE ? 'fehlt' : 'missing'), !!sh.permissionsPolicy);
+      techRow('X-Frame-Options', sh.xFrameOptions || (frameOk ? t('via CSP', 'via CSP') : t('fehlt', 'missing')), frameOk);
+      techRow('CSP', sh.csp ? t('gesetzt', 'set') : t('fehlt', 'missing'), !!sh.csp);
+      techRow('Referrer-Policy', sh.referrerPolicy || t('fehlt', 'missing'), !!sh.referrerPolicy);
+      techRow('Permissions-Policy', sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing'), !!sh.permissionsPolicy);
       if (sh.hasCookieSecure === false) {
-        techRow(isDE ? 'Cookie Secure-Flag' : 'Cookie Secure flag', isDE ? 'fehlt' : 'missing', false);
+        techRow(t('Cookie Secure-Flag', 'Cookie Secure flag'), t('fehlt', 'missing'), false);
       }
       if (sh.hasMixedContent) {
-        techRow('Mixed Content', isDE ? 'erkannt' : 'detected', false);
+        techRow('Mixed Content', t('erkannt', 'detected'), false);
       }
     }
 
     // AI Crawler Readiness
     if (result.aiReadiness && !result.aiReadiness.error) {
-      techHeading(isDE ? 'AI Crawler Readiness' : 'AI Crawler Readiness');
+      h2(t('AI Crawler Readiness', 'AI Crawler Readiness'));
       const ai = result.aiReadiness;
-      techRow('llms.txt', ai.hasLlmsTxt ? (isDE ? 'vorhanden' : 'present') : (isDE ? 'fehlt' : 'missing'), ai.hasLlmsTxt);
-      techRow('llms-full.txt', ai.hasLlmsFullTxt ? (isDE ? 'vorhanden' : 'present') : (isDE ? 'fehlt' : 'missing'), ai.hasLlmsFullTxt);
+      techRow('llms.txt', ai.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing'), ai.hasLlmsTxt);
+      techRow('llms-full.txt', ai.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing'), ai.hasLlmsFullTxt);
       for (const b of ai.bots) {
         const valueText = b.status === 'allowed'
-          ? (isDE ? 'erlaubt' : 'allowed')
+          ? t('erlaubt', 'allowed')
           : b.status === 'blocked'
-            ? (isDE ? 'blockiert' : 'blocked')
+            ? t('blockiert', 'blocked')
             : b.status === 'partial'
-              ? (isDE ? 'teilweise' : 'partial')
-              : (isDE ? 'nicht geregelt' : 'unspecified');
-        // Training bots blocked = good (opt-out), retrieval bots blocked = bad
+              ? t('teilweise', 'partial')
+              : t('nicht geregelt', 'unspecified');
         const ok = b.status === 'allowed' || (b.purpose === 'training' && b.status === 'blocked');
         techRow(`${b.bot} (${b.purpose})`, valueText, ok);
       }
@@ -405,35 +473,27 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
     // Sitemap Coverage
     if (result.sitemapInfo && !result.sitemapInfo.error) {
-      techHeading(isDE ? 'Sitemap Coverage' : 'Sitemap Coverage');
+      h2(t('Sitemap Coverage', 'Sitemap Coverage'));
       const sm = result.sitemapInfo;
-      techRow(isDE ? 'URLs in Sitemap' : 'URLs in sitemap', String(sm.urls.length));
-      techRow(isDE ? 'Sitemap-Index' : 'Sitemap index', sm.isIndex ? (isDE ? 'ja' : 'yes') : (isDE ? 'nein' : 'no'));
+      techRow(t('URLs in Sitemap', 'URLs in sitemap'), String(sm.urls.length));
+      techRow(t('Sitemap-Index', 'Sitemap index'), sm.isIndex ? t('ja', 'yes') : t('nein', 'no'));
       if (sm.isIndex) {
-        techRow(isDE ? 'Sub-Sitemaps' : 'Sub-sitemaps', String(sm.subSitemaps.length));
+        techRow(t('Sub-Sitemaps', 'Sub-sitemaps'), String(sm.subSitemaps.length));
       }
       const withLastmod = sm.urls.filter(e => !!e.lastmod).length;
-      techRow(isDE ? 'Mit lastmod' : 'With lastmod', `${withLastmod}/${sm.urls.length}`, withLastmod > 0);
+      techRow(t('Mit lastmod', 'With lastmod'), `${withLastmod}/${sm.urls.length}`, withLastmod > 0);
       const withImages = sm.urls.filter(e => e.imageCount > 0).length;
-      techRow(isDE ? 'Mit Bild-Einträgen' : 'With image entries', String(withImages));
+      techRow(t('Mit Bild-Einträgen', 'With image entries'), String(withImages));
 
       const crawledSet = new Set(result.pages.map(p => p.url));
       const sitemapSet = new Set(sm.urls.map(e => e.url));
       const missingFromCrawl = [...sitemapSet].filter(u => !crawledSet.has(u)).length;
       const missingFromSitemap = [...crawledSet].filter(u => !sitemapSet.has(u)).length;
-      techRow(
-        isDE ? 'In Sitemap, nicht gecrawlt' : 'In sitemap, not crawled',
-        String(missingFromCrawl),
-        missingFromCrawl === 0
-      );
-      techRow(
-        isDE ? 'Gecrawlt, nicht in Sitemap' : 'Crawled, not in sitemap',
-        String(missingFromSitemap),
-        missingFromSitemap === 0
-      );
+      techRow(t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled'), String(missingFromCrawl), missingFromCrawl === 0);
+      techRow(t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap'), String(missingFromSitemap), missingFromSitemap === 0);
     }
 
-    // Redirects (aggregated from pages + crawlStats)
+    // Redirects
     const redirected = result.pages.filter(p => p.redirectChain && p.redirectChain.length > 0);
     const chainPages = redirected.filter(p => p.redirectChain.length > 1);
     const loopPages = redirected.filter(p => {
@@ -448,141 +508,126 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
       p.redirectChain[0]?.startsWith('https://') && p.finalUrl.startsWith('http://')
     );
     if (redirected.length > 0 || result.crawlStats.redirectChains.length > 0) {
-      techHeading(isDE ? 'Redirects' : 'Redirects');
-      techRow(isDE ? 'Mit Redirect gecrawlt' : 'Crawled via redirect', String(redirected.length), redirected.length === 0);
-      techRow(isDE ? 'Ketten (>1 Hop)' : 'Chains (>1 hop)', String(chainPages.length), chainPages.length === 0);
-      techRow(isDE ? 'Schleifen' : 'Loops', String(loopPages.length), loopPages.length === 0);
+      h2(t('Redirects', 'Redirects'));
+      techRow(t('Mit Redirect gecrawlt', 'Crawled via redirect'), String(redirected.length), redirected.length === 0);
+      techRow(t('Ketten (>1 Hop)', 'Chains (>1 hop)'), String(chainPages.length), chainPages.length === 0);
+      techRow(t('Schleifen', 'Loops'), String(loopPages.length), loopPages.length === 0);
       techRow('HTTPS → HTTP', String(downgradePages.length), downgradePages.length === 0);
     }
 
-    // Link Quality (generic anchors + empty anchors + noindex)
+    // Link Quality
     const totalGeneric = result.pages.reduce((s, p) => s + (p.genericAnchors?.length || 0), 0);
     const totalEmpty = result.pages.reduce((s, p) => s + (p.emptyAnchors || 0), 0);
     const noindexPages = result.pages.filter(p => p.hasNoindex).length;
     if (totalGeneric > 0 || totalEmpty > 0 || noindexPages > 0) {
-      techHeading(isDE ? 'Link Quality' : 'Link Quality');
-      techRow(isDE ? 'Generische Ankertexte' : 'Generic anchor texts', String(totalGeneric), totalGeneric === 0);
-      techRow(isDE ? 'Links ohne Text' : 'Links without text', String(totalEmpty), totalEmpty === 0);
-      techRow(isDE ? 'Seiten mit noindex' : 'Pages with noindex', String(noindexPages));
+      h2(t('Link Quality', 'Link Quality'));
+      techRow(t('Generische Ankertexte', 'Generic anchor texts'), String(totalGeneric), totalGeneric === 0);
+      techRow(t('Links ohne Text', 'Links without text'), String(totalEmpty), totalEmpty === 0);
+      techRow(t('Seiten mit noindex', 'Pages with noindex'), String(noindexPages));
     }
 
     // Safe Browsing
     if (result.safeBrowsingData) {
-      techHeading(isDE ? 'Google Safe Browsing' : 'Google Safe Browsing');
+      h2(t('Google Safe Browsing', 'Google Safe Browsing'));
       techRow(
-        isDE ? 'Status' : 'Status',
-        result.safeBrowsingData.isSafe ? (isDE ? 'Sicher' : 'Safe') : (isDE ? 'GEFÄHRLICH' : 'DANGEROUS'),
+        t('Status', 'Status'),
+        result.safeBrowsingData.isSafe ? t('Sicher', 'Safe') : t('GEFÄHRLICH', 'DANGEROUS'),
         result.safeBrowsingData.isSafe
       );
       if (result.safeBrowsingData.threats && result.safeBrowsingData.threats.length > 0) {
-        techRow(isDE ? 'Bedrohungen' : 'Threats', result.safeBrowsingData.threats.join(', '), false);
+        techRow(t('Bedrohungen', 'Threats'), result.safeBrowsingData.threats.join(', '), false);
       }
     }
 
     // Crawl Statistics
-    techHeading(isDE ? 'Crawl-Statistik' : 'Crawl Statistics');
-    techRow(isDE ? 'Seiten gecrawlt' : 'Pages crawled', String(result.crawlStats.crawledPages));
-    techRow(isDE ? 'Defekte Links' : 'Broken links', String(result.crawlStats.brokenLinks.length), result.crawlStats.brokenLinks.length === 0);
-    techRow(isDE ? 'Weiterleitungen' : 'Redirects', String(result.crawlStats.redirectChains.length), result.crawlStats.redirectChains.length < 3);
-    techRow(isDE ? 'Externe Links' : 'External links', String(result.crawlStats.externalLinks));
+    h2(t('Crawl-Statistik', 'Crawl Statistics'));
+    techRow(t('Seiten gecrawlt', 'Pages crawled'), String(result.crawlStats.crawledPages));
+    techRow(t('Defekte Links', 'Broken links'), String(result.crawlStats.brokenLinks.length), result.crawlStats.brokenLinks.length === 0);
+    techRow(t('Weiterleitungen', 'Redirects'), String(result.crawlStats.redirectChains.length), result.crawlStats.redirectChains.length < 3);
+    techRow(t('Externe Links', 'External links'), String(result.crawlStats.externalLinks));
     y += 4;
   }
 
   // ============================================================
-  //  PAGE-BY-PAGE APPENDIX
+  //  Page-by-page appendix
   // ============================================================
   if (result.pages.length > 1) {
-    checkPage(20);
-    y += 6;
-    doc.setDrawColor(200, 200, 195);
-    doc.line(margin, y, W - margin, y);
-    y += 8;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.setTextColor(15, 15, 15);
-    doc.text(isDE ? 'Seitenanalyse (alle gecrawlten Seiten)' : 'Page Analysis (all crawled pages)', margin, y);
-    y += 7;
+    y += 4;
+    h1(t('Seitenanalyse', 'Page Analysis'));
 
     result.pages.forEach((p, i) => {
       checkPage(30);
+      setText(COLOR_TEXT);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
-      doc.setTextColor(15, 15, 15);
-      doc.text(`${i + 1}. ${p.url}`, margin, y);
-      y += 5;
+      const urlLines = doc.splitTextToSize(`${i + 1}. ${p.url}`, CONTENT_W);
+      doc.text(urlLines, CONTENT_LEFT, y);
+      y += urlLines.length * 4.5;
 
       const rows: [string, string][] = [
-        [isDE ? 'Title' : 'Title', p.title ? `"${p.title}" (${p.titleLength} ${isDE ? 'Zeichen' : 'chars'})` : (isDE ? 'FEHLT' : 'MISSING')],
-        [isDE ? 'Meta Description' : 'Meta Description', p.metaDescription ? `${p.metaDescriptionLength} ${isDE ? 'Zeichen' : 'chars'}` : (isDE ? 'FEHLT' : 'MISSING')],
-        ['H1', p.h1s.length > 0 ? `"${p.h1s[0].substring(0, 60)}"${p.h1s.length > 1 ? ` (+${p.h1s.length - 1})` : ''}` : (isDE ? 'FEHLT' : 'MISSING')],
-        [isDE ? 'Schema' : 'Schema', p.schemaTypes.length > 0 ? p.schemaTypes.join(', ') : (isDE ? 'keines' : 'none')],
-        [isDE ? 'Wörter' : 'Words', String(p.wordCount)],
-        [isDE ? 'Bilder ohne Alt' : 'Images missing alt', `${p.imagesMissingAlt}/${p.totalImages}`],
-        [isDE ? 'Klicktiefe' : 'Click depth', String(p.depth)],
+        [t('Title', 'Title'), p.title ? `"${p.title}" (${p.titleLength} ${t('Zeichen', 'chars')})` : t('FEHLT', 'MISSING')],
+        [t('Meta Description', 'Meta Description'), p.metaDescription ? `${p.metaDescriptionLength} ${t('Zeichen', 'chars')}` : t('FEHLT', 'MISSING')],
+        ['H1', p.h1s.length > 0 ? `"${p.h1s[0].substring(0, 60)}"${p.h1s.length > 1 ? ` (+${p.h1s.length - 1})` : ''}` : t('FEHLT', 'MISSING')],
+        [t('Schema', 'Schema'), p.schemaTypes.length > 0 ? p.schemaTypes.join(', ') : t('keines', 'none')],
+        [t('Wörter', 'Words'), String(p.wordCount)],
+        [t('Bilder ohne Alt', 'Images missing alt'), `${p.imagesMissingAlt}/${p.totalImages}`],
+        [t('Klicktiefe', 'Click depth'), String(p.depth)],
       ];
 
       if (p.inlinkCount !== undefined) {
-        rows.push([isDE ? 'Interne Inlinks' : 'Internal inlinks', String(p.inlinkCount)]);
+        rows.push([t('Interne Inlinks', 'Internal inlinks'), String(p.inlinkCount)]);
       }
-      if (p.hasNoindex) {
-        rows.push([isDE ? 'Robots' : 'Robots', 'noindex']);
-      }
+      if (p.hasNoindex) rows.push([t('Robots', 'Robots'), 'noindex']);
       if (p.redirectChain && p.redirectChain.length > 0) {
         const chainStr = p.redirectChain.concat(p.finalUrl).join(' → ');
-        rows.push([
-          isDE ? 'Redirect-Kette' : 'Redirect chain',
-          chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr,
-        ]);
+        rows.push([t('Redirect-Kette', 'Redirect chain'), chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr]);
       }
       if (p.genericAnchors && p.genericAnchors.length > 0) {
         rows.push([
-          isDE ? 'Generische Anker' : 'Generic anchors',
+          t('Generische Anker', 'Generic anchors'),
           `${p.genericAnchors.length} (${p.genericAnchors.slice(0, 2).map(a => `"${a.text}"`).join(', ')}${p.genericAnchors.length > 2 ? '...' : ''})`,
         ]);
       }
       if (p.hreflangs && p.hreflangs.length > 0) {
-        rows.push([
-          'Hreflang',
-          p.hreflangs.map(h => h.hreflang).join(', '),
-        ]);
+        rows.push(['Hreflang', p.hreflangs.map(h => h.hreflang).join(', ')]);
       }
       if (p.likelyClientRendered) {
-        rows.push([
-          isDE ? 'JS-Rendering' : 'JS rendering',
-          p.clientRenderSignal || (isDE ? 'clientseitig gerendert' : 'client-side rendered'),
-        ]);
+        rows.push([t('JS-Rendering', 'JS rendering'), p.clientRenderSignal || t('clientseitig gerendert', 'client-side rendered')]);
       }
 
       rows.forEach(([label, value]) => {
+        checkPage(5);
+        setText(COLOR_SUBTEXT);
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.text(label + ':', margin + 2, y);
-        doc.setTextColor(30, 30, 30);
-        const valueLines = doc.splitTextToSize(value, contentW - 45);
-        doc.text(valueLines, margin + 40, y);
-        y += valueLines.length * 4 + 1;
+        doc.text(label + ':', CONTENT_LEFT + 2, y);
+        setText(COLOR_TEXT);
+        const valueLines = doc.splitTextToSize(value, CONTENT_W - 45);
+        doc.text(valueLines, CONTENT_LEFT + 40, y);
+        y += valueLines.length * 4 + 0.8;
       });
-      y += 3;
-      doc.setDrawColor(240, 240, 238);
-      doc.line(margin, y, W - margin, y);
+      y += 2;
+      setDraw(COLOR_BORDER);
+      doc.setLineWidth(0.2);
+      doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
       y += 4;
     });
   }
 
   // ============================================================
-  //  FOOTER on every page
+  //  Footers — added last so we know the total page count
   // ============================================================
-  const totalPages = doc.getNumberOfPages();
-  for (let i = 1; i <= totalPages; i++) {
+  const totalPages = doc.internal.pages.length - 1; // jsPDF pages array is 1-indexed with a leading null
+  for (let i = 2; i <= totalPages; i++) {
     doc.setPage(i);
+    setFill(BRAND_ORANGE);
+    doc.rect(0, H - FOOTER_H, W, FOOTER_H, 'F');
+    setText(COLOR_WHITE);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(160, 160, 160);
+    doc.setFontSize(8);
     doc.text(
-      `${result.domain} · ${result.config.author} · ${dateStr} · ${isDE ? 'Seite' : 'Page'} ${i}/${totalPages}`,
-      W / 2, 292, { align: 'center' }
+      `${result.domain} · ${result.config.author} · ${dateStr} · ${t('Seite', 'Page')} ${i}/${totalPages}`,
+      W / 2, H - FOOTER_H + 5, { align: 'center' }
     );
   }
 
