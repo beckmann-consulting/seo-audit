@@ -7,6 +7,64 @@ const HEADERS = {
   'Accept-Language': 'en,de;q=0.9',
 };
 
+const MAX_REDIRECT_HOPS = 10;
+
+interface FetchWithRedirectsResult {
+  response?: Response;
+  chain: string[]; // URLs visited in order (excluding the final one)
+  finalUrl: string;
+  loopDetected: boolean;
+  error?: string;
+}
+
+// Follows redirects manually so we can record the full chain, detect
+// loops, and spot protocol downgrades. Returns the last response
+// along with the ordered list of intermediate URLs.
+async function fetchWithRedirectTracking(startUrl: string): Promise<FetchWithRedirectsResult> {
+  const chain: string[] = [];
+  let currentUrl = startUrl;
+  let loopDetected = false;
+
+  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+    try {
+      const resp = await fetch(currentUrl, {
+        headers: HEADERS,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(12000),
+      });
+
+      // 3xx with Location → follow
+      if (resp.status >= 300 && resp.status < 400) {
+        const location = resp.headers.get('location');
+        if (!location) {
+          return { response: resp, chain, finalUrl: currentUrl, loopDetected };
+        }
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(location, currentUrl).href;
+        } catch {
+          return { response: resp, chain, finalUrl: currentUrl, loopDetected };
+        }
+        chain.push(currentUrl);
+        if (chain.includes(nextUrl)) {
+          loopDetected = true;
+          return { response: resp, chain, finalUrl: nextUrl, loopDetected };
+        }
+        currentUrl = nextUrl;
+        continue;
+      }
+
+      // Non-redirect → done
+      return { response: resp, chain, finalUrl: currentUrl, loopDetected };
+    } catch (err) {
+      return { chain, finalUrl: currentUrl, loopDetected, error: String(err) };
+    }
+  }
+
+  // Exhausted hop budget
+  return { chain, finalUrl: currentUrl, loopDetected: true, error: `Exceeded ${MAX_REDIRECT_HOPS} redirect hops` };
+}
+
 function normalizeUrl(url: string, base: string): string | null {
   try {
     const u = new URL(url, base);
@@ -48,21 +106,23 @@ export async function crawlSite(
 
     try {
       const start = Date.now();
-      const resp = await fetch(url, {
-        headers: HEADERS,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(12000),
-      });
+      const tracked = await fetchWithRedirectTracking(url);
+      const resp = tracked.response;
       const loadTime = Date.now() - start;
+
+      if (!resp) {
+        brokenLinks.push(url);
+        continue;
+      }
 
       const contentType = resp.headers.get('content-type') || '';
       if (!contentType.includes('text/html')) {
         continue;
       }
 
-      // Track redirects
-      if (resp.url !== url) {
-        redirectChains.push({ from: url, to: resp.url });
+      // Track redirects in crawl stats (legacy from/to pairs for compatibility)
+      if (tracked.chain.length > 0) {
+        redirectChains.push({ from: url, to: tracked.finalUrl });
       }
 
       if (!resp.ok) {
@@ -72,24 +132,26 @@ export async function crawlSite(
 
       const html = await resp.text();
       pages.push({
-        url: resp.url,
+        url: tracked.finalUrl,
         html,
         statusCode: resp.status,
-        redirectedFrom: resp.url !== url ? url : undefined,
+        redirectedFrom: tracked.chain.length > 0 ? url : undefined,
         loadTime,
         contentType,
         depth,
+        redirectChain: tracked.chain,
+        finalUrl: tracked.finalUrl,
       });
 
-      // Extract links from this page
+      // Extract links from this page (resolve against the FINAL url after redirects)
       const root = parse(html);
       const anchors = root.querySelectorAll('a[href]');
       for (const a of anchors) {
         const href = a.getAttribute('href') || '';
         try {
-          const fullUrl = new URL(href, url);
+          const fullUrl = new URL(href, tracked.finalUrl);
           if (fullUrl.hostname === baseDomain) {
-            const normalized = normalizeUrl(href, url);
+            const normalized = normalizeUrl(href, tracked.finalUrl);
             if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
               queue.push({ url: normalized, depth: depth + 1 });
             }
@@ -98,7 +160,7 @@ export async function crawlSite(
           }
         } catch {}
       }
-    } catch (err) {
+    } catch {
       brokenLinks.push(url);
     }
 

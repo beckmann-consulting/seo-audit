@@ -13,7 +13,8 @@ import {
   generateHreflangFindings, generateAIReadinessFindings,
   generateStructuredDataFindings, generateDuplicateContentFindings,
   generateCrawlStructureFindings, generateClientRenderingFindings,
-  generateSitemapCoverageFindings, calculateModuleScore
+  generateSitemapCoverageFindings, generateRedirectFindings,
+  calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import { runClaudeContentAnalysis } from '@/lib/claude-analysis';
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
       allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
       allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
       allFindings.push(...generateClientRenderingFindings(pages));
+      allFindings.push(...generateRedirectFindings(pages, url));
     }
     if (config.modules.includes('legal')) {
       allFindings.push(...generateLegalFindings(pages, allHtml));

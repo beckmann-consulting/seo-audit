@@ -1463,6 +1463,105 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
 }
 
 // ============================================================
+//  REDIRECT FINDINGS (Check 2)
+// ============================================================
+// The crawler records the full redirect chain per page. We flag:
+// - chains longer than 1 hop (should be direct)
+// - loops (URL appears twice in the chain)
+// - HTTPS → HTTP downgrades
+// - any redirect on the homepage itself
+export function generateRedirectFindings(pages: PageSEOData[], startUrl: string): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Normalised set of crawled pages to look up the homepage
+  const startHost = (() => { try { return new URL(startUrl).hostname; } catch { return ''; } })();
+
+  // Loops — URL appears twice within a single chain
+  const loopPages = pages.filter(p => {
+    if (p.redirectChain.length === 0) return false;
+    const seen = new Set<string>();
+    for (const hop of p.redirectChain) {
+      if (seen.has(hop)) return true;
+      seen.add(hop);
+    }
+    return p.redirectChain.includes(p.finalUrl);
+  });
+  if (loopPages.length > 0) {
+    const sample = loopPages.slice(0, 3).map(p => p.redirectChain.concat(p.finalUrl).join(' → ')).join(' | ');
+    findings.push({
+      id: id(), priority: 'critical', module: 'tech', effort: 'high', impact: 'high',
+      title_de: `Redirect-Schleifen erkannt: ${loopPages.length} Seiten`,
+      title_en: `Redirect loops detected: ${loopPages.length} pages`,
+      description_de: `Die folgenden URLs leiten in eine Schleife weiter — der Browser bricht mit "ERR_TOO_MANY_REDIRECTS" ab und die Seite ist für Nutzer unerreichbar: ${sample}`,
+      description_en: `The following URLs redirect in a loop — browsers abort with "ERR_TOO_MANY_REDIRECTS" and the page is unreachable for users: ${sample}`,
+      recommendation_de: 'Redirect-Konfiguration sofort prüfen (Webserver, CMS-Plugin, CDN). Schleifen entstehen oft durch widersprüchliche Regeln (z.B. HTTPS-Redirect + WWW-Redirect + Language-Redirect).',
+      recommendation_en: 'Check redirect configuration immediately (web server, CMS plugin, CDN). Loops often arise from conflicting rules (e.g. HTTPS redirect + WWW redirect + language redirect).',
+      affectedUrl: loopPages[0].redirectChain[0],
+    });
+  }
+
+  // Chains > 1 hop (excluding loops which already count as critical)
+  const chainPages = pages.filter(p => p.redirectChain.length > 1 && !loopPages.includes(p));
+  if (chainPages.length > 0) {
+    const sample = chainPages.slice(0, 3).map(p => p.redirectChain.concat(p.finalUrl).join(' → ')).join(' | ');
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: `Redirect-Ketten erkannt: ${chainPages.length} Seiten`,
+      title_en: `Redirect chains detected: ${chainPages.length} pages`,
+      description_de: `Bei diesen URLs erfolgen mehrere aufeinanderfolgende Redirects (statt eines direkten Sprungs). Google folgt nur begrenzt vielen Hops — Ranking-Signale und Linkjuice können verloren gehen. Beispiele: ${sample}`,
+      description_en: `These URLs go through multiple sequential redirects (instead of a direct jump). Google only follows a limited number of hops — ranking signals and link equity can be lost. Examples: ${sample}`,
+      recommendation_de: 'Redirect-Regeln konsolidieren: Ziel-URL direkt setzen statt über Zwischenstationen. Typisches Beispiel: "example.com" → "www.example.com" → "https://www.example.com/" → "https://www.example.com/de/" sollte "example.com" → "https://www.example.com/de/" werden.',
+      recommendation_en: 'Consolidate redirect rules: set the target URL directly instead of going through intermediate stops. Typical example: "example.com" → "www.example.com" → "https://www.example.com/" → "https://www.example.com/de/" should become "example.com" → "https://www.example.com/de/".',
+      affectedUrl: chainPages[0].redirectChain[0],
+    });
+  }
+
+  // HTTPS → HTTP downgrade
+  const downgradedPages = pages.filter(p => {
+    if (p.redirectChain.length === 0) return false;
+    // Start was HTTPS but final is HTTP
+    const first = p.redirectChain[0];
+    return first.startsWith('https://') && p.finalUrl.startsWith('http://');
+  });
+  if (downgradedPages.length > 0) {
+    findings.push({
+      id: id(), priority: 'critical', module: 'tech', effort: 'medium', impact: 'high',
+      title_de: `Redirect auf HTTP statt HTTPS: ${downgradedPages.length} Seiten`,
+      title_en: `Redirect to HTTP instead of HTTPS: ${downgradedPages.length} pages`,
+      description_de: 'Diese Seiten werden von HTTPS auf unverschlüsseltes HTTP weitergeleitet. Das öffnet Man-in-the-Middle-Angriffe, Browser markieren die Seite als unsicher und Google rankt HTTP-Ziele schlechter.',
+      description_en: 'These pages redirect from HTTPS to unencrypted HTTP. This opens man-in-the-middle attacks, browsers flag the site as insecure, and Google ranks HTTP targets worse.',
+      recommendation_de: 'Alle Redirects auf HTTPS-Ziele umstellen. HTTP→HTTPS-Redirect korrekt setzen (301), aber niemals den umgekehrten Weg. HSTS-Header ergänzen.',
+      recommendation_en: 'Point all redirects to HTTPS targets. Set the HTTP→HTTPS redirect correctly (301), but never the reverse. Add an HSTS header.',
+      affectedUrl: downgradedPages[0].redirectChain[0],
+    });
+  }
+
+  // Homepage redirect chain
+  const homepage = pages.find(p => {
+    try {
+      return new URL(p.finalUrl).hostname === startHost && (new URL(p.finalUrl).pathname === '/' || p.depth === 0);
+    } catch {
+      return false;
+    }
+  });
+  if (homepage && homepage.redirectChain.length > 1) {
+    findings.push({
+      id: id(), priority: 'critical', module: 'tech', effort: 'medium', impact: 'high',
+      title_de: 'Homepage hat Redirect-Kette',
+      title_en: 'Homepage has redirect chain',
+      description_de: `Die Startseite durchläuft ${homepage.redirectChain.length} Redirect-Hops bevor der finale Inhalt ausgeliefert wird. Das verlangsamt den First Paint messbar (jeder Hop kostet ~100–300ms) und schwächt die Linkjuice-Weitergabe vom Root-Domain-Link. Kette: ${homepage.redirectChain.concat(homepage.finalUrl).join(' → ')}`,
+      description_en: `The start page goes through ${homepage.redirectChain.length} redirect hops before final content is served. This measurably slows down the first paint (each hop costs ~100-300ms) and weakens link equity from root-domain links. Chain: ${homepage.redirectChain.concat(homepage.finalUrl).join(' → ')}`,
+      recommendation_de: 'Homepage-Redirect direkt auf das finale Ziel setzen. Typisch: nur einen einzigen 301 von root → finaler Kombination aus Scheme+Host+Path+Trailing-Slash.',
+      recommendation_en: 'Point the homepage redirect directly to the final target. Typical: just a single 301 from root → final combination of scheme+host+path+trailing slash.',
+      affectedUrl: homepage.redirectChain[0],
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  SITEMAP COVERAGE FINDINGS (Check 1)
 // ============================================================
 // Cross-references crawled URLs against sitemap URLs to find gaps:

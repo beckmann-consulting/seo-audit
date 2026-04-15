@@ -33,6 +33,8 @@ export interface PageData {
   loadTime?: number;
   contentType?: string;
   depth: number; // click distance from the start URL (0 = start page)
+  redirectChain: string[]; // full redirect hops observed for this URL (empty if no redirect)
+  finalUrl: string; // the URL the body was served from (last hop)
 }
 
 export interface Finding {
@@ -184,6 +186,8 @@ export interface PageSEOData {
   schemaParseErrors: number;
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
+  redirectChain: string[]; // propagated from PageData
+  finalUrl: string; // propagated from PageData
   imagesMissingAlt: number;
   totalImages: number;
   internalLinks: string[];

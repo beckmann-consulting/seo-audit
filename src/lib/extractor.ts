@@ -224,6 +224,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
     schemas,
     schemaParseErrors,
     depth: page.depth,
+    redirectChain: page.redirectChain,
+    finalUrl: page.finalUrl,
     imagesMissingAlt,
     totalImages: images.length,
     internalLinks,
