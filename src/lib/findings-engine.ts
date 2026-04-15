@@ -422,6 +422,75 @@ export function generateUXFindings(pages: PageSEOData[]): Finding[] {
     });
   }
 
+  // Viewport blocks zoom (accessibility)
+  if (homepage.hasViewport && homepage.viewportBlocksZoom) {
+    findings.push({
+      id: id(), priority: 'important', module: 'ux', effort: 'low', impact: 'medium',
+      title_de: 'Viewport blockiert Zoom (user-scalable=no oder maximum-scale < 2)',
+      title_en: 'Viewport blocks zoom (user-scalable=no or maximum-scale < 2)',
+      description_de: 'Nutzer können die Seite nicht zoomen — das ist eine schwere Barrierefreiheits-Einschränkung. iOS ignoriert diese Einstellung inzwischen, andere Plattformen nicht.',
+      description_en: 'Users cannot zoom the page — a serious accessibility barrier. iOS now ignores this setting, but other platforms do not.',
+      recommendation_de: 'Im Viewport-Tag "user-scalable=no" und "maximum-scale" entfernen. Empfohlener Wert: "width=device-width, initial-scale=1".',
+      recommendation_en: 'Remove "user-scalable=no" and "maximum-scale" from the viewport tag. Recommended value: "width=device-width, initial-scale=1".',
+    });
+  }
+
+  // Viewport missing initial-scale
+  if (homepage.hasViewport && !homepage.viewportHasInitialScale) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'ux', effort: 'low', impact: 'low',
+      title_de: 'Viewport ohne initial-scale=1',
+      title_en: 'Viewport missing initial-scale=1',
+      description_de: '"initial-scale=1" sorgt für konsistentes Rendering beim ersten Laden auf allen Geräten und Orientierungen.',
+      description_en: '"initial-scale=1" ensures consistent rendering on first load across all devices and orientations.',
+      recommendation_de: 'Viewport-Tag um "initial-scale=1" ergänzen.',
+      recommendation_en: 'Add "initial-scale=1" to the viewport tag.',
+    });
+  }
+
+  // Horizontal overflow risk: pages with many fixed-width elements > 400px
+  const pagesWithFixedWidth = pages.filter(p => p.fixedWidthElements >= 3);
+  if (pagesWithFixedWidth.length > 0) {
+    const total = pagesWithFixedWidth.reduce((s, p) => s + p.fixedWidthElements, 0);
+    findings.push({
+      id: id(), priority: 'recommended', module: 'ux', effort: 'medium', impact: 'medium',
+      title_de: `Fixe Breiten > 400px: ${total} Elemente auf ${pagesWithFixedWidth.length} Seiten`,
+      title_en: `Fixed widths > 400px: ${total} elements on ${pagesWithFixedWidth.length} pages`,
+      description_de: 'Inline-Styles mit festen Pixel-Breiten (ohne max-width) verursachen auf schmalen Mobil-Viewports horizontales Scrollen — Google stuft dies als mobile-usability-Problem ein.',
+      description_en: 'Inline styles with fixed pixel widths (without max-width) cause horizontal scrolling on narrow mobile viewports — Google flags this as a mobile usability issue.',
+      recommendation_de: 'Feste px-Breiten durch relative Einheiten (%, vw, rem) ersetzen oder "max-width: 100%" ergänzen. Bilder mit responsive srcset versehen.',
+      recommendation_en: 'Replace fixed px widths with relative units (%, vw, rem) or add "max-width: 100%". Add responsive srcset to images.',
+    });
+  }
+
+  // Small inline font sizes
+  const pagesWithSmallFonts = pages.filter(p => p.smallFontElements >= 2);
+  if (pagesWithSmallFonts.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'ux', effort: 'low', impact: 'medium',
+      title_de: `Schriftgrößen < 12px auf ${pagesWithSmallFonts.length} Seiten`,
+      title_en: `Font sizes < 12px on ${pagesWithSmallFonts.length} pages`,
+      description_de: 'Sehr kleine Schriftgrößen sind auf Mobilgeräten schwer lesbar. Google empfiehlt Body-Text mindestens 16px, Annotationen nicht unter 12px.',
+      description_en: 'Very small font sizes are hard to read on mobile. Google recommends body text at least 16px, annotations not below 12px.',
+      recommendation_de: 'Schriftgrößen im CSS auf mind. 16px für Fließtext und 12px für sekundäre Texte anheben.',
+      recommendation_en: 'Increase CSS font sizes to at least 16px for body text and 12px for secondary text.',
+    });
+  }
+
+  // Legacy plugins (Flash etc.)
+  const pagesWithLegacyPlugins = pages.filter(p => p.legacyPlugins > 0);
+  if (pagesWithLegacyPlugins.length > 0) {
+    findings.push({
+      id: id(), priority: 'critical', module: 'ux', effort: 'high', impact: 'high',
+      title_de: `Legacy-Plugin-Inhalte (Flash/Shockwave) auf ${pagesWithLegacyPlugins.length} Seiten`,
+      title_en: `Legacy plugin content (Flash/Shockwave) on ${pagesWithLegacyPlugins.length} pages`,
+      description_de: 'Flash wurde 2020 eingestellt und wird von keinem modernen Browser mehr unterstützt. Diese Inhalte sind für alle Nutzer unsichtbar.',
+      description_en: 'Flash was discontinued in 2020 and is not supported by any modern browser. This content is invisible to all users.',
+      recommendation_de: 'Flash-Inhalte durch HTML5-Video, Canvas oder moderne JavaScript-Frameworks ersetzen.',
+      recommendation_en: 'Replace Flash content with HTML5 video, Canvas or modern JavaScript frameworks.',
+    });
+  }
+
   // Social links check
   const hasSocialLinks = pages.some(p =>
     p.externalLinks.some(l =>

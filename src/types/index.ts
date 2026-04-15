@@ -179,6 +179,11 @@ export interface PageSEOData {
   modernImageFormats: number;
   lazyLoadedImages: number;
   hreflangs: { hreflang: string; href: string }[];
+  viewportBlocksZoom: boolean;
+  viewportHasInitialScale: boolean;
+  fixedWidthElements: number;
+  smallFontElements: number;
+  legacyPlugins: number;
 }
 
 export interface AuditResult {

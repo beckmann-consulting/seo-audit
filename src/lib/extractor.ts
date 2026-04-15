@@ -71,6 +71,12 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Viewport
   const viewportContent = root.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
   const hasViewport = viewportContent.includes('width=device-width');
+  // Zoom blocked when user-scalable=no OR maximum-scale < ~2 (both hurt accessibility)
+  const userScalableNo = /user-scalable\s*=\s*(no|0)/i.test(viewportContent);
+  const maxScaleMatch = viewportContent.match(/maximum-scale\s*=\s*([\d.]+)/i);
+  const maxScaleBlocks = maxScaleMatch ? parseFloat(maxScaleMatch[1]) < 2 : false;
+  const viewportBlocksZoom = userScalableNo || maxScaleBlocks;
+  const viewportHasInitialScale = /initial-scale\s*=\s*[\d.]+/i.test(viewportContent);
 
   // Charset
   const hasCharset = !!root.querySelector('meta[charset]');
@@ -120,6 +126,39 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const bodyText = body ? body.text.replace(/\s+/g, ' ').trim() : '';
   const wordCount = bodyText.split(' ').filter(w => w.length > 2).length;
 
+  // Mobile usability: scan inline styles for fixed widths > 400px and small fonts < 12px
+  let fixedWidthElements = 0;
+  let smallFontElements = 0;
+  const styledEls = root.querySelectorAll('[style]');
+  for (const el of styledEls) {
+    const style = el.getAttribute('style') || '';
+    // Fixed pixel width on non-image/non-inline elements
+    const widthMatch = style.match(/(?:^|;)\s*width\s*:\s*(\d+)\s*px/i);
+    if (widthMatch) {
+      const px = parseInt(widthMatch[1], 10);
+      if (px > 400 && !style.includes('max-width')) fixedWidthElements++;
+    }
+    // Small font-size (< 12px)
+    const fontMatch = style.match(/font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/i);
+    if (fontMatch) {
+      const px = parseFloat(fontMatch[1]);
+      if (px < 12) smallFontElements++;
+    }
+  }
+
+  // Images with hardcoded width > 500 and no loading attribute or srcset
+  const bigImages = images.filter(img => {
+    const w = parseInt(img.getAttribute('width') || '0', 10);
+    const hasSrcset = !!img.getAttribute('srcset');
+    const style = img.getAttribute('style') || '';
+    return w > 500 && !hasSrcset && !style.includes('max-width');
+  }).length;
+  fixedWidthElements += bigImages;
+
+  // Legacy plugins (Flash etc.)
+  const legacyPlugins =
+    root.querySelectorAll('object[type*="flash"], embed[type*="flash"], embed[src*=".swf"]').length;
+
   // Render-blocking scripts in head
   const head = root.querySelector('head');
   const headScripts = head ? head.querySelectorAll('script[src]') : [];
@@ -158,5 +197,10 @@ export function extractPageSEO(page: PageData): PageSEOData {
     modernImageFormats,
     lazyLoadedImages,
     hreflangs,
+    viewportBlocksZoom,
+    viewportHasInitialScale,
+    fixedWidthElements,
+    smallFontElements,
+    legacyPlugins,
   };
 }
