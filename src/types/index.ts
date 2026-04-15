@@ -106,6 +106,24 @@ export interface SafeBrowsingData {
   error?: string;
 }
 
+export type AIBotStatus = 'allowed' | 'blocked' | 'partial' | 'unspecified';
+
+export interface AIBotRule {
+  bot: string;
+  purpose: 'training' | 'retrieval' | 'search' | 'mixed';
+  vendor: string;
+  status: AIBotStatus;
+}
+
+export interface AIReadinessInfo {
+  bots: AIBotRule[];
+  hasLlmsTxt: boolean;
+  hasLlmsFullTxt: boolean;
+  llmsTxtUrl?: string;
+  wildcardBlocksAll: boolean;
+  error?: string;
+}
+
 export interface SecurityHeadersInfo {
   hsts?: string;
   hstsMaxAge?: number;
@@ -168,6 +186,7 @@ export interface AuditResult {
   pageSpeedData?: PageSpeedData;
   safeBrowsingData?: SafeBrowsingData;
   securityHeaders?: SecurityHeadersInfo;
+  aiReadiness?: AIReadinessInfo;
   pages: PageSEOData[];
   claudePrompt: string;
   summary_de: string;

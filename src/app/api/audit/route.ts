@@ -3,13 +3,14 @@ import { crawlSite } from '@/lib/crawler';
 import { extractPageSEO } from '@/lib/extractor';
 import {
   checkSSL, checkDNS, checkPageSpeed,
-  checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders
+  checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders,
+  checkAIReadiness,
 } from '@/lib/external-checks';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
   generateSafeBrowsingFindings, generateSecurityHeadersFindings,
-  generateHreflangFindings, calculateModuleScore
+  generateHreflangFindings, generateAIReadinessFindings, calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
@@ -50,9 +51,15 @@ export async function POST(req: NextRequest) {
     const pages = rawPages.map(p => extractPageSEO(p));
 
     // ---- STEP 3: robots.txt + sitemap ----
-    const { hasRobots, hasSitemap } = await checkRobotsAndSitemap(url);
+    const { hasRobots, hasSitemap, robotsContent } = await checkRobotsAndSitemap(url);
     pages[0].hasRobots = hasRobots;
     pages[0].hasSitemap = hasSitemap;
+
+    // ---- STEP 3b: AI Crawler Readiness ----
+    let aiReadiness = undefined;
+    if (config.modules.includes('seo')) {
+      aiReadiness = await checkAIReadiness(url, robotsContent);
+    }
 
     // ---- STEP 4: SSL ----
     let sslInfo = undefined;
@@ -91,6 +98,7 @@ export async function POST(req: NextRequest) {
     if (config.modules.includes('seo')) {
       allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
       allFindings.push(...generateHreflangFindings(pages));
+      allFindings.push(...generateAIReadinessFindings(aiReadiness));
     }
     if (config.modules.includes('content')) {
       allFindings.push(...generateContentFindings(pages));
@@ -197,6 +205,7 @@ export async function POST(req: NextRequest) {
       pageSpeedData,
       safeBrowsingData,
       securityHeaders,
+      aiReadiness,
       pages,
       claudePrompt: '',
       summary_de,

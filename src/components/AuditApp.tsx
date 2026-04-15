@@ -475,6 +475,23 @@ export default function AuditApp() {
                 </div>
               )}
 
+              {/* AI Crawler Readiness */}
+              {result.aiReadiness && !result.aiReadiness.error && (
+                <div style={techCardStyle}>
+                  <h3 style={techCardTitle}>{t('AI-Crawler-Readiness', 'AI Crawler Readiness')}</h3>
+                  <TechRow label="llms.txt" value={result.aiReadiness.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} ok={result.aiReadiness.hasLlmsTxt} />
+                  <TechRow label="llms-full.txt" value={result.aiReadiness.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} ok={result.aiReadiness.hasLlmsFullTxt} />
+                  {result.aiReadiness.bots.map(b => (
+                    <TechRow
+                      key={b.bot}
+                      label={`${b.bot} (${b.purpose})`}
+                      value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
+                      ok={b.status === 'allowed' || (b.purpose === 'training' && b.status === 'blocked')}
+                    />
+                  ))}
+                </div>
+              )}
+
               {/* Security Headers */}
               {result.securityHeaders && !result.securityHeaders.error && (
                 <div style={techCardStyle}>

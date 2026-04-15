@@ -1,4 +1,7 @@
-import type { SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData, SecurityHeadersInfo } from '@/types';
+import type {
+  SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData,
+  SecurityHeadersInfo, AIReadinessInfo, AIBotRule, AIBotStatus,
+} from '@/types';
 import { promises as dns } from 'dns';
 
 // ============================================================
@@ -240,6 +243,132 @@ export async function checkSecurityHeaders(url: string, html?: string): Promise<
     };
   } catch (err) {
     return { error: String(err) };
+  }
+}
+
+// ============================================================
+//  AI CRAWLER READINESS CHECK
+// ============================================================
+// Known AI crawlers. "purpose" distinguishes training bots (use site
+// content to train LLMs) from retrieval/search bots (fetch content
+// on-demand to answer user questions, similar to traditional search).
+const AI_BOTS: { name: string; purpose: 'training' | 'retrieval' | 'search' | 'mixed'; vendor: string }[] = [
+  { name: 'GPTBot', purpose: 'training', vendor: 'OpenAI' },
+  { name: 'ChatGPT-User', purpose: 'retrieval', vendor: 'OpenAI' },
+  { name: 'OAI-SearchBot', purpose: 'search', vendor: 'OpenAI' },
+  { name: 'ClaudeBot', purpose: 'mixed', vendor: 'Anthropic' },
+  { name: 'anthropic-ai', purpose: 'training', vendor: 'Anthropic (legacy)' },
+  { name: 'Claude-Web', purpose: 'retrieval', vendor: 'Anthropic (legacy)' },
+  { name: 'PerplexityBot', purpose: 'search', vendor: 'Perplexity' },
+  { name: 'Perplexity-User', purpose: 'retrieval', vendor: 'Perplexity' },
+  { name: 'Google-Extended', purpose: 'training', vendor: 'Google (Gemini)' },
+  { name: 'Applebot-Extended', purpose: 'training', vendor: 'Apple' },
+  { name: 'CCBot', purpose: 'training', vendor: 'Common Crawl' },
+  { name: 'Bytespider', purpose: 'training', vendor: 'ByteDance' },
+  { name: 'Meta-ExternalAgent', purpose: 'training', vendor: 'Meta' },
+  { name: 'cohere-ai', purpose: 'training', vendor: 'Cohere' },
+  { name: 'Diffbot', purpose: 'mixed', vendor: 'Diffbot' },
+];
+
+interface RobotsGroup {
+  agents: string[];
+  disallows: string[];
+  allows: string[];
+}
+
+function parseRobotsTxt(content: string): RobotsGroup[] {
+  const groups: RobotsGroup[] = [];
+  let current: RobotsGroup | null = null;
+  let lastWasAgent = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*/, '').trim();
+    if (!line) { lastWasAgent = false; continue; }
+
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) { lastWasAgent = false; continue; }
+
+    const directive = line.slice(0, colonIdx).trim().toLowerCase();
+    const value = line.slice(colonIdx + 1).trim();
+
+    if (directive === 'user-agent') {
+      if (!current || !lastWasAgent) {
+        current = { agents: [value], disallows: [], allows: [] };
+        groups.push(current);
+      } else {
+        current.agents.push(value);
+      }
+      lastWasAgent = true;
+    } else if (current && directive === 'disallow') {
+      current.disallows.push(value);
+      lastWasAgent = false;
+    } else if (current && directive === 'allow') {
+      current.allows.push(value);
+      lastWasAgent = false;
+    } else {
+      lastWasAgent = false;
+    }
+  }
+  return groups;
+}
+
+function botStatusFromGroups(groups: RobotsGroup[], botName: string): AIBotStatus {
+  // Look for a group whose agents match the bot name exactly (case-insensitive).
+  const matching = groups.filter(g => g.agents.some(a => a.toLowerCase() === botName.toLowerCase()));
+  if (matching.length === 0) return 'unspecified';
+
+  // Combine all rules from matching groups.
+  const disallows = matching.flatMap(g => g.disallows);
+  const allows = matching.flatMap(g => g.allows);
+
+  const fullBlock = disallows.some(d => d === '/' || d === '/*');
+  const emptyDisallow = disallows.some(d => d === '');
+  const rootAllow = allows.some(a => a === '/' || a === '/*');
+
+  if (fullBlock && !rootAllow) return 'blocked';
+  if (disallows.length === 0 || emptyDisallow) return 'allowed';
+  if (disallows.length > 0) return 'partial';
+  return 'allowed';
+}
+
+export async function checkAIReadiness(baseUrl: string, robotsContent?: string): Promise<AIReadinessInfo> {
+  try {
+    const origin = new URL(baseUrl).origin;
+
+    // Parse robots.txt rules if content was provided
+    let groups: RobotsGroup[] = [];
+    if (robotsContent) groups = parseRobotsTxt(robotsContent);
+
+    // Check if wildcard blocks everything (affects AI bots that rely on *)
+    const wildcardGroup = groups.find(g => g.agents.some(a => a === '*'));
+    const wildcardBlocksAll = !!wildcardGroup && wildcardGroup.disallows.includes('/') && !wildcardGroup.allows.includes('/');
+
+    const bots: AIBotRule[] = AI_BOTS.map(b => {
+      let status = botStatusFromGroups(groups, b.name);
+      // If unspecified and wildcard blocks all, the bot is effectively blocked.
+      if (status === 'unspecified' && wildcardBlocksAll) status = 'blocked';
+      return { bot: b.name, purpose: b.purpose, vendor: b.vendor, status };
+    });
+
+    // Check llms.txt and llms-full.txt
+    let hasLlmsTxt = false;
+    let hasLlmsFullTxt = false;
+    let llmsTxtUrl: string | undefined;
+    try {
+      const r = await fetch(`${origin}/llms.txt`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        hasLlmsTxt = true;
+        llmsTxtUrl = `${origin}/llms.txt`;
+      }
+    } catch {}
+    try {
+      const r = await fetch(`${origin}/llms-full.txt`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) hasLlmsFullTxt = true;
+    } catch {}
+
+    return { bots, hasLlmsTxt, hasLlmsFullTxt, llmsTxtUrl, wildcardBlocksAll };
+  } catch (err) {
+    return { bots: [], hasLlmsTxt: false, hasLlmsFullTxt: false, wildcardBlocksAll: false, error: String(err) };
   }
 }
 
