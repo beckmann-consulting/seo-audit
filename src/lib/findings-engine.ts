@@ -1,6 +1,6 @@
 import type {
   Finding, PageSEOData, CrawlStats, SSLInfo, DNSInfo,
-  PageSpeedData, SafeBrowsingData, Module
+  PageSpeedData, SafeBrowsingData, SecurityHeadersInfo, Module
 } from '@/types';
 
 let findingCounter = 0;
@@ -554,6 +554,141 @@ export function generateSafeBrowsingFindings(data?: SafeBrowsingData): Finding[]
     recommendation_de: 'Google Search Console aufrufen und den Bericht zu Sicherheitsproblemen prüfen. Malware entfernen und Überprüfung beantragen.',
     recommendation_en: 'Open Google Search Console and check the Security Issues report. Remove malware and request a review.',
   }];
+}
+
+// ============================================================
+//  SECURITY HEADERS FINDINGS
+// ============================================================
+export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Finding[] {
+  const findings: Finding[] = [];
+  if (!sh || sh.error) return findings;
+
+  // HSTS
+  if (!sh.hsts) {
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      title_de: 'HTTP Strict Transport Security (HSTS) fehlt',
+      title_en: 'HTTP Strict Transport Security (HSTS) missing',
+      description_de: 'Der Header "Strict-Transport-Security" fehlt. Ohne HSTS können Man-in-the-Middle-Angriffe den ersten Request downgraden (HTTPS → HTTP).',
+      description_en: 'The "Strict-Transport-Security" header is missing. Without HSTS, man-in-the-middle attackers can downgrade the first request (HTTPS → HTTP).',
+      recommendation_de: 'Header setzen: "Strict-Transport-Security: max-age=31536000; includeSubDomains". Vorher sicherstellen, dass alle Subdomains HTTPS unterstützen.',
+      recommendation_en: 'Set header: "Strict-Transport-Security: max-age=31536000; includeSubDomains". Ensure all subdomains support HTTPS first.',
+    });
+  } else if (sh.hstsMaxAge !== undefined && sh.hstsMaxAge < 15552000) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'low',
+      title_de: `HSTS max-age zu kurz: ${sh.hstsMaxAge}s`,
+      title_en: `HSTS max-age too short: ${sh.hstsMaxAge}s`,
+      description_de: `max-age = ${sh.hstsMaxAge}s (< 6 Monate). Empfohlen sind mindestens 1 Jahr (31536000s) für wirksamen Schutz.`,
+      description_en: `max-age = ${sh.hstsMaxAge}s (< 6 months). At least 1 year (31536000s) is recommended for effective protection.`,
+      recommendation_de: 'max-age auf 31536000 (1 Jahr) erhöhen, sobald HTTPS zuverlässig läuft.',
+      recommendation_en: 'Increase max-age to 31536000 (1 year) once HTTPS is reliable.',
+    });
+  }
+
+  // X-Content-Type-Options
+  if (!sh.xContentTypeOptions) {
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      title_de: 'X-Content-Type-Options fehlt',
+      title_en: 'X-Content-Type-Options missing',
+      description_de: 'Ohne "X-Content-Type-Options: nosniff" kann der Browser MIME-Types erraten. Das öffnet XSS- und Script-Injection-Vektoren bei falsch konfigurierten Uploads.',
+      description_en: 'Without "X-Content-Type-Options: nosniff" the browser may guess MIME types. This opens XSS and script-injection vectors on misconfigured uploads.',
+      recommendation_de: 'Header setzen: "X-Content-Type-Options: nosniff".',
+      recommendation_en: 'Set header: "X-Content-Type-Options: nosniff".',
+    });
+  } else if (sh.xContentTypeOptions.toLowerCase() !== 'nosniff') {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'low',
+      title_de: `X-Content-Type-Options hat unerwarteten Wert: "${sh.xContentTypeOptions}"`,
+      title_en: `X-Content-Type-Options has unexpected value: "${sh.xContentTypeOptions}"`,
+      description_de: 'Der einzige gültige Wert ist "nosniff".',
+      description_en: 'The only valid value is "nosniff".',
+      recommendation_de: 'Wert auf "nosniff" setzen.',
+      recommendation_en: 'Set value to "nosniff".',
+    });
+  }
+
+  // X-Frame-Options or CSP frame-ancestors
+  const hasFrameProtection = !!sh.xFrameOptions || /frame-ancestors/i.test(sh.csp || '');
+  if (!hasFrameProtection) {
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      title_de: 'Clickjacking-Schutz fehlt (X-Frame-Options / CSP frame-ancestors)',
+      title_en: 'Clickjacking protection missing (X-Frame-Options / CSP frame-ancestors)',
+      description_de: 'Ohne X-Frame-Options oder CSP "frame-ancestors" kann die Seite in fremden iframes eingebettet werden — Grundlage für Clickjacking-Angriffe.',
+      description_en: 'Without X-Frame-Options or CSP "frame-ancestors" the site can be embedded in foreign iframes — the basis for clickjacking attacks.',
+      recommendation_de: 'Header setzen: "X-Frame-Options: SAMEORIGIN" oder im CSP "frame-ancestors \'self\'".',
+      recommendation_en: 'Set header: "X-Frame-Options: SAMEORIGIN" or in CSP "frame-ancestors \'self\'".',
+    });
+  }
+
+  // Content-Security-Policy
+  if (!sh.csp) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'high', impact: 'medium',
+      title_de: 'Content-Security-Policy (CSP) fehlt',
+      title_en: 'Content-Security-Policy (CSP) missing',
+      description_de: 'Kein CSP-Header. CSP ist die wirksamste Verteidigung gegen XSS: Sie definiert genau, welche Scripts, Styles und Ressourcen geladen werden dürfen.',
+      description_en: 'No CSP header. CSP is the most effective defence against XSS: it defines exactly which scripts, styles and resources may load.',
+      recommendation_de: 'CSP schrittweise einführen — zuerst im Report-Only-Modus ("Content-Security-Policy-Report-Only"), auswerten, dann enforcen. Als Startpunkt: "default-src \'self\'; script-src \'self\'; img-src \'self\' data: https:".',
+      recommendation_en: 'Roll out CSP gradually — start in report-only mode ("Content-Security-Policy-Report-Only"), analyse reports, then enforce. Starting point: "default-src \'self\'; script-src \'self\'; img-src \'self\' data: https:".',
+    });
+  }
+
+  // Referrer-Policy
+  if (!sh.referrerPolicy) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'low',
+      title_de: 'Referrer-Policy fehlt',
+      title_en: 'Referrer-Policy missing',
+      description_de: 'Ohne Referrer-Policy werden möglicherweise URL-Pfade (inkl. Query-Parameter) an externe Seiten weitergegeben — Datenschutz- und Informationsleak-Risiko.',
+      description_en: 'Without Referrer-Policy, URL paths (including query parameters) may leak to external sites — privacy and information-leak risk.',
+      recommendation_de: 'Header setzen: "Referrer-Policy: strict-origin-when-cross-origin" (guter Default für die meisten Seiten).',
+      recommendation_en: 'Set header: "Referrer-Policy: strict-origin-when-cross-origin" (good default for most sites).',
+    });
+  }
+
+  // Permissions-Policy
+  if (!sh.permissionsPolicy) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'tech', effort: 'low', impact: 'low',
+      title_de: 'Permissions-Policy fehlt',
+      title_en: 'Permissions-Policy missing',
+      description_de: 'Permissions-Policy (früher Feature-Policy) begrenzt, welche Browser-Features (Kamera, Mikrofon, Geolocation etc.) die Seite und eingebettete iframes nutzen dürfen.',
+      description_en: 'Permissions-Policy (formerly Feature-Policy) restricts which browser features (camera, microphone, geolocation etc.) the page and embedded iframes may use.',
+      recommendation_de: 'Header setzen, z.B.: "Permissions-Policy: camera=(), microphone=(), geolocation=()". Nur Features erlauben, die wirklich gebraucht werden.',
+      recommendation_en: 'Set header, e.g.: "Permissions-Policy: camera=(), microphone=(), geolocation=()". Only allow features actually needed.',
+    });
+  }
+
+  // Cookie Secure flag
+  if (sh.hasCookieSecure === false) {
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      title_de: 'Cookies ohne Secure-Flag',
+      title_en: 'Cookies without Secure flag',
+      description_de: 'Mindestens ein gesetztes Cookie hat kein "Secure"-Attribut. Diese Cookies können über unverschlüsselte HTTP-Requests abgefangen werden.',
+      description_en: 'At least one cookie is set without the "Secure" attribute. These cookies can be intercepted over unencrypted HTTP requests.',
+      recommendation_de: 'Alle Cookies mit "Secure; HttpOnly; SameSite=Lax" (oder Strict) setzen.',
+      recommendation_en: 'Set all cookies with "Secure; HttpOnly; SameSite=Lax" (or Strict).',
+    });
+  }
+
+  // Mixed content
+  if (sh.hasMixedContent) {
+    findings.push({
+      id: id(), priority: 'critical', module: 'tech', effort: 'medium', impact: 'high',
+      title_de: 'Mixed Content erkannt',
+      title_en: 'Mixed content detected',
+      description_de: 'Die HTTPS-Seite lädt Ressourcen über unverschlüsseltes HTTP. Browser blockieren diese teilweise oder zeigen Warnungen an — Vertrauens- und Funktionsverlust.',
+      description_en: 'The HTTPS page loads resources over unencrypted HTTP. Browsers partially block these or show warnings — loss of trust and functionality.',
+      recommendation_de: 'Alle http://-Referenzen im HTML und in CSS/JS auf https:// umstellen. Protokollrelative URLs (//example.com/…) vermeiden.',
+      recommendation_en: 'Switch all http:// references in HTML and in CSS/JS to https://. Avoid protocol-relative URLs (//example.com/…).',
+    });
+  }
+
+  return findings;
 }
 
 // ============================================================

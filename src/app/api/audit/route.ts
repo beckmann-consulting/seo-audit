@@ -3,12 +3,12 @@ import { crawlSite } from '@/lib/crawler';
 import { extractPageSEO } from '@/lib/extractor';
 import {
   checkSSL, checkDNS, checkPageSpeed,
-  checkSafeBrowsing, checkRobotsAndSitemap
+  checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders
 } from '@/lib/external-checks';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
-  generateSafeBrowsingFindings, calculateModuleScore
+  generateSafeBrowsingFindings, generateSecurityHeadersFindings, calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
@@ -65,6 +65,12 @@ export async function POST(req: NextRequest) {
       dnsInfo = await checkDNS(domain);
     }
 
+    // ---- STEP 5b: Security Headers ----
+    let securityHeaders = undefined;
+    if (config.modules.includes('tech')) {
+      securityHeaders = await checkSecurityHeaders(url, rawPages[0]?.html);
+    }
+
     // ---- STEP 6: PageSpeed (optional) ----
     let pageSpeedData = undefined;
     if (config.googleApiKey && config.modules.includes('performance')) {
@@ -89,6 +95,7 @@ export async function POST(req: NextRequest) {
     }
     if (config.modules.includes('tech')) {
       allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
+      allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
     }
     if (config.modules.includes('legal')) {
       allFindings.push(...generateLegalFindings(pages, allHtml));
@@ -187,6 +194,7 @@ export async function POST(req: NextRequest) {
       dnsInfo,
       pageSpeedData,
       safeBrowsingData,
+      securityHeaders,
       pages,
       claudePrompt: '',
       summary_de,

@@ -1,4 +1,4 @@
-import type { SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData } from '@/types';
+import type { SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData, SecurityHeadersInfo } from '@/types';
 import { promises as dns } from 'dns';
 
 // ============================================================
@@ -178,6 +178,68 @@ export async function checkSafeBrowsing(url: string, apiKey: string): Promise<Sa
     };
   } catch (err) {
     return { isSafe: true, error: String(err) };
+  }
+}
+
+// ============================================================
+//  SECURITY HEADERS CHECK
+// ============================================================
+export async function checkSecurityHeaders(url: string, html?: string): Promise<SecurityHeadersInfo> {
+  try {
+    // Use GET (not HEAD) because some servers handle HEAD differently
+    // and we want the exact headers a real browser would see.
+    const resp = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const h = resp.headers;
+    const hsts = h.get('strict-transport-security') || undefined;
+    const csp = h.get('content-security-policy') || h.get('content-security-policy-report-only') || undefined;
+    const xFrameOptions = h.get('x-frame-options') || undefined;
+    const xContentTypeOptions = h.get('x-content-type-options') || undefined;
+    const referrerPolicy = h.get('referrer-policy') || undefined;
+    const permissionsPolicy = h.get('permissions-policy') || h.get('feature-policy') || undefined;
+    const setCookie = h.get('set-cookie') || '';
+
+    // Parse HSTS max-age + includeSubDomains
+    let hstsMaxAge: number | undefined;
+    let hstsIncludeSubDomains: boolean | undefined;
+    if (hsts) {
+      const maxAgeMatch = hsts.match(/max-age\s*=\s*(\d+)/i);
+      if (maxAgeMatch) hstsMaxAge = parseInt(maxAgeMatch[1], 10);
+      hstsIncludeSubDomains = /includeSubDomains/i.test(hsts);
+    }
+
+    // Cookie security: if any cookies are set, they should have Secure flag
+    let hasCookieSecure: boolean | undefined;
+    if (setCookie) {
+      hasCookieSecure = /;\s*secure/i.test(setCookie);
+    }
+
+    // Mixed content: detect http:// resources in HTTPS-served HTML
+    let hasMixedContent: boolean | undefined;
+    if (html && url.startsWith('https://')) {
+      const mixedPattern = /(?:src|href)\s*=\s*["']http:\/\/(?!localhost)/i;
+      hasMixedContent = mixedPattern.test(html);
+    }
+
+    return {
+      hsts,
+      hstsMaxAge,
+      hstsIncludeSubDomains,
+      csp,
+      xFrameOptions,
+      xContentTypeOptions,
+      referrerPolicy,
+      permissionsPolicy,
+      hasCookieSecure,
+      hasMixedContent,
+      checkedUrl: resp.url,
+    };
+  } catch (err) {
+    return { error: String(err) };
   }
 }
 

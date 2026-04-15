@@ -106,6 +106,21 @@ export interface SafeBrowsingData {
   error?: string;
 }
 
+export interface SecurityHeadersInfo {
+  hsts?: string;
+  hstsMaxAge?: number;
+  hstsIncludeSubDomains?: boolean;
+  csp?: string;
+  xFrameOptions?: string;
+  xContentTypeOptions?: string;
+  referrerPolicy?: string;
+  permissionsPolicy?: string;
+  hasCookieSecure?: boolean;
+  hasMixedContent?: boolean;
+  checkedUrl?: string;
+  error?: string;
+}
+
 export interface PageSEOData {
   url: string;
   title?: string;
@@ -151,6 +166,7 @@ export interface AuditResult {
   dnsInfo?: DNSInfo;
   pageSpeedData?: PageSpeedData;
   safeBrowsingData?: SafeBrowsingData;
+  securityHeaders?: SecurityHeadersInfo;
   pages: PageSEOData[];
   claudePrompt: string;
   summary_de: string;
