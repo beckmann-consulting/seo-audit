@@ -121,10 +121,11 @@ export function extractPageSEO(page: PageData): PageSEOData {
     } catch {}
   });
 
-  // Word count
+  // Word count + sample for downstream content analysis
   const body = root.querySelector('body');
   const bodyText = body ? body.text.replace(/\s+/g, ' ').trim() : '';
   const wordCount = bodyText.split(' ').filter(w => w.length > 2).length;
+  const bodyTextSample = bodyText.slice(0, 2000);
 
   // Mobile usability: scan inline styles for fixed widths > 400px and small fonts < 12px
   let fixedWidthElements = 0;
@@ -240,5 +241,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     legacyPlugins,
     likelyClientRendered,
     clientRenderSignal,
+    bodyTextSample,
   };
 }

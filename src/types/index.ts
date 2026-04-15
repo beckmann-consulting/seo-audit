@@ -19,6 +19,7 @@ export type Module =
 export interface AuditConfig {
   url: string;
   googleApiKey?: string;
+  claudeApiKey?: string;
   modules: Module[];
   author: string;
   maxPages: number; // 0 = unlimited
@@ -186,6 +187,7 @@ export interface PageSEOData {
   legacyPlugins: number;
   likelyClientRendered: boolean;
   clientRenderSignal?: string; // what gave it away, for debugging
+  bodyTextSample?: string; // first ~2000 chars of visible body text, used for content analysis
 }
 
 export interface AuditResult {
