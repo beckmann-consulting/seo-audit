@@ -212,13 +212,17 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
 
   h1(t('Modul-Übersicht', 'Module Overview'));
 
-  // ----- Gauge circle grid (3 columns, PageSpeed Insights style) -----
+  // ----- Gauge circle grid (PageSpeed Insights style) -----
+  // Layout: a single row of N gauges when there are ≤6 modules, otherwise
+  // two rows with ceil(N/2) columns. Cell width is derived from the
+  // content width minus the gaps so the gauges distribute evenly.
   const gaugeRadius = 10; // mm
-  const gaugeCols = 3;
-  const gaugeGapX = 10;
+  const moduleCount = result.moduleScores.length;
+  const gaugeCols = moduleCount <= 6 ? Math.max(1, moduleCount) : Math.ceil(moduleCount / 2);
+  const gaugeGapX = 6;
   const cellW = (CONTENT_W - gaugeGapX * (gaugeCols - 1)) / gaugeCols;
-  const cellH = 42; // 20mm circle + padding for number + label
-  const gaugeRows = Math.ceil(result.moduleScores.length / gaugeCols);
+  const cellH = 38; // 20mm circle + gap + label + padding
+  const gaugeRows = Math.ceil(moduleCount / gaugeCols);
 
   checkPage(gaugeRows * cellH + 4);
   const gridTop = y;
@@ -229,7 +233,7 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     const cellX = CONTENT_LEFT + col * (cellW + gaugeGapX);
     const cellY = gridTop + row * cellH;
     const cx = cellX + cellW / 2;
-    const cy = cellY + gaugeRadius + 4;
+    const cy = cellY + gaugeRadius + 3;
 
     // Background ring — grey full circle
     setDraw(COLOR_BORDER);
@@ -237,24 +241,24 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.circle(cx, cy, gaugeRadius, 'S');
 
     // Score arc — clockwise from 12 o'clock, approximated as a connected
-    // polyline drawn as a single stroked path so round caps/joins don't
-    // produce bumps at every segment boundary.
+    // polyline drawn as a single stroked path so round caps/joins only
+    // appear at the arc endpoints, not at every segment boundary.
     const mCol = scoreColorRgb(ms.score);
     if (ms.score > 0) {
       setDraw(mCol);
       doc.setLineWidth(2);
       doc.setLineCap('round');
       doc.setLineJoin('round');
-      const segments = 48;
+      const steps = 60;
       const startAngle = -Math.PI / 2;
-      const sweep = (ms.score / 100) * 2 * Math.PI;
+      const endAngle = startAngle + (ms.score / 100) * 2 * Math.PI;
       const startX = cx + gaugeRadius * Math.cos(startAngle);
       const startY = cy + gaugeRadius * Math.sin(startAngle);
       const deltas: [number, number][] = [];
       let prevX = startX;
       let prevY = startY;
-      for (let i = 1; i <= segments; i++) {
-        const a = startAngle + sweep * (i / segments);
+      for (let i = 1; i <= steps; i++) {
+        const a = startAngle + (endAngle - startAngle) * (i / steps);
         const px = cx + gaugeRadius * Math.cos(a);
         const py = cy + gaugeRadius * Math.sin(a);
         deltas.push([px - prevX, py - prevY]);
@@ -268,19 +272,19 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     }
 
     // Score number centred inside the ring
-    setText(mCol);
+    setText(COLOR_TEXT);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.text(String(ms.score), cx, cy + 2.5, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text(String(ms.score), cx, cy + 1.5, { align: 'center' });
 
     // Module label below the circle
-    setText(COLOR_TEXT);
+    setText(COLOR_SUBTEXT);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
+    doc.setFontSize(7);
     doc.text(
       isDE ? ms.label_de : ms.label_en,
       cx,
-      cellY + gaugeRadius * 2 + 11,
+      cellY + gaugeRadius * 2 + 9,
       { align: 'center' }
     );
   });
