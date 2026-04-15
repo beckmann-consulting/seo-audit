@@ -15,7 +15,8 @@ import {
   generateCrawlStructureFindings, generateClientRenderingFindings,
   generateSitemapCoverageFindings, generateRedirectFindings,
   generateAnchorTextFindings, generateRobotsConflictFindings,
-  generateOpenGraphFindings, calculateModuleScore
+  generateOpenGraphFindings, generateSitemapQualityFindings,
+  calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import { runClaudeContentAnalysis } from '@/lib/claude-analysis';
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
       allFindings.push(...generateAnchorTextFindings(pages));
       allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo));
       allFindings.push(...generateOpenGraphFindings(pages));
+      allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
     }
     if (config.modules.includes('content')) {
       allFindings.push(...generateContentFindings(pages));

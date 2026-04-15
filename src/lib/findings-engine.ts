@@ -1838,6 +1838,113 @@ export function generateRedirectFindings(pages: PageSEOData[], startUrl: string)
 }
 
 // ============================================================
+//  SITEMAP QUALITY FINDINGS (Check 6)
+// ============================================================
+// Rates a sitemap beyond mere existence: lastmod freshness on
+// non-static pages, presence of changefreq/priority, homepage
+// priority, and whether a sitemap index should be used once
+// the URL count grows beyond the practical single-file limit.
+const STATIC_PAGE_PATH_HINTS = [
+  '/impressum', '/imprint', '/privacy', '/datenschutz',
+  '/about', '/ueber', '/terms', '/agb', '/contact', '/kontakt',
+];
+
+function isLikelyStaticPage(urlStr: string): boolean {
+  try {
+    const path = new URL(urlStr).pathname.toLowerCase();
+    return STATIC_PAGE_PATH_HINTS.some(hint => path.includes(hint));
+  } catch {
+    return false;
+  }
+}
+
+export function generateSitemapQualityFindings(
+  sitemap: SitemapInfo | undefined,
+  startUrl: string
+): Finding[] {
+  const findings: Finding[] = [];
+  if (!sitemap || sitemap.error || sitemap.urls.length === 0) return findings;
+
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  // 1) Stale lastmod on non-static pages
+  const staleEntries = sitemap.urls.filter(e => {
+    if (!e.lastmod) return false;
+    if (isLikelyStaticPage(e.url)) return false;
+    const ts = Date.parse(e.lastmod);
+    if (Number.isNaN(ts)) return false;
+    return now - ts > ONE_YEAR_MS;
+  });
+  if (staleEntries.length > 0) {
+    const sample = staleEntries.slice(0, 3).map(e => `${e.url} (${e.lastmod})`).join('; ');
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'low',
+      title_de: `${staleEntries.length} Sitemap-Einträge mit lastmod > 1 Jahr`,
+      title_en: `${staleEntries.length} sitemap entries with lastmod > 1 year old`,
+      description_de: `Diese URLs haben sich laut Sitemap seit mehr als einem Jahr nicht geändert. Für statische Seiten (Impressum, AGB) ist das in Ordnung, aber die hier gelisteten sind keine offensichtlich statischen Pfade. Beispiele: ${sample}`,
+      description_en: `According to the sitemap, these URLs have not changed in more than a year. That's fine for static pages (imprint, terms) but the ones listed here are not obviously static paths. Examples: ${sample}`,
+      recommendation_de: 'Prüfen ob der Inhalt tatsächlich so alt ist — wenn ja, Seite aktualisieren oder sauber durch noindex/410 vom Index nehmen. Wenn nein, Sitemap-Generator prüfen (lastmod wird offenbar nicht aktualisiert).',
+      recommendation_en: 'Check whether the content really is that old — if yes, refresh the page or cleanly remove via noindex/410. If no, check the sitemap generator (lastmod is apparently not being updated).',
+    });
+  }
+
+  // 2) No changefreq at all
+  const withChangefreq = sitemap.urls.filter(e => !!e.changefreq).length;
+  if (withChangefreq === 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: 'Sitemap ohne changefreq-Einträge',
+      title_en: 'Sitemap has no changefreq entries',
+      description_de: 'Kein einziger Sitemap-Eintrag hat ein <changefreq>-Element. Google ignoriert changefreq inzwischen weitgehend, andere Suchmaschinen nutzen es aber noch als Hinweis auf die Crawl-Frequenz.',
+      description_en: 'Not a single sitemap entry has a <changefreq> element. Google largely ignores changefreq these days, but other search engines still use it as a crawl-frequency hint.',
+      recommendation_de: 'Optional ergänzen: <changefreq>daily</changefreq> für News-Startseiten, <changefreq>weekly</changefreq> für Blog-Listen, <changefreq>yearly</changefreq> für statische Seiten.',
+      recommendation_en: 'Optionally add: <changefreq>daily</changefreq> for news landings, <changefreq>weekly</changefreq> for blog lists, <changefreq>yearly</changefreq> for static pages.',
+    });
+  }
+
+  // 3) Homepage priority low or missing
+  let startPath = '/';
+  try { startPath = new URL(startUrl).pathname || '/'; } catch {}
+  const homepageEntry = sitemap.urls.find(e => {
+    try {
+      const p = new URL(e.url).pathname;
+      return p === '/' || p === startPath;
+    } catch {
+      return false;
+    }
+  });
+  if (homepageEntry && (homepageEntry.priority === undefined || homepageEntry.priority < 0.8)) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `Homepage-Priority zu niedrig: ${homepageEntry.priority ?? 'fehlt'}`,
+      title_en: `Homepage priority too low: ${homepageEntry.priority ?? 'missing'}`,
+      description_de: 'Die Homepage sollte die höchste Priority im Sitemap haben (1.0) — sie ist der wichtigste Einstiegspunkt der Site. Aktueller Wert suggeriert, dass sie weniger wichtig wäre als andere URLs.',
+      description_en: 'The homepage should have the highest priority in the sitemap (1.0) — it is the most important entry point of the site. The current value suggests it is less important than other URLs.',
+      recommendation_de: 'Im Sitemap-Generator: priority der Homepage auf 1.0 setzen. Achtung: priority ist ein RELATIVES Signal innerhalb deiner Sitemap, Google interpretiert es nicht absolut.',
+      recommendation_en: 'In the sitemap generator: set homepage priority to 1.0. Note: priority is a RELATIVE signal within your sitemap; Google does not interpret it absolutely.',
+      affectedUrl: homepageEntry.url,
+    });
+  }
+
+  // 4) Too many URLs in a single sitemap without index
+  if (!sitemap.isIndex && sitemap.urls.length > 100) {
+    // Only informational for 100+, but recommendation kicks in near 50k (hard spec limit)
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'low',
+      title_de: `${sitemap.urls.length} URLs in einer einzelnen Sitemap ohne Index`,
+      title_en: `${sitemap.urls.length} URLs in a single sitemap without index`,
+      description_de: 'Die Sitemap enthält viele URLs, ist aber kein Sitemap-Index. Ab 50 000 URLs / 50 MB ist der Wechsel zu einem Sitemap-Index technisch erforderlich. Schon vorher vereinfacht er die Verwaltung und erlaubt thematische Gruppierung (pages / posts / products / news).',
+      description_en: 'The sitemap contains many URLs but is not a sitemap index. Above 50,000 URLs / 50 MB, switching to a sitemap index is technically required. Even earlier, it simplifies management and allows topical grouping (pages / posts / products / news).',
+      recommendation_de: 'Sitemap-Generator auf Multi-File-Output umstellen. Typisches Muster: /sitemap.xml (Index) → /sitemap-pages.xml, /sitemap-posts.xml, /sitemap-products.xml.',
+      recommendation_en: 'Switch the sitemap generator to multi-file output. Typical pattern: /sitemap.xml (index) → /sitemap-pages.xml, /sitemap-posts.xml, /sitemap-products.xml.',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  SITEMAP COVERAGE FINDINGS (Check 1)
 // ============================================================
 // Cross-references crawled URLs against sitemap URLs to find gaps:
