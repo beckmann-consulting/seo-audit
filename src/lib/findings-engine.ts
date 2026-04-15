@@ -718,6 +718,194 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
 }
 
 // ============================================================
+//  DUPLICATE CONTENT & CANONICAL CONFLICTS
+// ============================================================
+function normalizeText(s?: string): string {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeUrl(u: string): string {
+  try {
+    const parsed = new URL(u);
+    // Drop fragment, normalise trailing slash on path (except root)
+    parsed.hash = '';
+    if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    return parsed.href;
+  } catch {
+    return u;
+  }
+}
+
+export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length < 2) return findings;
+
+  // --- Duplicate titles ---
+  const titleGroups = new Map<string, string[]>();
+  for (const p of pages) {
+    const t = normalizeText(p.title);
+    if (!t) continue;
+    const list = titleGroups.get(t) || [];
+    list.push(p.url);
+    titleGroups.set(t, list);
+  }
+  const dupeTitles = [...titleGroups.entries()].filter(([, urls]) => urls.length > 1);
+  if (dupeTitles.length > 0) {
+    const totalAffected = dupeTitles.reduce((s, [, urls]) => s + urls.length, 0);
+    const sample = dupeTitles.slice(0, 2).map(([t, urls]) => `"${t.slice(0, 50)}" (${urls.length}x)`).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      title_de: `Duplikate im Title: ${dupeTitles.length} Gruppen, ${totalAffected} Seiten`,
+      title_en: `Duplicate titles: ${dupeTitles.length} groups, ${totalAffected} pages`,
+      description_de: `Mehrere Seiten teilen denselben Title-Tag. Das verwässert Ranking-Signale und erschwert Google die Auswahl der relevanten Version. Beispiele: ${sample}`,
+      description_en: `Multiple pages share the same title tag. This dilutes ranking signals and makes it harder for Google to pick the relevant version. Examples: ${sample}`,
+      recommendation_de: 'Jede Seite braucht einen eindeutigen, beschreibenden Title. Template-Fallbacks durch seiten-spezifische Varianten ersetzen.',
+      recommendation_en: 'Each page needs a unique, descriptive title. Replace template fallbacks with page-specific variants.',
+    });
+  }
+
+  // --- Duplicate meta descriptions ---
+  const descGroups = new Map<string, string[]>();
+  for (const p of pages) {
+    const d = normalizeText(p.metaDescription);
+    if (!d) continue;
+    const list = descGroups.get(d) || [];
+    list.push(p.url);
+    descGroups.set(d, list);
+  }
+  const dupeDesc = [...descGroups.entries()].filter(([, urls]) => urls.length > 1);
+  if (dupeDesc.length > 0) {
+    const totalAffected = dupeDesc.reduce((s, [, urls]) => s + urls.length, 0);
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Duplikate in Meta-Description: ${dupeDesc.length} Gruppen, ${totalAffected} Seiten`,
+      title_en: `Duplicate meta descriptions: ${dupeDesc.length} groups, ${totalAffected} pages`,
+      description_de: 'Mehrere Seiten verwenden dieselbe Meta-Description. Google schreibt diese häufig ohnehin um, eindeutige Descriptions verbessern aber die CTR im SERP.',
+      description_en: 'Multiple pages use the same meta description. Google often rewrites these anyway, but unique descriptions improve SERP CTR.',
+      recommendation_de: 'Jede Seite braucht eine einzigartige, seiten-spezifische Meta-Description (140-160 Zeichen).',
+      recommendation_en: 'Each page needs a unique, page-specific meta description (140-160 characters).',
+    });
+  }
+
+  // --- Duplicate H1s ---
+  const h1Groups = new Map<string, string[]>();
+  for (const p of pages) {
+    const h1 = normalizeText(p.h1s[0]);
+    if (!h1) continue;
+    const list = h1Groups.get(h1) || [];
+    list.push(p.url);
+    h1Groups.set(h1, list);
+  }
+  const dupeH1 = [...h1Groups.entries()].filter(([, urls]) => urls.length > 1);
+  if (dupeH1.length > 0) {
+    const totalAffected = dupeH1.reduce((s, [, urls]) => s + urls.length, 0);
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Duplikate im H1: ${dupeH1.length} Gruppen, ${totalAffected} Seiten`,
+      title_en: `Duplicate H1s: ${dupeH1.length} groups, ${totalAffected} pages`,
+      description_de: 'Mehrere Seiten verwenden denselben H1. Der H1 sollte das jeweilige Seitenthema eindeutig benennen — generische Werte wie "Willkommen" oder "Home" schwächen die semantische Struktur.',
+      description_en: 'Multiple pages use the same H1. The H1 should uniquely name each page\'s topic — generic values like "Welcome" or "Home" weaken semantic structure.',
+      recommendation_de: 'Jeder Seite einen eindeutigen H1 geben, der das Seitenthema beschreibt.',
+      recommendation_en: 'Give each page a unique H1 that describes the page topic.',
+    });
+  }
+
+  // --- Canonical issues ---
+  const pageUrlMap = new Map<string, PageSEOData>();
+  for (const p of pages) {
+    pageUrlMap.set(normalizeUrl(p.url), p);
+  }
+
+  for (const page of pages) {
+    if (!page.canonicalUrl) continue;
+
+    // Relative canonical
+    if (!/^https?:\/\//i.test(page.canonicalUrl)) {
+      findings.push({
+        id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'low',
+        title_de: 'Canonical ist relativ',
+        title_en: 'Canonical is relative',
+        description_de: 'Google empfiehlt absolute Canonical-URLs. Relative Werte werden zwar meist korrekt aufgelöst, sind aber fehleranfällig.',
+        description_en: 'Google recommends absolute canonical URLs. Relative values are usually resolved correctly but are error-prone.',
+        recommendation_de: `Canonical auf absolute URL umstellen, z.B. "${new URL(page.canonicalUrl, page.url).href}".`,
+        recommendation_en: `Change canonical to absolute URL, e.g. "${new URL(page.canonicalUrl, page.url).href}".`,
+        affectedUrl: page.url,
+      });
+      continue;
+    }
+
+    // Protocol mismatch: HTTPS page with HTTP canonical
+    if (page.url.startsWith('https://') && page.canonicalUrl.startsWith('http://')) {
+      findings.push({
+        id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+        title_de: 'Canonical zeigt auf HTTP statt HTTPS',
+        title_en: 'Canonical points to HTTP instead of HTTPS',
+        description_de: 'Die Seite wird über HTTPS ausgeliefert, aber die Canonical-URL verwendet HTTP. Das kann zu Indexierungskonflikten führen.',
+        description_en: 'The page is served over HTTPS but the canonical URL uses HTTP. This can cause indexing conflicts.',
+        recommendation_de: 'Canonical auf HTTPS umstellen.',
+        recommendation_en: 'Change canonical to HTTPS.',
+        affectedUrl: page.url,
+      });
+    }
+
+    const normalizedPageUrl = normalizeUrl(page.url);
+    const normalizedCanonical = normalizeUrl(page.canonicalUrl);
+    if (normalizedPageUrl === normalizedCanonical) continue; // self-canonical, fine
+
+    // Canonical points to another crawled page
+    const target = pageUrlMap.get(normalizedCanonical);
+    if (target) {
+      // Check if target has a different canonical → canonical chain
+      if (target.canonicalUrl) {
+        const targetCanonical = normalizeUrl(target.canonicalUrl);
+        if (targetCanonical !== normalizedCanonical && targetCanonical !== normalizedPageUrl) {
+          findings.push({
+            id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+            title_de: 'Canonical-Kette erkannt',
+            title_en: 'Canonical chain detected',
+            description_de: `Seite A zeigt auf B, aber B zeigt auf C. Google folgt Canonical-Ketten nur begrenzt — das Signal kann verloren gehen. Kette: ${page.url} → ${page.canonicalUrl} → ${target.canonicalUrl}`,
+            description_en: `Page A points to B, but B points to C. Google follows canonical chains only to a limited extent — the signal can be lost. Chain: ${page.url} → ${page.canonicalUrl} → ${target.canonicalUrl}`,
+            recommendation_de: 'Canonical direkt auf die finale Ziel-URL zeigen lassen, ohne Zwischenstationen.',
+            recommendation_en: 'Point canonical directly to the final target URL, without intermediate stops.',
+            affectedUrl: page.url,
+          });
+        }
+      }
+    }
+  }
+
+  // Pages that point to a canonical different from themselves → summarize
+  const nonSelfCanonical = pages.filter(p => {
+    if (!p.canonicalUrl) return false;
+    try {
+      return normalizeUrl(p.canonicalUrl) !== normalizeUrl(p.url);
+    } catch {
+      return false;
+    }
+  });
+  if (nonSelfCanonical.length > 0 && nonSelfCanonical.length < pages.length) {
+    // This is informational — self-canonicals are the norm, non-self means the page
+    // is explicitly not the indexable version. Only flag if a noticeable share.
+    const ratio = nonSelfCanonical.length / pages.length;
+    if (ratio > 0.2) {
+      findings.push({
+        id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+        title_de: `${nonSelfCanonical.length} Seiten mit Fremd-Canonical (${Math.round(ratio * 100)}%)`,
+        title_en: `${nonSelfCanonical.length} pages with non-self canonical (${Math.round(ratio * 100)}%)`,
+        description_de: 'Viele Seiten haben einen Canonical, der nicht auf sie selbst zeigt. Das heißt: sie werden von Google nicht als Hauptversion indexiert. Falls das ungewollt ist, sind diese Seiten "unsichtbar".',
+        description_en: 'Many pages have a canonical that does not point to themselves. This means Google does not index them as the main version. If unintended, these pages are "invisible".',
+        recommendation_de: 'Prüfen, ob die betroffenen Seiten eigenständig ranken sollen. Falls ja: Canonical auf die Seite selbst setzen.',
+        recommendation_en: 'Check whether the affected pages should rank independently. If yes: set canonical to the page itself.',
+      });
+    }
+  }
+
+  return findings;
+}
+
+// ============================================================
 //  STRUCTURED DATA DEEP VALIDATION
 // ============================================================
 // Required fields for common Rich Results types (Google guidelines).
