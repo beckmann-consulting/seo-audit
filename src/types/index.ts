@@ -184,6 +184,8 @@ export interface PageSEOData {
   fixedWidthElements: number;
   smallFontElements: number;
   legacyPlugins: number;
+  likelyClientRendered: boolean;
+  clientRenderSignal?: string; // what gave it away, for debugging
 }
 
 export interface AuditResult {

@@ -166,6 +166,42 @@ export function extractPageSEO(page: PageData): PageSEOData {
     s => !s.getAttribute('async') && !s.getAttribute('defer')
   ).length;
 
+  // Client-side rendering detection
+  // SPAs usually ship an HTML shell with an empty root element that gets
+  // filled in by JS at runtime. Crawlers without JS execution (AI retrieval
+  // bots, social preview fetchers, old search engines) won't see anything.
+  let likelyClientRendered = false;
+  let clientRenderSignal: string | undefined;
+
+  const spaRoots: { selector: string; name: string }[] = [
+    { selector: '#root', name: 'React #root' },
+    { selector: '#app', name: 'Vue/generic #app' },
+    { selector: '#__next', name: 'Next.js #__next' },
+    { selector: '#___gatsby', name: 'Gatsby #___gatsby' },
+    { selector: '#__nuxt', name: 'Nuxt #__nuxt' },
+    { selector: '[data-reactroot]', name: 'React data-reactroot' },
+  ];
+  for (const { selector, name } of spaRoots) {
+    const el = root.querySelector(selector);
+    if (el) {
+      const innerText = el.text.replace(/\s+/g, ' ').trim();
+      if (innerText.length < 100) {
+        likelyClientRendered = true;
+        clientRenderSignal = `${name} is empty (${innerText.length} chars)`;
+        break;
+      }
+    }
+  }
+
+  // Fallback heuristic: body has almost no text but there is a <noscript> fallback
+  if (!likelyClientRendered && wordCount < 30) {
+    const noscript = root.querySelector('noscript');
+    if (noscript && noscript.text.trim().length > 50) {
+      likelyClientRendered = true;
+      clientRenderSignal = `body has ${wordCount} words but <noscript> contains content`;
+    }
+  }
+
   return {
     url: page.url,
     title,
@@ -202,5 +238,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     fixedWidthElements,
     smallFontElements,
     legacyPlugins,
+    likelyClientRendered,
+    clientRenderSignal,
   };
 }

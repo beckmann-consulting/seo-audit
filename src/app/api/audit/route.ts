@@ -12,7 +12,8 @@ import {
   generateSafeBrowsingFindings, generateSecurityHeadersFindings,
   generateHreflangFindings, generateAIReadinessFindings,
   generateStructuredDataFindings, generateDuplicateContentFindings,
-  generateCrawlStructureFindings, calculateModuleScore
+  generateCrawlStructureFindings, generateClientRenderingFindings,
+  calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
@@ -111,6 +112,7 @@ export async function POST(req: NextRequest) {
     if (config.modules.includes('tech')) {
       allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
       allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
+      allFindings.push(...generateClientRenderingFindings(pages));
     }
     if (config.modules.includes('legal')) {
       allFindings.push(...generateLegalFindings(pages, allHtml));

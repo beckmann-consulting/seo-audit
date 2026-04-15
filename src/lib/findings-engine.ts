@@ -787,6 +787,37 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
 }
 
 // ============================================================
+//  CLIENT-SIDE RENDERING DETECTION
+// ============================================================
+export function generateClientRenderingFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const rendered = pages.filter(p => p.likelyClientRendered);
+  if (rendered.length === 0) return findings;
+
+  const ratio = rendered.length / pages.length;
+  const homepageAffected = pages[0]?.likelyClientRendered === true;
+  const signal = rendered[0].clientRenderSignal || 'empty SPA root';
+
+  // If homepage is affected or > 50% of pages: critical. Otherwise important.
+  const priority: 'critical' | 'important' = homepageAffected || ratio > 0.5 ? 'critical' : 'important';
+
+  findings.push({
+    id: id(), priority, module: 'tech', effort: 'high', impact: 'high',
+    title_de: `Seite wird clientseitig gerendert: ${rendered.length} von ${pages.length} Seiten`,
+    title_en: `Site appears client-side rendered: ${rendered.length} of ${pages.length} pages`,
+    description_de: `Im Roh-HTML fehlt der sichtbare Inhalt — er wird erst per JavaScript im Browser nachgeladen. Signal: "${signal}". Folgen: Googlebot rendert zwar noch, aber AI-Retrieval-Bots (ChatGPT-User, Perplexity), Social-Preview-Crawler (Facebook, Twitter, LinkedIn) und ältere Suchmaschinen sehen eine leere Seite.`,
+    description_en: `The raw HTML is missing visible content — it's hydrated by JavaScript in the browser. Signal: "${signal}". Consequences: Googlebot still renders, but AI retrieval bots (ChatGPT-User, Perplexity), social preview crawlers (Facebook, Twitter, LinkedIn) and older search engines see an empty page.`,
+    recommendation_de: 'Server-Side Rendering (SSR) oder Static Site Generation (SSG) einführen. Für Next.js: getServerSideProps oder generateStaticParams. Für Vue: Nuxt mit SSR. Alternativ: Prerendering-Services wie Prerender.io für kritische Seiten.',
+    recommendation_en: 'Introduce Server-Side Rendering (SSR) or Static Site Generation (SSG). For Next.js: getServerSideProps or generateStaticParams. For Vue: Nuxt with SSR. Alternatively: prerendering services like Prerender.io for critical pages.',
+    affectedUrl: rendered[0].url,
+  });
+
+  return findings;
+}
+
+// ============================================================
 //  CRAWL STRUCTURE: ORPHAN PAGES & CLICK DEPTH
 // ============================================================
 // Mutates `pages` to populate `inlinkCount` per page based on cross-page
