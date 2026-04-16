@@ -81,6 +81,35 @@ interface WidgetRequestBody {
   emailCapture?: boolean;
 }
 
+// Forward lead to PHP mailer (beckmanndigital.com/seo-lead.php). Non-blocking:
+// a mail failure must never break the audit response, so we swallow errors.
+async function forwardLead(
+  domain: string,
+  email: string,
+  lang: 'de' | 'en',
+  ip: string,
+): Promise<void> {
+  const url = process.env.LEAD_WEBHOOK_URL;
+  const secret = process.env.LEAD_WEBHOOK_SECRET;
+  if (!url || !secret) return;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Lead-Token': secret,
+      },
+      body: JSON.stringify({ domain, email, lang, ip }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      console.error(`[widget-lead] webhook returned ${res.status}`);
+    }
+  } catch (err) {
+    console.error('[widget-lead] webhook failed:', err instanceof Error ? err.message : err);
+  }
+}
+
 interface WidgetAuditResponse {
   domain: string;
   score: number;
@@ -106,12 +135,14 @@ export async function POST(req: NextRequest) {
 
   const ip = getClientIp(req);
 
-  // Email-only capture path — log and return, no audit rerun
+  // Email-only capture path — log, forward to mailer, return. No audit rerun.
   if (body.emailCapture && body.email) {
     const domain = body.url ? safeHostname(body.url) : 'unknown';
+    const lang = body.lang === 'en' ? 'en' : 'de';
     console.log(
       `[widget-lead] ${new Date().toISOString()} domain=${domain} email=${body.email} ip=${ip}`
     );
+    await forwardLead(domain, body.email, lang, ip);
     return respond(200, { ok: true });
   }
 
@@ -200,9 +231,11 @@ export async function POST(req: NextRequest) {
 
     // Optional lead capture attached to the same audit response
     if (body.email) {
+      const lang = body.lang === 'en' ? 'en' : 'de';
       console.log(
         `[widget-lead] ${new Date().toISOString()} domain=${domain} email=${body.email} ip=${ip}`
       );
+      await forwardLead(domain, body.email, lang, ip);
     }
 
     return respond(200, payload);

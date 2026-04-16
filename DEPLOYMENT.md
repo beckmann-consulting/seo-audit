@@ -58,11 +58,13 @@ plenty for a single team. Scale up when concurrent audits > 2.
 The app currently consumes **one** process env var. A minimal
 `.env.production` file is sufficient.
 
-| Variable          | Required | Used in                                                       | Description                                                                                                  | Example                          |
-|-------------------|:--------:|----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------|
-| `GOOGLE_API_KEY`  | optional | `src/app/api/audit/route.ts`, `src/app/api/widget/audit/route.ts`, `src/app/api/config/route.ts` | Enables PageSpeed Insights + Safe Browsing. Without it both checks are silently skipped; the audit still runs on everything else. | `AIzaSyDaB7_RealKeyHere`         |
-| `NODE_ENV`        | required | Next.js internals                                              | Must be `production` when running via `next start`                                                           | `production`                     |
-| `PORT`            | optional | Next.js                                                        | Defaults to 3000 if unset. Override only if port 3000 is taken.                                              | `3000`                           |
+| Variable              | Required | Used in                                                       | Description                                                                                                  | Example                          |
+|-----------------------|:--------:|----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------|
+| `GOOGLE_API_KEY`      | optional | `src/app/api/audit/route.ts`, `src/app/api/widget/audit/route.ts`, `src/app/api/config/route.ts` | Enables PageSpeed Insights + Safe Browsing. Without it both checks are silently skipped; the audit still runs on everything else. | `AIzaSyDaB7_RealKeyHere`         |
+| `LEAD_WEBHOOK_URL`    | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | URL des PHP-Lead-Mailers auf beckmanndigital.com. Ohne diese Variable werden Widget-Leads nur geloggt, keine Mail verschickt. Siehe §5.4. | `https://beckmanndigital.com/seo-lead.php` |
+| `LEAD_WEBHOOK_SECRET` | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | Shared Secret für den Lead-Mailer — muss identisch mit `$SHARED_SECRET` in `seo-lead.php` sein. Generieren mit `openssl rand -hex 32`. | `3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd` |
+| `NODE_ENV`            | required | Next.js internals                                              | Must be `production` when running via `next start`                                                           | `production`                     |
+| `PORT`                | optional | Next.js                                                        | Defaults to 3000 if unset. Override only if port 3000 is taken.                                              | `3000`                           |
 
 **Nicht im Code verwendet** (im Spec erwähnt, aber aktuell keine Referenz):
 `PERPLEXITY_API_KEY`, `CLAUDE_API_KEY`, `OPENAI_API_KEY`. Keine LLM-
@@ -75,6 +77,8 @@ Lege die Datei auf dem Server unter `/var/www/seo-audit/.env.production` an:
 
 ```env
 GOOGLE_API_KEY=AIzaSy…EchterKeyHier
+LEAD_WEBHOOK_URL=https://beckmanndigital.com/seo-lead.php
+LEAD_WEBHOOK_SECRET=3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd
 NODE_ENV=production
 PORT=3000
 ```
@@ -373,6 +377,56 @@ dem basePath-Deployment entspricht.
 Siehe §3.4 — `basePath: '/seo-audit'` in `next.config.js` ist **zwingend**.
 Ohne die Einstellung generiert Next interne Links als `/api/audit` statt
 `/seo-audit/api/audit`, und nginx proxyt sie ins Leere.
+
+### 5.4 Widget-Lead-Mailer (`seo-lead.php`)
+
+Die Widget-Lead-Zuleitung läuft über eine PHP-Datei, **die nicht in diesem
+Repo liegt**. Hintergrund:
+
+- Next.js ist ein Node-Prozess und kann **kein PHP ausführen**.
+- `beckmanndigital.com` wird aus dem Repo **`twb-consultancy`** deployed
+  und hat auf dem Docroot PHP-FPM zur Verfügung (dort läuft auch bereits
+  `contact.php`).
+- Daher liegt die Quelldatei bei den anderen PHP-Skripten:
+
+  ```
+  ~/projects/twb-consultancy/apps/digital/php/seo-lead.php
+  ```
+
+  und wird mit dem twb-consultancy-Deployment nach
+  `https://beckmanndigital.com/seo-lead.php` ausgerollt.
+
+**Architektur des Lead-Flows:**
+
+```
+Widget-Formular (Browser)
+  → POST /seo-audit/api/widget/audit        (Next.js, dieses Repo)
+        → forwardLead()                     (route.ts, Server-Seite)
+              → POST /seo-lead.php          (PHP auf Docroot, twb-consultancy-Repo)
+                    → mail()                → digital@twb-consultancy.services
+```
+
+**Einrichtung am Server:**
+
+1. Sicherstellen, dass `seo-lead.php` im Docroot von `beckmanndigital.com`
+   liegt (identisch zu `contact.php`).
+2. `$SHARED_SECRET` in `seo-lead.php` und `LEAD_WEBHOOK_SECRET` in
+   `.env.production` müssen **denselben Wert** haben. Mismatch → 401,
+   Mail wird nicht verschickt.
+3. Test vom Next.js-Server aus:
+
+   ```bash
+   curl -v -X POST https://beckmanndigital.com/seo-lead.php \
+     -H "Content-Type: application/json" \
+     -H "X-Lead-Token: ${LEAD_WEBHOOK_SECRET}" \
+     -d '{"domain":"example.com","email":"test@example.com","lang":"de","ip":"127.0.0.1"}'
+   # → {"success":true} und Mail-Eingang prüfen
+   ```
+
+**Fehlverhalten ist tolerant:** Wenn `seo-lead.php` unerreichbar ist oder
+401 zurückgibt, loggt der Next.js-Handler nur `[widget-lead] webhook …`
+und liefert trotzdem `200 OK` an das Widget — der Nutzer sieht kein
+Fehlerfeedback, du musst die Logs beobachten.
 
 ---
 

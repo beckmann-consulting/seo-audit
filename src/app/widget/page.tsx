@@ -396,7 +396,7 @@ function ResultView({
         ) : (
           <>
             <p style={{ margin: '0 0 8px', fontSize: 12, color: '#1a1a1a' }}>
-              {t('Vollständigen Audit-Bericht (PDF) kostenlos erhalten:', 'Get the full audit report (PDF) for free:')}
+              {t('Interesse an einem vollständigen Audit-Bericht? Hinterlassen Sie Ihre E-Mail-Adresse — wir melden uns mit einem Angebot.', 'Interested in a complete audit report? Leave your email address and we will get back to you with a quote.')}
             </p>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
