@@ -199,6 +199,22 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
+  // Weak internal linking — moved to the SEO module in D2. Previously
+  // lived in generateUXFindings but link equity / crawl discoverability
+  // is fundamentally an SEO concern, not a UX one.
+  const pagesWithFewInternalLinks = pages.filter(p => p.internalLinks.length < 3);
+  if (pagesWithFewInternalLinks.length > pages.length * 0.5) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: 'Schwache interne Verlinkung auf vielen Seiten',
+      title_en: 'Weak internal linking on many pages',
+      description_de: `${pagesWithFewInternalLinks.length} von ${pages.length} Seiten haben weniger als 3 interne Links.`,
+      description_en: `${pagesWithFewInternalLinks.length} of ${pages.length} pages have fewer than 3 internal links.`,
+      recommendation_de: 'Interne Verlinkung ausbauen. Verwandte Seiten und CTAs auf jeder Seite verlinken.',
+      recommendation_en: 'Build up internal linking. Link related pages and CTAs on every page.',
+    });
+  }
+
   return findings;
 }
 
@@ -397,19 +413,11 @@ export function generateTechFindings(
     });
   }
 
-  // Redirect chains (legacy CrawlStats-based check, superseded by
-  // generateRedirectFindings but kept here until D2 removes it)
-  if (crawlStats.redirectChains.length > 2) {
-    findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
-      title_de: `${crawlStats.redirectChains.length} Redirect-Ketten gefunden`,
-      title_en: `${crawlStats.redirectChains.length} redirect chains found`,
-      description_de: crawlStats.redirectChains.slice(0, 3).map(r => `${r.from} → ${r.to}`).join('\n'),
-      description_en: crawlStats.redirectChains.slice(0, 3).map(r => `${r.from} → ${r.to}`).join('\n'),
-      recommendation_de: 'Direkte 301-Weiterleitungen zum finalen Ziel einrichten. Ketten verlangsamen den Crawler.',
-      recommendation_en: 'Set up direct 301 redirects to the final destination. Chains slow down the crawler.',
-    });
-  }
+  // Legacy CrawlStats-based redirect-chains check removed in D2 — the
+  // per-page generateRedirectFindings() already covers this with richer
+  // severity (critical for loops, important for chains, critical for
+  // HTTPS→HTTP downgrades) and avoids the double-reporting that existed
+  // when both checks were active.
 
   // Pages with 4xx status
   const pages4xx = crawlStats.errorPages.filter(e => e.status >= 400 && e.status < 500);
@@ -478,19 +486,9 @@ export function generateTechFindings(
     });
   }
 
-  // Render-blocking scripts
-  const totalRenderBlocking = pages.reduce((s, p) => s + p.renderBlockingScripts, 0);
-  if (totalRenderBlocking > 3) {
-    findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
-      title_de: `${totalRenderBlocking} render-blockierende Scripts gefunden`,
-      title_en: `${totalRenderBlocking} render-blocking scripts found`,
-      description_de: 'Scripts im <head> ohne async/defer blockieren das Rendern und verlangsamen die wahrgenommene Ladezeit.',
-      description_en: 'Scripts in the <head> without async/defer block rendering and slow down perceived load time.',
-      recommendation_de: 'Externe Scripts mit defer oder async laden: <script src="..." defer>',
-      recommendation_en: 'Load external scripts with defer or async: <script src="..." defer>',
-    });
-  }
+  // Render-blocking scripts finding moved to generatePerformanceFindings
+  // as part of D2 module reassignment — it's conceptually a performance
+  // issue, not a tech/infrastructure one.
 
   // Modern image formats
   const totalImages = pages.reduce((s, p) => s + p.totalImages, 0);
@@ -693,19 +691,9 @@ export function generateUXFindings(pages: PageSEOData[]): Finding[] {
     });
   }
 
-  // Internal linking
-  const pagesWithFewLinks = pages.filter(p => p.internalLinks.length < 3);
-  if (pagesWithFewLinks.length > pages.length * 0.5) {
-    findings.push({
-      id: id(), priority: 'recommended', module: 'ux', effort: 'medium', impact: 'medium',
-      title_de: 'Schwache interne Verlinkung auf vielen Seiten',
-      title_en: 'Weak internal linking on many pages',
-      description_de: `${pagesWithFewLinks.length} von ${pages.length} Seiten haben weniger als 3 interne Links.`,
-      description_en: `${pagesWithFewLinks.length} of ${pages.length} pages have fewer than 3 internal links.`,
-      recommendation_de: 'Interne Verlinkung ausbauen. Verwandte Seiten und CTAs auf jeder Seite verlinken.',
-      recommendation_en: 'Build up internal linking. Link related pages and CTAs on every page.',
-    });
-  }
+  // Internal linking finding moved to generateSEOFindings as part of D2
+  // module reassignment — it primarily affects crawlability and link
+  // equity distribution, not user experience.
 
   return findings;
 }
@@ -713,8 +701,25 @@ export function generateUXFindings(pages: PageSEOData[]): Finding[] {
 // ============================================================
 //  PERFORMANCE FINDINGS
 // ============================================================
-export function generatePerformanceFindings(pageSpeed?: PageSpeedData): Finding[] {
+export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: PageSEOData[]): Finding[] {
   const findings: Finding[] = [];
+
+  // Render-blocking scripts — moved here from tech as part of D2
+  if (pages && pages.length > 0) {
+    const totalRenderBlocking = pages.reduce((s, p) => s + p.renderBlockingScripts, 0);
+    if (totalRenderBlocking > 3) {
+      findings.push({
+        id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+        title_de: `${totalRenderBlocking} render-blockierende Scripts gefunden`,
+        title_en: `${totalRenderBlocking} render-blocking scripts found`,
+        description_de: 'Scripts im <head> ohne async/defer blockieren das Rendern und verlangsamen die wahrgenommene Ladezeit.',
+        description_en: 'Scripts in the <head> without async/defer block rendering and slow down perceived load time.',
+        recommendation_de: 'Externe Scripts mit defer oder async laden: <script src="..." defer>',
+        recommendation_en: 'Load external scripts with defer or async: <script src="..." defer>',
+      });
+    }
+  }
+
   if (!pageSpeed || pageSpeed.error) return findings;
 
   if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 50) {

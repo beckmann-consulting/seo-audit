@@ -172,7 +172,7 @@ async function runAudit(
     allFindings.push(...generateFaviconFindings(pages));
   }
   if (config.modules.includes('performance')) {
-    allFindings.push(...generatePerformanceFindings(pageSpeedData));
+    allFindings.push(...generatePerformanceFindings(pageSpeedData, pages));
   }
   if (safeBrowsingData) {
     allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
