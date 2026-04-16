@@ -1,6 +1,6 @@
 'use client';
 
-import type { AuditResult, Lang, Finding } from '@/types';
+import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 
 // ============================================================
 //  Brand palette
@@ -61,7 +61,7 @@ async function loadLogoDataUrl(): Promise<string | undefined> {
   }
 }
 
-export async function generatePDF(result: AuditResult, lang: Lang): Promise<void> {
+export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditDiff | null): Promise<void> {
   const { default: JsPDF } = await import('jspdf');
   const doc = new JsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
@@ -315,6 +315,138 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
         y = cursor + 4;
       }
     });
+  }
+
+  // ============================================================
+  //  Diff section — rendered only when a comparison is provided.
+  // ============================================================
+  if (diff) {
+    doc.addPage();
+    addPageHeader();
+    y = CONTENT_TOP;
+
+    h1(t('Audit-Vergleich', 'Audit Comparison'));
+
+    const previousLabel = (() => {
+      try {
+        return new Date(diff.previousAuditDate).toLocaleDateString(isDE ? 'de-DE' : 'en-GB', {
+          year: 'numeric', month: 'long', day: 'numeric',
+        });
+      } catch { return diff.previousAuditDate; }
+    })();
+
+    setText(COLOR_SUBTEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(
+      t(`${diff.domain} — ${previousLabel} → heute`, `${diff.domain} — ${previousLabel} → today`),
+      CONTENT_LEFT, y
+    );
+    y += 10;
+
+    // Score delta prominently
+    const deltaCol = diff.scoreDelta > 0 ? COLOR_GOOD : diff.scoreDelta < 0 ? COLOR_CRITICAL : COLOR_SUBTEXT;
+    const deltaSign = diff.scoreDelta > 0 ? '+' : '';
+    setText(deltaCol);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(24);
+    doc.text(`${deltaSign}${diff.scoreDelta} ${t('Punkte', 'points')}`, CONTENT_LEFT, y);
+    setText(COLOR_SUBTEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(`(${diff.previousAudit.totalScore} → ${diff.currentAudit.totalScore})`, CONTENT_LEFT + 60, y);
+    y += 12;
+
+    const priorityLabelDiff: Record<string, { de: string; en: string }> = {
+      critical: { de: 'Kritisch', en: 'Critical' },
+      important: { de: 'Wichtig', en: 'Important' },
+      recommended: { de: 'Empfohlen', en: 'Recommended' },
+      optional: { de: 'Optional', en: 'Optional' },
+    };
+
+    const renderDiffFinding = (f: Finding, accent: [number, number, number]) => {
+      const title = isDE ? f.title_de : f.title_en;
+      const label = priorityLabelDiff[f.priority][lang];
+      const lines = doc.splitTextToSize(title, CONTENT_W - 40);
+      const needed = lines.length * 4 + 2;
+      checkPage(needed);
+      setText(accent);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text(`${label.toUpperCase()}`, CONTENT_LEFT, y);
+      setText(COLOR_SUBTEXT);
+      doc.setFont('helvetica', 'normal');
+      doc.text(f.module.toUpperCase(), CONTENT_LEFT + 22, y);
+      setText(COLOR_TEXT);
+      doc.setFontSize(8.5);
+      doc.text(lines, CONTENT_LEFT + 40, y);
+      y += Math.max(4, lines.length * 4) + 2;
+    };
+
+    if (diff.resolved.length > 0) {
+      checkPage(10);
+      setText(COLOR_GOOD);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(t(`Behoben (${diff.resolved.length})`, `Resolved (${diff.resolved.length})`), CONTENT_LEFT, y);
+      y += 6;
+      diff.resolved.forEach(f => renderDiffFinding(f, COLOR_GOOD));
+      y += 3;
+    }
+
+    if (diff.new.length > 0) {
+      checkPage(10);
+      setText(COLOR_CRITICAL);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(t(`Neu (${diff.new.length})`, `New (${diff.new.length})`), CONTENT_LEFT, y);
+      y += 6;
+      diff.new.forEach(f => renderDiffFinding(f, COLOR_CRITICAL));
+      y += 3;
+    }
+
+    if (diff.moduleDeltas.length > 0) {
+      checkPage(20);
+      setText(COLOR_TEXT);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(t('Modul-Scores', 'Module Scores'), CONTENT_LEFT, y);
+      y += 6;
+
+      // Table header
+      setText(COLOR_SUBTEXT);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text(t('Modul', 'Module'), CONTENT_LEFT + 2, y);
+      doc.text(t('Vorher', 'Before'), CONTENT_LEFT + 70, y, { align: 'right' });
+      doc.text(t('Nachher', 'After'), CONTENT_LEFT + 105, y, { align: 'right' });
+      doc.text('Δ', CONTENT_LEFT + 135, y, { align: 'right' });
+      y += 3;
+      setDraw(COLOR_BORDER);
+      doc.setLineWidth(0.2);
+      doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
+      y += 3;
+
+      diff.moduleDeltas.forEach(md => {
+        checkPage(6);
+        const prev = diff.previousAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
+        const curr = diff.currentAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
+        const dColor = md.delta > 0 ? COLOR_GOOD : md.delta < 0 ? COLOR_CRITICAL : COLOR_SUBTEXT;
+        const dSign = md.delta > 0 ? '+' : '';
+        setText(COLOR_TEXT);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.text(md.module.toUpperCase(), CONTENT_LEFT + 2, y);
+        doc.text(String(prev), CONTENT_LEFT + 70, y, { align: 'right' });
+        doc.text(String(curr), CONTENT_LEFT + 105, y, { align: 'right' });
+        setText(dColor);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${dSign}${md.delta}`, CONTENT_LEFT + 135, y, { align: 'right' });
+        y += 5;
+        setDraw(COLOR_BORDER);
+        doc.line(CONTENT_LEFT, y - 1, CONTENT_RIGHT, y - 1);
+      });
+    }
   }
 
   // ============================================================

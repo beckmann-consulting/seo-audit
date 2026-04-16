@@ -1,7 +1,53 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import type { AuditResult, Module, AuditConfig, Lang } from '@/types';
+import { useState, useEffect, useRef } from 'react';
+import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang } from '@/types';
+import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
+
+// ============================================================
+//  LocalStorage cache — one AuditResult per hostname.
+// ============================================================
+interface CachedAudit {
+  result: AuditResult;
+  cachedAt: string; // ISO
+}
+
+function cacheKey(hostname: string): string {
+  return `seo_audit_cache_${hostname}`;
+}
+
+function loadCachedAudit(hostname: string): CachedAudit | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(cacheKey(hostname));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const c = parsed as Record<string, unknown>;
+    if (typeof c.cachedAt !== 'string' || !isValidAuditResult(c.result)) return null;
+    return { result: c.result, cachedAt: c.cachedAt };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedAudit(hostname: string, result: AuditResult): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: CachedAudit = { result, cachedAt: new Date().toISOString() };
+    window.localStorage.setItem(cacheKey(hostname), JSON.stringify(payload));
+  } catch {
+    // Quota exceeded or private mode — ignore silently
+  }
+}
+
+function hostnameOf(urlOrHost: string): string | null {
+  try {
+    return new URL(urlOrHost).hostname;
+  } catch {
+    return null;
+  }
+}
 
 const ALL_MODULES: { id: Module; label_de: string; label_en: string; desc_de: string; desc_en: string }[] = [
   { id: 'seo', label_de: 'SEO', label_en: 'SEO', desc_de: 'Meta-Tags, Sitemap, Schema, Canonical', desc_en: 'Meta tags, sitemap, schema, canonical' },
@@ -58,6 +104,12 @@ export default function AuditApp() {
   // progressInterval previously held a fake setInterval; progress now
   // comes from an SSE-style stream so the ref is no longer needed.
 
+  // Diff / comparison state
+  const [cachedPrevious, setCachedPrevious] = useState<CachedAudit | null>(null);
+  const [diff, setDiff] = useState<AuditDiff | null>(null);
+  const [diffError, setDiffError] = useState('');
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
       if (d.hasGoogleKey) setHasEnvGoogleKey(true);
@@ -100,10 +152,72 @@ export default function AuditApp() {
       setActiveTab('findings');
       setProgress(100);
       setProgressText(t('Fertig!', 'Done!'));
+      // Cache the new result and surface any older cached audit for diffing.
+      // Only show the compare button if the cached audit is at least 1h old —
+      // caches from the same session shouldn't invite a self-comparison.
+      const host = hostnameOf(ev.payload.config.url) ?? ev.payload.domain;
+      const existing = loadCachedAudit(host);
+      if (existing) {
+        const ageMs = Date.now() - Date.parse(existing.cachedAt);
+        if (!Number.isNaN(ageMs) && ageMs > 60 * 60 * 1000) {
+          setCachedPrevious(existing);
+        } else {
+          setCachedPrevious(null);
+        }
+      } else {
+        setCachedPrevious(null);
+      }
+      saveCachedAudit(host, ev.payload);
+      setDiff(null);
+      setDiffError('');
     } else if (ev.type === 'error') {
       setError(ev.message);
       setShowConfig(true);
     }
+  }
+
+  function formatDate(iso: string): string {
+    try {
+      return new Date(iso).toLocaleDateString(isDE ? 'de-DE' : 'en-GB', {
+        year: 'numeric', month: 'long', day: 'numeric',
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  function openDiffWithCached() {
+    if (!result || !cachedPrevious) return;
+    setDiff(computeDiff(result, cachedPrevious.result, cachedPrevious.cachedAt));
+    setDiffError('');
+  }
+
+  function handleUploadClick() {
+    uploadInputRef.current?.click();
+  }
+
+  async function handleUploadChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !result) return;
+    try {
+      const text = await file.text();
+      const parsed: unknown = JSON.parse(text);
+      if (!isValidAuditResult(parsed)) {
+        setDiffError(t('Ungültige Audit-Datei', 'Invalid audit file'));
+        return;
+      }
+      const previousDate = parsed.auditedAt;
+      setDiff(computeDiff(result, parsed, previousDate));
+      setDiffError('');
+    } catch (err) {
+      setDiffError(`${t('Upload fehlgeschlagen', 'Upload failed')}: ${String(err)}`);
+    } finally {
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  }
+
+  function closeDiff() {
+    setDiff(null);
   }
 
   async function runAudit() {
@@ -197,7 +311,7 @@ export default function AuditApp() {
   async function downloadPDF(pdfLang: Lang) {
     if (!result) return;
     const { generatePDF } = await import('@/lib/pdf-generator');
-    await generatePDF(result, pdfLang);
+    await generatePDF(result, pdfLang, diff);
   }
 
   async function copyPrompt() {
@@ -401,6 +515,37 @@ export default function AuditApp() {
               ))}
             </div>
           </div>
+
+          {/* Diff trigger row */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            {cachedPrevious && !diff && (
+              <button onClick={openDiffWithCached} style={btnStyle}>
+                {t(`Vergleich mit letztem Audit vom ${formatDate(cachedPrevious.cachedAt)}`, `Compare with last audit from ${formatDate(cachedPrevious.cachedAt)}`)}
+              </button>
+            )}
+            {!diff && (
+              <>
+                <button onClick={handleUploadClick} style={btnStyle}>
+                  {t('Vergleich hochladen', 'Upload comparison')}
+                </button>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleUploadChange}
+                  style={{ display: 'none' }}
+                />
+              </>
+            )}
+            {diffError && (
+              <span style={{ fontSize: 12, color: '#a32d2d' }}>{diffError}</span>
+            )}
+          </div>
+
+          {/* Diff view */}
+          {diff && (
+            <DiffView diff={diff} isDE={isDE} t={t} onClose={closeDiff} />
+          )}
 
           {/* Summary */}
           <p style={{ color: '#555', fontSize: 13, lineHeight: 1.7, marginBottom: '1.5rem', padding: '12px 16px', background: '#f8f8f6', borderRadius: 8, borderLeft: '3px solid #e0ddd8' }}>
@@ -761,6 +906,130 @@ function TechRow({ label, value, ok }: { label: string; value: string; ok: boole
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #f0ede8', fontSize: 12 }}>
       <span style={{ color: '#6b6b68' }}>{label}</span>
       <span style={{ fontWeight: 600, color: ok ? '#3b6d11' : '#a32d2d' }}>{value}</span>
+    </div>
+  );
+}
+
+function DiffView({ diff, isDE, t, onClose }: {
+  diff: AuditDiff;
+  isDE: boolean;
+  t: (de: string, en: string) => string;
+  onClose: () => void;
+}) {
+  const deltaColor = diff.scoreDelta > 0 ? '#3b6d11' : diff.scoreDelta < 0 ? '#a32d2d' : '#6b6b68';
+  const deltaSign = diff.scoreDelta > 0 ? '+' : '';
+  const previousLabel = (() => {
+    try {
+      return new Date(diff.previousAuditDate).toLocaleDateString(isDE ? 'de-DE' : 'en-GB', {
+        year: 'numeric', month: 'long', day: 'numeric',
+      });
+    } catch { return diff.previousAuditDate; }
+  })();
+
+  const findingRow = (f: Finding) => (
+    <div key={f.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid #f0ede8', alignItems: 'center' }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 12,
+        background: PRIORITY_BG[f.priority], color: PRIORITY_COLORS[f.priority],
+        whiteSpace: 'nowrap',
+      }}>
+        {isDE
+          ? { critical: 'Kritisch', important: 'Wichtig', recommended: 'Empfohlen', optional: 'Optional' }[f.priority]
+          : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
+        }
+      </span>
+      <span style={{ flex: 1, fontSize: 12, color: '#1a1a18' }}>{isDE ? f.title_de : f.title_en}</span>
+      <span style={{ fontSize: 10, color: '#9b9b98', textTransform: 'uppercase' }}>{f.module}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#ff7a00' }}>
+          {t('Audit-Vergleich', 'Audit Comparison')}
+        </h2>
+        <button onClick={onClose} style={btnStyle}>{t('Diff schließen', 'Close diff')}</button>
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6b6b68' }}>
+        {t(`Vergleich: ${diff.domain} — ${previousLabel} → Heute`, `Comparison: ${diff.domain} — ${previousLabel} → Today`)}
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
+        <span style={{ fontSize: 28, fontWeight: 800, color: deltaColor }}>
+          {deltaSign}{diff.scoreDelta} {t('Punkte', 'points')}
+        </span>
+        <span style={{ fontSize: 12, color: '#6b6b68' }}>
+          ({diff.previousAudit.totalScore} → {diff.currentAudit.totalScore})
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#3b6d11' }}>
+            ✅ {t(`Behoben (${diff.resolved.length})`, `Resolved (${diff.resolved.length})`)}
+          </h3>
+          {diff.resolved.length === 0
+            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            : diff.resolved.map(findingRow)}
+        </div>
+        <div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#a32d2d' }}>
+            🆕 {t(`Neu (${diff.new.length})`, `New (${diff.new.length})`)}
+          </h3>
+          {diff.new.length === 0
+            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            : diff.new.map(findingRow)}
+        </div>
+        <div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#6b6b68' }}>
+            ➡ {t(`Unverändert (${diff.unchanged.length})`, `Unchanged (${diff.unchanged.length})`)}
+          </h3>
+          {diff.unchanged.length === 0
+            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            : diff.unchanged.slice(0, 10).map(findingRow)}
+          {diff.unchanged.length > 10 && (
+            <p style={{ fontSize: 11, color: '#9b9b98', margin: '4px 0 0' }}>
+              +{diff.unchanged.length - 10} {t('weitere', 'more')}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {diff.moduleDeltas.length > 0 && (
+        <div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#1a1a18' }}>
+            {t('Modul-Scores', 'Module scores')}
+          </h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: '#f8f8f6' }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left', border: '1px solid #e0ddd8' }}>{t('Modul', 'Module')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>{t('Vorher', 'Before')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>{t('Nachher', 'After')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {diff.moduleDeltas.map(md => {
+                const prev = diff.previousAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
+                const curr = diff.currentAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
+                const color = md.delta > 0 ? '#3b6d11' : md.delta < 0 ? '#a32d2d' : '#6b6b68';
+                return (
+                  <tr key={md.module}>
+                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textTransform: 'uppercase', fontSize: 11 }}>{md.module}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right' }}>{prev}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right' }}>{curr}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right', color, fontWeight: 600 }}>
+                      {md.delta > 0 ? '+' : ''}{md.delta}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

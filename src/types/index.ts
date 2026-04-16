@@ -291,6 +291,18 @@ export interface AuditResult {
   summary_en: string;
 }
 
+export interface AuditDiff {
+  domain: string;
+  currentAudit: AuditResult;
+  previousAudit: AuditResult;
+  previousAuditDate: string;
+  resolved: Finding[]; // in previous but not in current (matched by finding.id)
+  new: Finding[];      // in current but not in previous
+  unchanged: Finding[]; // in both
+  scoreDelta: number;  // current.totalScore - previous.totalScore
+  moduleDeltas: { module: string; delta: number }[];
+}
+
 export interface AuditProgress {
   stage: string;
   stage_de: string;
