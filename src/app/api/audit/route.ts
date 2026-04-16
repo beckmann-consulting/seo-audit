@@ -4,7 +4,7 @@ import { extractPageSEO } from '@/lib/extractor';
 import {
   checkSSL, checkDNS, checkPageSpeed,
   checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders,
-  checkAIReadiness, fetchSitemap,
+  checkAIReadiness, fetchSitemap, checkWwwConsistency,
 } from '@/lib/external-checks';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
@@ -18,7 +18,8 @@ import {
   generateOpenGraphFindings, generateSitemapQualityFindings,
   generateRichResultsFindings, generateImageDetailFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
-  generateFaviconFindings,
+  generateFaviconFindings, generateURLQualityFindings,
+  generateWwwConsistencyFindings,
   calculateModuleScore
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
@@ -119,6 +120,11 @@ async function runAudit(
     ? await checkSecurityHeaders(url, rawPages[0]?.html)
     : undefined;
 
+  // ---- STEP 7b: www / non-www consistency ----
+  const wwwConsistency = config.modules.includes('tech')
+    ? await checkWwwConsistency(url)
+    : undefined;
+
   // ---- STEP 8: AI Crawler Readiness (85%) ----
   progress('ai_crawler_check', 85);
   const aiReadiness = config.modules.includes('seo')
@@ -143,6 +149,7 @@ async function runAudit(
     allFindings.push(...generateOpenGraphFindings(pages));
     allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
     allFindings.push(...generateRichResultsFindings(pages, pageSpeedData));
+    allFindings.push(...generateURLQualityFindings(pages));
   }
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
@@ -154,6 +161,7 @@ async function runAudit(
     allFindings.push(...generateClientRenderingFindings(pages));
     allFindings.push(...generateRedirectFindings(pages, url));
     allFindings.push(...generateThirdPartyScriptFindings(pages));
+    allFindings.push(...generateWwwConsistencyFindings(wwwConsistency));
   }
   if (config.modules.includes('legal')) {
     allFindings.push(...generateLegalFindings(pages, allHtml));
@@ -253,6 +261,7 @@ async function runAudit(
     securityHeaders,
     aiReadiness,
     sitemapInfo,
+    wwwConsistency,
     pages,
     claudePrompt: '',
     summary_de,

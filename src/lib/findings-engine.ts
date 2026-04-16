@@ -1,7 +1,7 @@
 import type {
   Finding, PageSEOData, CrawlStats, SSLInfo, DNSInfo,
   PageSpeedData, SafeBrowsingData, SecurityHeadersInfo,
-  AIReadinessInfo, SitemapInfo, Module
+  AIReadinessInfo, SitemapInfo, WwwConsistencyInfo, Module
 } from '@/types';
 import { parseRobotsTxt, type RobotsGroup } from './external-checks';
 
@@ -70,6 +70,20 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
+  // Titles too short
+  const titlesTooShort = pages.filter(p => p.titleLength !== undefined && p.titleLength > 0 && p.titleLength < 30);
+  if (titlesTooShort.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `${titlesTooShort.length} Title-Tag(s) zu kurz (<30 Zeichen)`,
+      title_en: `${titlesTooShort.length} title tag(s) too short (<30 chars)`,
+      description_de: titlesTooShort.slice(0, 2).map(p => `"${p.title}" (${p.titleLength} Zeichen) — ${p.url}`).join('\n'),
+      description_en: titlesTooShort.slice(0, 2).map(p => `"${p.title}" (${p.titleLength} chars) — ${p.url}`).join('\n'),
+      recommendation_de: 'Title auf 50–60 Zeichen ausbauen. Zu kurze Titel nutzen SERP-Platz nicht und liefern zu wenig Ranking-Signal.',
+      recommendation_en: 'Expand title to 50–60 characters. Titles that are too short waste SERP real estate and provide too little ranking signal.',
+    });
+  }
+
   // Meta descriptions missing
   const pagesWithoutDesc = pages.filter(p => !p.metaDescription || p.metaDescription.length === 0);
   if (pagesWithoutDesc.length > 0) {
@@ -81,6 +95,24 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
       description_en: `Affected: ${pagesWithoutDesc.slice(0, 3).map(p => p.url).join(', ')}`,
       recommendation_de: 'Meta-Description mit 140–160 Zeichen, primärem Keyword und Call-to-Action ergänzen.',
       recommendation_en: 'Add meta description with 140–160 characters, primary keyword and call-to-action.',
+    });
+  }
+
+  // Meta descriptions too short
+  const descsTooShort = pages.filter(p =>
+    p.metaDescriptionLength !== undefined &&
+    p.metaDescriptionLength > 0 &&
+    p.metaDescriptionLength < 70
+  );
+  if (descsTooShort.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `${descsTooShort.length} Meta-Description(s) zu kurz (<70 Zeichen)`,
+      title_en: `${descsTooShort.length} meta description(s) too short (<70 chars)`,
+      description_de: descsTooShort.slice(0, 3).map(p => `${p.url} (${p.metaDescriptionLength} Zeichen)`).join('\n'),
+      description_en: descsTooShort.slice(0, 3).map(p => `${p.url} (${p.metaDescriptionLength} chars)`).join('\n'),
+      recommendation_de: 'Meta-Description auf 140–160 Zeichen ausbauen. Zu kurze Snippets verschenken SERP-Fläche und CTR.',
+      recommendation_en: 'Expand meta description to 140–160 characters. Descriptions that are too short waste SERP space and CTR.',
     });
   }
 
@@ -140,6 +172,30 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
       description_en: 'The <html> tag has no lang attribute. Search engines and screen readers cannot identify the language.',
       recommendation_de: '<html lang="de"> oder <html lang="en"> setzen.',
       recommendation_en: 'Set <html lang="de"> or <html lang="en">.',
+    });
+  }
+
+  // Pagination pages without self-referencing canonical
+  const paginationRegex = /(\?page=|\?p=|\/page\/)/i;
+  const paginationWithoutCanonical = pages.filter(p => {
+    if (!paginationRegex.test(p.url)) return false;
+    if (!p.canonicalUrl) return true;
+    // Self-referencing canonical required
+    try {
+      return new URL(p.canonicalUrl, p.url).href !== p.url;
+    } catch {
+      return true;
+    }
+  });
+  if (paginationWithoutCanonical.length > 0) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `${paginationWithoutCanonical.length} Paginations-Seite(n) ohne self-referencing Canonical`,
+      title_en: `${paginationWithoutCanonical.length} pagination page(s) without self-referencing canonical`,
+      description_de: `Betroffen: ${paginationWithoutCanonical.slice(0, 3).map(p => p.url).join(', ')}. Paginierte Seiten brauchen einen Canonical auf sich selbst, damit Google sie als eigene Seiten indexiert und nicht als Duplikate der Seite 1.`,
+      description_en: `Affected: ${paginationWithoutCanonical.slice(0, 3).map(p => p.url).join(', ')}. Paginated pages need a self-referencing canonical so Google indexes them as distinct pages rather than duplicates of page 1.`,
+      recommendation_de: 'Auf jeder ?page=/page/ Seite <link rel="canonical" href="[exakt diese URL]"> setzen. Zusätzlich rel="next"/"prev" für die Paginierung nutzen.',
+      recommendation_en: 'Set <link rel="canonical" href="[this exact URL]"> on every ?page=/page/ URL. Additionally use rel="next"/"prev" for pagination semantics.',
     });
   }
 
@@ -209,6 +265,87 @@ export function generateContentFindings(pages: PageSEOData[]): Finding[] {
     });
   }
 
+  // Heading hierarchy skip — H1 → H3 without H2 etc.
+  const hierarchyPages = pages.filter(p => {
+    const levels = p.headingStructure.map(h => h.level);
+    for (let i = 1; i < levels.length; i++) {
+      if (levels[i] - levels[i - 1] > 1) return true;
+    }
+    return false;
+  });
+  if (hierarchyPages.length > pages.length * 0.2) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'content', effort: 'low', impact: 'low',
+      title_de: `Heading-Hierarchie springt auf ${hierarchyPages.length} von ${pages.length} Seiten`,
+      title_en: `Heading hierarchy skips levels on ${hierarchyPages.length} of ${pages.length} pages`,
+      description_de: 'Beispiele für Sprünge wie H1 → H3 ohne H2. Screenreader nutzen die Heading-Struktur zur Navigation — Sprünge erschweren die Orientierung und schwächen die semantische Aussagekraft.',
+      description_en: 'Examples of skips like H1 → H3 without H2. Screen readers use the heading structure for navigation — skips impair orientation and weaken semantic meaning.',
+      recommendation_de: 'Headings in der Reihenfolge H1 → H2 → H3 strukturieren. Keine Levels überspringen.',
+      recommendation_en: 'Structure headings in H1 → H2 → H3 order. Do not skip levels.',
+    });
+  }
+
+  // Pages without any H2 — only for pages with enough content
+  const pagesWithoutH2 = pages.filter(p => p.wordCount >= 100 && p.h2s.length === 0);
+  if (pagesWithoutH2.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'content', effort: 'low', impact: 'low',
+      title_de: `${pagesWithoutH2.length} Content-Seite(n) ohne einziges H2`,
+      title_en: `${pagesWithoutH2.length} content page(s) without a single H2`,
+      description_de: 'Diese Seiten haben genug Text, aber keine Unter-Überschriften. H2-Tags strukturieren den Inhalt für Leser und Suchmaschinen.',
+      description_en: 'These pages have enough text but no subheadings. H2 tags structure content for readers and search engines.',
+      recommendation_de: 'Absätze durch passende H2 (und bei Bedarf H3) in thematische Blöcke unterteilen.',
+      recommendation_en: 'Break paragraphs into thematic blocks with matching H2 (and H3 where needed) headings.',
+    });
+  }
+
+  // E-E-A-T: author signal on content pages
+  const contentPages = pages.filter(p => p.wordCount > 500);
+  const contentPagesNoAuthor = contentPages.filter(p => !p.hasAuthorSignal);
+  if (contentPages.length > 0 && contentPagesNoAuthor.length === contentPages.length) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'content', effort: 'medium', impact: 'medium',
+      title_de: `Kein Autor-Signal auf ${contentPagesNoAuthor.length} Content-Seite(n)`,
+      title_en: `No author signal on ${contentPagesNoAuthor.length} content page(s)`,
+      description_de: 'Auf Content-Seiten (> 500 Wörter) wurde weder ein <meta name="author"> noch Schema.org-Autor noch rel="author" gefunden. Autor-Signale sind ein Google-E-E-A-T-Faktor.',
+      description_en: 'On content pages (> 500 words) neither <meta name="author"> nor Schema.org author nor rel="author" was found. Author signals are a Google E-E-A-T factor.',
+      recommendation_de: 'Autor-Name prominent auf Content-Seiten zeigen, zusätzlich via Article.author im JSON-LD mitliefern.',
+      recommendation_en: 'Show author name prominently on content pages and include via Article.author in JSON-LD.',
+    });
+  }
+
+  // E-E-A-T: date signal on content pages
+  const contentPagesNoDate = contentPages.filter(p => !p.hasDateSignal);
+  if (contentPages.length > 0 && contentPagesNoDate.length === contentPages.length) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'content', effort: 'low', impact: 'medium',
+      title_de: `Kein Datums-Signal auf ${contentPagesNoDate.length} Content-Seite(n)`,
+      title_en: `No date signal on ${contentPagesNoDate.length} content page(s)`,
+      description_de: 'Kein <time>-Tag, kein article:published_time-Meta und kein datePublished/dateModified im JSON-LD gefunden. Aktualität ist ein E-E-A-T-Signal.',
+      description_en: 'No <time> tag, no article:published_time meta and no datePublished/dateModified in JSON-LD found. Freshness is an E-E-A-T signal.',
+      recommendation_de: 'Veröffentlichungs- und Änderungsdatum per <time datetime="…"> sichtbar anzeigen und via Schema.org (datePublished, dateModified) strukturieren.',
+      recommendation_en: 'Display publication and modification dates visibly via <time datetime="…"> and structure them via Schema.org (datePublished, dateModified).',
+    });
+  }
+
+  // External links without rel="noopener" / "noreferrer"
+  const totalExternal = pages.reduce((s, p) => s + p.externalLinksDetailed.length, 0);
+  const unprotectedExternal = pages.reduce(
+    (s, p) => s + p.externalLinksDetailed.filter(l => !l.hasNoopener).length,
+    0
+  );
+  if (totalExternal > 0 && unprotectedExternal / totalExternal > 0.3) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'content', effort: 'low', impact: 'low',
+      title_de: `${unprotectedExternal} von ${totalExternal} externen Links ohne rel="noopener"`,
+      title_en: `${unprotectedExternal} of ${totalExternal} external links without rel="noopener"`,
+      description_de: 'Externe Links (target="_blank") ohne rel="noopener noreferrer" lassen die Ziel-Seite auf window.opener zugreifen — Tabnabbing-Risiko. Moderne Browser setzen das bei target="_blank" automatisch, aber explizit ist robuster.',
+      description_en: 'External links (target="_blank") without rel="noopener noreferrer" let the target page access window.opener — tabnabbing risk. Modern browsers do this implicitly on target="_blank", but explicit is more robust.',
+      recommendation_de: 'Allen externen Links rel="noopener noreferrer" mitgeben, speziell wenn target="_blank" gesetzt ist.',
+      recommendation_en: 'Add rel="noopener noreferrer" to all external links, especially those with target="_blank".',
+    });
+  }
+
   return findings;
 }
 
@@ -260,7 +397,8 @@ export function generateTechFindings(
     });
   }
 
-  // Redirect chains
+  // Redirect chains (legacy CrawlStats-based check, superseded by
+  // generateRedirectFindings but kept here until D2 removes it)
   if (crawlStats.redirectChains.length > 2) {
     findings.push({
       id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
@@ -270,6 +408,47 @@ export function generateTechFindings(
       description_en: crawlStats.redirectChains.slice(0, 3).map(r => `${r.from} → ${r.to}`).join('\n'),
       recommendation_de: 'Direkte 301-Weiterleitungen zum finalen Ziel einrichten. Ketten verlangsamen den Crawler.',
       recommendation_en: 'Set up direct 301 redirects to the final destination. Chains slow down the crawler.',
+    });
+  }
+
+  // Pages with 4xx status
+  const pages4xx = crawlStats.errorPages.filter(e => e.status >= 400 && e.status < 500);
+  if (pages4xx.length > 0) {
+    findings.push({
+      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: `${pages4xx.length} Seite(n) mit 4xx-Statuscode`,
+      title_en: `${pages4xx.length} page(s) with 4xx status code`,
+      description_de: `Betroffen: ${pages4xx.slice(0, 5).map(e => `${e.url} (${e.status})`).join(', ')}`,
+      description_en: `Affected: ${pages4xx.slice(0, 5).map(e => `${e.url} (${e.status})`).join(', ')}`,
+      recommendation_de: '404/410-Seiten korrigieren oder korrekt löschen. 401/403 prüfen: sollen die Seiten wirklich geschützt sein?',
+      recommendation_en: 'Fix or properly remove 404/410 pages. Check 401/403: should these pages really be protected?',
+    });
+  }
+
+  // Pages with 5xx status
+  const pages5xx = crawlStats.errorPages.filter(e => e.status >= 500);
+  if (pages5xx.length > 0) {
+    findings.push({
+      id: id(), priority: 'critical', module: 'tech', effort: 'high', impact: 'high',
+      title_de: `${pages5xx.length} Seite(n) mit 5xx-Statuscode`,
+      title_en: `${pages5xx.length} page(s) with 5xx status code`,
+      description_de: `Server-Fehler: ${pages5xx.slice(0, 5).map(e => `${e.url} (${e.status})`).join(', ')}`,
+      description_en: `Server errors: ${pages5xx.slice(0, 5).map(e => `${e.url} (${e.status})`).join(', ')}`,
+      recommendation_de: 'Server-Logs sofort prüfen. 5xx-Fehler kosten Nutzer, Ranking und Crawl-Budget gleichzeitig.',
+      recommendation_en: 'Check server logs immediately. 5xx errors cost users, ranking and crawl budget simultaneously.',
+    });
+  }
+
+  // HTTP/2 heuristic — homepage protocol derived from alt-svc/via headers
+  if (homepage && homepage.protocol === null) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: 'Kein Hinweis auf HTTP/2 oder HTTP/3 gefunden',
+      title_en: 'No HTTP/2 or HTTP/3 indicator found',
+      description_de: 'Weder alt-svc- noch via-Header der Homepage deuten auf HTTP/2 oder HTTP/3 hin. HTTP/1.1 ist spürbar langsamer bei vielen kleinen Requests (keine Multiplexing). Hinweis: Diese Heuristik ist nicht definitiv — Node\'s fetch gibt das genutzte Wire-Protokoll nicht direkt zurück.',
+      description_en: 'Neither the alt-svc nor the via header on the homepage hint at HTTP/2 or HTTP/3. HTTP/1.1 is noticeably slower for many small requests (no multiplexing). Note: this heuristic is not definitive — Node\'s fetch does not expose the wire protocol.',
+      recommendation_de: 'Server-Konfiguration prüfen: bei nginx ab 1.9.5 "listen 443 ssl http2;", bei Cloudflare/CDN HTTP/2 in den Proxy-Einstellungen aktivieren. HTTP/3 zusätzlich über alt-svc announcen.',
+      recommendation_en: 'Check server config: nginx 1.9.5+ uses "listen 443 ssl http2;", Cloudflare/CDN enables HTTP/2 in proxy settings. Advertise HTTP/3 additionally via alt-svc.',
     });
   }
 
@@ -605,6 +784,68 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData): Finding[
       description_en: 'LCP > 4s is a critical Core Web Vital. Google rates this as "poor".',
       recommendation_de: 'Hero-Bild preloaden, Server-Response-Zeit optimieren, nicht-kritische Scripts verzögern.',
       recommendation_en: 'Preload hero image, optimise server response time, defer non-critical scripts.',
+    });
+  }
+
+  // CLS (Cumulative Layout Shift) — lab data
+  if (pageSpeed.cls !== undefined && pageSpeed.cls > 0.25) {
+    findings.push({
+      id: id(), priority: 'important', module: 'performance', effort: 'medium', impact: 'high',
+      title_de: `CLS kritisch: ${pageSpeed.cls.toFixed(3)}`,
+      title_en: `CLS poor: ${pageSpeed.cls.toFixed(3)}`,
+      description_de: 'Cumulative Layout Shift > 0.25 wird von Google als "schlecht" eingestuft. Elemente springen beim Laden.',
+      description_en: 'Cumulative Layout Shift > 0.25 is rated "poor" by Google. Elements jump around as the page loads.',
+      recommendation_de: 'Bildern width/height-Attribute geben, Reservierungsplatz für Ads/Embeds einrichten, keine spät geladenen Fonts die den Text verschieben (font-display: optional/swap).',
+      recommendation_en: 'Give images width/height attributes, reserve space for ads/embeds, avoid late-loading fonts that shift text (use font-display: optional/swap).',
+    });
+  } else if (pageSpeed.cls !== undefined && pageSpeed.cls > 0.1) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+      title_de: `CLS verbesserungswürdig: ${pageSpeed.cls.toFixed(3)}`,
+      title_en: `CLS needs improvement: ${pageSpeed.cls.toFixed(3)}`,
+      description_de: 'CLS zwischen 0.1 und 0.25 gilt als verbesserungswürdig. Ziel ist < 0.1.',
+      description_en: 'CLS between 0.1 and 0.25 is considered needing improvement. Target is < 0.1.',
+      recommendation_de: 'Reservierten Platz für alle asynchron geladenen Elemente (Bilder, iframes, Ads, Embeds) einrichten.',
+      recommendation_en: 'Reserve space for all async-loaded elements (images, iframes, ads, embeds).',
+    });
+  }
+
+  // FCP — First Contentful Paint
+  if (pageSpeed.fcp && pageSpeed.fcp > 3000) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+      title_de: `FCP langsam: ${Math.round(pageSpeed.fcp / 100) / 10}s`,
+      title_en: `FCP slow: ${Math.round(pageSpeed.fcp / 100) / 10}s`,
+      description_de: 'First Contentful Paint > 3s bedeutet: Nutzer sehen mehrere Sekunden lang nur einen leeren Bildschirm.',
+      description_en: 'First Contentful Paint > 3s means users stare at a blank screen for several seconds.',
+      recommendation_de: 'Kritisches CSS inline ausliefern, Server-Response-Zeit reduzieren, render-blockierende Scripts entfernen.',
+      recommendation_en: 'Inline critical CSS, reduce server response time, remove render-blocking scripts.',
+    });
+  }
+
+  // TTFB — Server response time (from Lighthouse server-response-time audit)
+  if (pageSpeed.ttfb && pageSpeed.ttfb > 1800) {
+    findings.push({
+      id: id(), priority: 'important', module: 'performance', effort: 'high', impact: 'high',
+      title_de: `TTFB kritisch: ${Math.round(pageSpeed.ttfb)}ms`,
+      title_en: `TTFB critical: ${Math.round(pageSpeed.ttfb)}ms`,
+      description_de: 'Time to First Byte > 1800ms ist ein massiver Performance-Bremser. Ursache ist typischerweise langsames Backend, fehlendes Caching oder weit entfernter Server.',
+      description_en: 'Time to First Byte > 1800ms is a massive performance drag. Typical causes: slow backend, missing caching, distant server.',
+      recommendation_de: 'Server-Cache / CDN einrichten, Datenbank-Queries optimieren, Server näher an die Nutzer verlagern (Edge/CDN).',
+      recommendation_en: 'Set up server cache / CDN, optimise DB queries, move server closer to users (edge/CDN).',
+    });
+  }
+
+  // TBT — Total Blocking Time (correlates with INP)
+  if (pageSpeed.tbt && pageSpeed.tbt > 600) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+      title_de: `TBT hoch: ${Math.round(pageSpeed.tbt)}ms`,
+      title_en: `TBT high: ${Math.round(pageSpeed.tbt)}ms`,
+      description_de: 'Total Blocking Time > 600ms bedeutet, dass der Haupt-Thread über längere Zeit blockiert ist. Korreliert stark mit schlechtem INP und FID.',
+      description_en: 'Total Blocking Time > 600ms means the main thread is blocked for extended periods. Strongly correlates with bad INP and FID.',
+      recommendation_de: 'JavaScript-Bundle reduzieren, lange Tasks (> 50ms) aufspalten, Web Workers für CPU-intensive Arbeit nutzen.',
+      recommendation_en: 'Reduce JavaScript bundle, split long tasks (> 50ms), use Web Workers for CPU-heavy work.',
     });
   }
 
@@ -1245,6 +1486,24 @@ export function generateStructuredDataFindings(pages: PageSEOData[]): Finding[] 
         }
       }
     }
+  }
+
+  // BreadcrumbList schema missing on deeper pages
+  const deepPagesWithoutBreadcrumb = pages.filter(p =>
+    p.depth > 0 &&
+    !p.schemas.some(s => s.type === 'BreadcrumbList')
+  );
+  if (deepPagesWithoutBreadcrumb.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `${deepPagesWithoutBreadcrumb.length} Unter-Seite(n) ohne BreadcrumbList-Schema`,
+      title_en: `${deepPagesWithoutBreadcrumb.length} sub-page(s) without BreadcrumbList schema`,
+      description_de: `Seiten mit Klicktiefe > 0 haben kein <BreadcrumbList>-JSON-LD. Google zeigt dann keine Breadcrumbs im SERP statt der URL, was die CTR messbar senkt. Beispiele: ${deepPagesWithoutBreadcrumb.slice(0, 3).map(p => p.url).join(', ')}`,
+      description_en: `Pages with click depth > 0 have no <BreadcrumbList> JSON-LD. Google then shows the URL instead of breadcrumbs in the SERP, measurably reducing CTR. Examples: ${deepPagesWithoutBreadcrumb.slice(0, 3).map(p => p.url).join(', ')}`,
+      recommendation_de: 'BreadcrumbList als JSON-LD auf jeder Unter-Seite ergänzen. Pflichtfelder: itemListElement mit position, name, item.',
+      recommendation_en: 'Add BreadcrumbList as JSON-LD on every sub-page. Required fields: itemListElement with position, name, item.',
+      affectedUrl: deepPagesWithoutBreadcrumb[0].url,
+    });
   }
 
   return findings;
@@ -2269,6 +2528,98 @@ export function generateFaviconFindings(pages: PageSEOData[]): Finding[] {
   }
 
   return findings;
+}
+
+// ============================================================
+//  URL QUALITY FINDINGS (Block D1)
+// ============================================================
+export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // 1) URLs longer than 115 characters
+  const longUrls = pages.filter(p => p.url.length > 115);
+  if (longUrls.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'high', impact: 'low',
+      title_de: `${longUrls.length} URL(s) länger als 115 Zeichen`,
+      title_en: `${longUrls.length} URL(s) longer than 115 characters`,
+      description_de: `Lange URLs sind schlecht teilbar und schwerer im SERP zu lesen. Beispiele: ${longUrls.slice(0, 2).map(p => `${p.url.slice(0, 80)}… (${p.url.length})`).join(', ')}`,
+      description_en: `Long URLs are hard to share and harder to read in SERPs. Examples: ${longUrls.slice(0, 2).map(p => `${p.url.slice(0, 80)}… (${p.url.length})`).join(', ')}`,
+      recommendation_de: 'Slug-Struktur vereinfachen, überflüssige Verzeichnisebenen entfernen, Query-Parameter bei kanonischen URLs vermeiden.',
+      recommendation_en: 'Simplify slug structure, remove unnecessary directory levels, avoid query parameters on canonical URLs.',
+    });
+  }
+
+  // 2) URLs with uppercase letters in the path
+  const uppercaseUrls = pages.filter(p => {
+    try {
+      const path = new URL(p.url).pathname;
+      return /[A-Z]/.test(path);
+    } catch {
+      return false;
+    }
+  });
+  if (uppercaseUrls.length > 0) {
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'low',
+      title_de: `${uppercaseUrls.length} URL(s) mit Großbuchstaben im Pfad`,
+      title_en: `${uppercaseUrls.length} URL(s) with uppercase letters in the path`,
+      description_de: `Großbuchstaben in Pfaden führen auf manchen Servern zu 404 (case-sensitive), und Google behandelt /About und /about potenziell als unterschiedliche URLs. Beispiele: ${uppercaseUrls.slice(0, 3).map(p => p.url).join(', ')}`,
+      description_en: `Uppercase letters in paths cause 404s on case-sensitive servers and Google may treat /About and /about as distinct URLs. Examples: ${uppercaseUrls.slice(0, 3).map(p => p.url).join(', ')}`,
+      recommendation_de: 'Alle URLs in Kleinbuchstaben umstellen. 301-Redirects von den alten Großbuchstaben-Varianten auf die kleinen einrichten.',
+      recommendation_en: 'Convert all URLs to lowercase. Set up 301 redirects from the old uppercase variants to the lowercase versions.',
+    });
+  }
+
+  // 3) URLs with query parameters but no canonical
+  const queryNoCanonical = pages.filter(p => {
+    if (!p.url.includes('?')) return false;
+    return !p.hasCanonical;
+  });
+  if (queryNoCanonical.length > 0) {
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `${queryNoCanonical.length} URL(s) mit Query-Parametern ohne Canonical`,
+      title_en: `${queryNoCanonical.length} URL(s) with query parameters but no canonical`,
+      description_de: `URLs mit Query-Parametern (?...) ohne Canonical-Tag erzeugen unzählige Duplikate im Google-Index (eine pro Kombination). Beispiele: ${queryNoCanonical.slice(0, 3).map(p => p.url).join(', ')}`,
+      description_en: `URLs with query parameters (?...) without a canonical tag create countless duplicates in Google's index (one per combination). Examples: ${queryNoCanonical.slice(0, 3).map(p => p.url).join(', ')}`,
+      recommendation_de: 'Auf URLs mit Query-Parametern immer einen Canonical auf die parameterlose Haupt-URL setzen (außer bei echten Paginations-Seiten — die brauchen self-canonical).',
+      recommendation_en: 'Always set a canonical on URLs with query parameters pointing to the parameter-less main URL (except for genuine pagination pages — those need self-canonical).',
+    });
+  }
+
+  // 4) URLs with #fragment (defensive check — crawler normally drops them)
+  const fragmentUrls = pages.filter(p => p.url.includes('#'));
+  if (fragmentUrls.length > 0) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `${fragmentUrls.length} URL(s) mit #-Fragment gecrawlt`,
+      title_en: `${fragmentUrls.length} URL(s) with #-fragment crawled`,
+      description_de: `Fragment-URLs werden von Suchmaschinen ignoriert (nur Client-Seite relevant). Dass sie im Crawl auftauchen, deutet auf ein Verlinkungs- oder Normalisierungsproblem hin. Beispiele: ${fragmentUrls.slice(0, 2).map(p => p.url).join(', ')}`,
+      description_en: `Fragment URLs are ignored by search engines (client-side only). Their presence in the crawl indicates a linking or normalisation issue. Examples: ${fragmentUrls.slice(0, 2).map(p => p.url).join(', ')}`,
+      recommendation_de: 'Interne Links auf die URLs ohne #-Fragment umstellen. Crawler-Normalisierung prüfen.',
+      recommendation_en: 'Switch internal links to the URLs without #-fragments. Check crawler normalisation logic.',
+    });
+  }
+
+  return findings;
+}
+
+// ============================================================
+//  WWW / NON-WWW CONSISTENCY FINDINGS (Block D1)
+// ============================================================
+export function generateWwwConsistencyFindings(info?: WwwConsistencyInfo): Finding[] {
+  if (!info || info.error || info.consistent) return [];
+  return [{
+    id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
+    title_de: 'www- und non-www-Version zeigen nicht auf dieselbe URL',
+    title_en: 'www and non-www variants do not resolve to the same URL',
+    description_de: `Die Anfrage an ${info.canonicalUrl} endet bei ${info.canonicalFinalUrl}, ${info.variantUrl} bei ${info.variantFinalUrl}. Das verteilt Linkjuice auf zwei URLs und kann zu Duplicate Content führen.`,
+    description_en: `Requesting ${info.canonicalUrl} ends at ${info.canonicalFinalUrl}, while ${info.variantUrl} ends at ${info.variantFinalUrl}. This splits link equity across two URLs and can cause duplicate content.`,
+    recommendation_de: 'Eine der beiden Varianten (www oder non-www) als Kanonische wählen und die andere per 301 darauf weiterleiten. In Google Search Console die bevorzugte Variante eintragen.',
+    recommendation_en: 'Choose one variant (www or non-www) as canonical and 301-redirect the other to it. Set the preferred variant in Google Search Console.',
+  }];
 }
 
 // ============================================================

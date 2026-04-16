@@ -34,6 +34,8 @@ export interface PageData {
   depth: number; // click distance from the start URL (0 = start page)
   redirectChain: string[]; // full redirect hops observed for this URL (empty if no redirect)
   finalUrl: string; // the URL the body was served from (last hop)
+  httpStatus: number; // final HTTP status code after redirects
+  protocol: string | null; // 'h2' if alt-svc advertises HTTP/2+, else null (unknown)
 }
 
 export interface Finding {
@@ -64,6 +66,7 @@ export interface CrawlStats {
   brokenLinks: string[];
   redirectChains: { from: string; to: string }[];
   externalLinks: number;
+  errorPages: { url: string; status: number }[]; // 4xx/5xx responses captured during crawl
 }
 
 export interface SSLInfo {
@@ -242,6 +245,24 @@ export interface PageSEOData {
   hasAppleTouchIcon: boolean;
   hasWebManifest: boolean;
   hasThemeColor: boolean;
+  // Block D1 — additional structural signals
+  httpStatus: number; // propagated from PageData
+  protocol: string | null; // propagated from PageData
+  headingStructure: { level: number; text: string }[]; // full H1-H6 order of appearance
+  hasPaginationLinks: boolean; // any <link rel="next"/"prev">
+  paginationUrls: string[]; // resolved hrefs from rel="next" / rel="prev"
+  hasAuthorSignal: boolean; // Schema.org author or meta[name=author] or rel="author"
+  hasDateSignal: boolean; // <time> tag or meta publication/modified date
+  externalLinksDetailed: { href: string; hasNofollow: boolean; hasNoopener: boolean }[];
+}
+
+export interface WwwConsistencyInfo {
+  canonicalUrl: string;
+  variantUrl: string;
+  canonicalFinalUrl?: string;
+  variantFinalUrl?: string;
+  consistent: boolean;
+  error?: string;
 }
 
 export interface AuditResult {
@@ -261,6 +282,7 @@ export interface AuditResult {
   securityHeaders?: SecurityHeadersInfo;
   aiReadiness?: AIReadinessInfo;
   sitemapInfo?: SitemapInfo;
+  wwwConsistency?: WwwConsistencyInfo;
   pages: PageSEOData[];
   claudePrompt: string;
   summary_de: string;

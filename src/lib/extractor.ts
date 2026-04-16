@@ -59,13 +59,37 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Meta description
   const metaDesc = root.querySelector('meta[name="description"]')?.getAttribute('content')?.trim();
 
-  // Headings
+  // Headings (per-level lists + full ordered structure)
   const h1s = root.querySelectorAll('h1').map(h => h.text.trim()).filter(Boolean);
   const h2s = root.querySelectorAll('h2').map(h => h.text.trim()).filter(Boolean);
   const h3s = root.querySelectorAll('h3').map(h => h.text.trim()).filter(Boolean);
+  const headingStructure: { level: number; text: string }[] = [];
+  const allHeadings = root.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  for (const h of allHeadings) {
+    const tag = h.tagName.toLowerCase();
+    const level = parseInt(tag.slice(1), 10);
+    const text = h.text.trim();
+    if (!Number.isNaN(level) && level >= 1 && level <= 6) {
+      headingStructure.push({ level, text });
+    }
+  }
 
   // Canonical
   const canonical = root.querySelector('link[rel="canonical"]')?.getAttribute('href')?.trim();
+
+  // Pagination — <link rel="next"> / <link rel="prev">
+  const paginationLinks = root.querySelectorAll('link[rel="next"], link[rel="prev"]');
+  const paginationUrls: string[] = [];
+  for (const el of paginationLinks) {
+    const href = el.getAttribute('href')?.trim();
+    if (!href) continue;
+    try {
+      paginationUrls.push(new URL(href, page.url).href);
+    } catch {
+      paginationUrls.push(href);
+    }
+  }
+  const hasPaginationLinks = paginationUrls.length > 0;
 
   // Hreflang (link[rel="alternate"][hreflang])
   const hreflangEls = root.querySelectorAll('link[rel="alternate"][hreflang]');
@@ -165,6 +189,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const pageHost = (() => { try { return new URL(page.url).hostname; } catch { return ''; } })();
   const internalLinks: string[] = [];
   const externalLinks: string[] = [];
+  const externalLinksDetailed: { href: string; hasNofollow: boolean; hasNoopener: boolean }[] = [];
   const genericAnchors: { text: string; href: string }[] = [];
   let emptyAnchors = 0;
   allLinks.forEach(a => {
@@ -181,6 +206,16 @@ export function extractPageSEO(page: PageData): PageSEOData {
       else if (href.startsWith('http')) externalLinks.push(u.href);
     } catch {
       return;
+    }
+
+    // External link detail (rel attributes) for Block D1
+    if (!isInternal && absoluteHref) {
+      const rel = (a.getAttribute('rel') || '').toLowerCase();
+      externalLinksDetailed.push({
+        href: absoluteHref,
+        hasNofollow: /\bnofollow\b/.test(rel),
+        hasNoopener: /\bnoopener\b/.test(rel) || /\bnoreferrer\b/.test(rel),
+      });
     }
 
     if (!isInternal || !absoluteHref) return;
@@ -202,6 +237,26 @@ export function extractPageSEO(page: PageData): PageSEOData {
       genericAnchors.push({ text: rawText, href: absoluteHref });
     }
   });
+
+  // E-E-A-T signals — author and publication/modification date
+  const hasAuthorMeta = !!root.querySelector('meta[name="author" i]');
+  const hasAuthorRel = !!root.querySelector('a[rel="author" i], link[rel="author" i]');
+  const hasAuthorSchema = schemas.some(s => {
+    const author = s.data['author'];
+    if (!author) return false;
+    if (typeof author === 'string') return author.trim().length > 0;
+    if (Array.isArray(author)) return author.length > 0;
+    if (typeof author === 'object') return Object.keys(author as Record<string, unknown>).length > 0;
+    return false;
+  });
+  const hasAuthorSignal = hasAuthorMeta || hasAuthorRel || hasAuthorSchema;
+
+  const hasTimeTag = !!root.querySelector('time[datetime], time[pubdate]');
+  const hasArticlePublishedMeta = !!root.querySelector(
+    'meta[property="article:published_time"], meta[property="article:modified_time"], meta[name="date" i], meta[name="pubdate" i]'
+  );
+  const hasDateSchema = schemas.some(s => !!s.data['datePublished'] || !!s.data['dateModified']);
+  const hasDateSignal = hasTimeTag || hasArticlePublishedMeta || hasDateSchema;
 
   // Word count + sample for downstream content analysis
   const body = root.querySelector('body');
@@ -399,5 +454,13 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasAppleTouchIcon,
     hasWebManifest,
     hasThemeColor,
+    httpStatus: page.httpStatus,
+    protocol: page.protocol,
+    headingStructure,
+    hasPaginationLinks,
+    paginationUrls,
+    hasAuthorSignal,
+    hasDateSignal,
+    externalLinksDetailed,
   };
 }

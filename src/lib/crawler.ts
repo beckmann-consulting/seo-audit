@@ -90,6 +90,7 @@ export async function crawlSite(
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
   const pages: PageData[] = [];
   const brokenLinks: string[] = [];
+  const errorPages: { url: string; status: number }[] = [];
   const redirectChains: { from: string; to: string }[] = [];
   let externalLinkCount = 0;
 
@@ -127,10 +128,19 @@ export async function crawlSite(
 
       if (!resp.ok) {
         brokenLinks.push(url);
+        errorPages.push({ url, status: resp.status });
         continue;
       }
 
       const html = await resp.text();
+      // Protocol heuristic — Node's fetch doesn't expose the wire protocol.
+      // alt-svc / via headers are the closest proxy we can check.
+      const altSvc = resp.headers.get('alt-svc') || '';
+      const viaHeader = resp.headers.get('via') || '';
+      let protocol: string | null = null;
+      if (/\bh3\b|\bh2\b|hq=/i.test(altSvc)) protocol = 'h2';
+      else if (/2\.0/.test(viaHeader)) protocol = 'h2';
+
       pages.push({
         url: tracked.finalUrl,
         html,
@@ -141,6 +151,8 @@ export async function crawlSite(
         depth,
         redirectChain: tracked.chain,
         finalUrl: tracked.finalUrl,
+        httpStatus: resp.status,
+        protocol,
       });
 
       // Extract links from this page (resolve against the FINAL url after redirects)
@@ -176,6 +188,7 @@ export async function crawlSite(
       brokenLinks,
       redirectChains,
       externalLinks: externalLinkCount,
+      errorPages,
     },
   };
 }

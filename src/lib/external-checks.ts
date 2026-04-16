@@ -1,7 +1,7 @@
 import type {
   SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData,
   SecurityHeadersInfo, AIReadinessInfo, AIBotRule, AIBotStatus,
-  SitemapInfo, SitemapUrlEntry,
+  SitemapInfo, SitemapUrlEntry, WwwConsistencyInfo,
 } from '@/types';
 import { promises as dns } from 'dns';
 
@@ -190,6 +190,69 @@ export async function checkSafeBrowsing(url: string, apiKey: string): Promise<Sa
     };
   } catch (err) {
     return { isSafe: true, error: String(err) };
+  }
+}
+
+// ============================================================
+//  WWW / NON-WWW CONSISTENCY CHECK
+// ============================================================
+// Both the www and the bare host should redirect to the same canonical
+// variant. We fetch both with redirect: 'follow' and compare the final
+// URLs (trailing slash normalised).
+export async function checkWwwConsistency(url: string): Promise<WwwConsistencyInfo> {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname;
+    const isWww = host.startsWith('www.');
+    const variantHost = isWww ? host.slice(4) : `www.${host}`;
+    const variantUrl = `${parsed.protocol}//${variantHost}${parsed.pathname}${parsed.search}`;
+
+    const fetchFinal = async (target: string): Promise<string | undefined> => {
+      try {
+        const resp = await fetch(target, {
+          method: 'GET',
+          redirect: 'follow',
+          signal: AbortSignal.timeout(8000),
+        });
+        return resp.url || undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const [canonicalFinalUrl, variantFinalUrl] = await Promise.all([
+      fetchFinal(url),
+      fetchFinal(variantUrl),
+    ]);
+
+    if (!canonicalFinalUrl || !variantFinalUrl) {
+      return {
+        canonicalUrl: url,
+        variantUrl,
+        canonicalFinalUrl,
+        variantFinalUrl,
+        consistent: true,
+        error: 'one or both variants unreachable',
+      };
+    }
+
+    const normalise = (u: string) => u.replace(/\/$/, '').toLowerCase();
+    const consistent = normalise(canonicalFinalUrl) === normalise(variantFinalUrl);
+
+    return {
+      canonicalUrl: url,
+      variantUrl,
+      canonicalFinalUrl,
+      variantFinalUrl,
+      consistent,
+    };
+  } catch (err) {
+    return {
+      canonicalUrl: url,
+      variantUrl: url,
+      consistent: true,
+      error: String(err),
+    };
   }
 }
 
