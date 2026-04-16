@@ -16,15 +16,35 @@ export const maxDuration = 60;
 // ============================================================
 //  CORS
 // ============================================================
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': 'https://beckmanndigital.com',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Max-Age': '86400',
-};
+// Widget embeds on beckmanndigital.com in production; localhost
+// entries allow the widget page to call this API during `next dev`.
+// Unknown origins fall back to the production domain so the header
+// is always a valid single origin (CORS spec requires that).
+const ALLOWED_ORIGINS: string[] = [
+  'https://beckmanndigital.com',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+];
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+function getAllowedOrigin(request: Request): string {
+  const origin = request.headers.get('origin') || '';
+  return ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+}
+
+function corsHeaders(request: Request): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': getAllowedOrigin(request),
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+    // Proxies must cache per-Origin since the allow-origin varies.
+    'Vary': 'Origin',
+  };
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
 }
 
 // ============================================================
@@ -73,8 +93,9 @@ interface WidgetAuditResponse {
 //  POST handler
 // ============================================================
 export async function POST(req: NextRequest) {
+  const headers = corsHeaders(req);
   const respond = (status: number, body: unknown) =>
-    NextResponse.json(body, { status, headers: CORS_HEADERS });
+    NextResponse.json(body, { status, headers });
 
   let body: WidgetRequestBody;
   try {
