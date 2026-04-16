@@ -331,6 +331,55 @@ export default function AuditApp() {
       {/* Results */}
       {result && (
         <>
+          {/* Top 5 Fixes — highest-impact actions, rendered above everything else */}
+          {result.topFindings && result.topFindings.length > 0 && (
+            <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '18px 20px', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: '#ff7a00' }}>
+                {t('Top 5 Fixes — Größter Impact auf deinen Score', 'Top 5 Fixes — Highest Impact on Your Score')}
+              </h2>
+              <p style={{ margin: '0 0 14px', fontSize: 12, color: '#6b6b68' }}>
+                {t('Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung', 'The 5 most impactful actions for immediate score improvement')}
+              </p>
+              {result.topFindings.map((f, idx) => {
+                const gain = f.priority === 'critical' ? 25 : f.priority === 'important' ? 12 : f.priority === 'recommended' ? 5 : 2;
+                const rec = isDE ? f.recommendation_de : f.recommendation_en;
+                const recTrim = rec.length > 100 ? rec.slice(0, 100) + '…' : rec;
+                return (
+                  <div key={f.id} style={{
+                    padding: idx === 0 ? '0 0 12px' : '12px 0',
+                    borderTop: idx === 0 ? 'none' : '1px solid #f0ede8',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                        background: PRIORITY_BG[f.priority], color: PRIORITY_COLORS[f.priority],
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {isDE
+                          ? { critical: 'Kritisch', important: 'Wichtig', recommended: 'Empfohlen', optional: 'Optional' }[f.priority]
+                          : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
+                        }
+                      </span>
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#1a1a18' }}>
+                        {isDE ? f.title_de : f.title_en}
+                      </span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+                        background: '#eaf3de', color: '#3b6d11', whiteSpace: 'nowrap',
+                      }}>
+                        +{gain} {t('Pkt.', 'pts')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9b9b98', marginLeft: 4 }}>
+                      <span style={{ textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>{f.module}</span>
+                      <span> · {recTrim}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Score overview */}
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, marginBottom: '1.5rem' }}>
             {/* Total score */}

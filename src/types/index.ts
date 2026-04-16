@@ -285,6 +285,7 @@ export interface AuditResult {
   sitemapInfo?: SitemapInfo;
   wwwConsistency?: WwwConsistencyInfo;
   pages: PageSEOData[];
+  topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;
   summary_en: string;

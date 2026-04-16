@@ -227,7 +227,98 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
   // the document — no separate cover strip any more.
 
   // ============================================================
-  //  PAGE 2 — Module overview
+  //  PAGE 2 — Executive Summary (Top 5 Fixes)
+  // ============================================================
+  if (result.topFindings && result.topFindings.length > 0) {
+    doc.addPage();
+    addPageHeader();
+    y = CONTENT_TOP;
+
+    h1(t('Executive Summary', 'Executive Summary'));
+
+    setText(COLOR_SUBTEXT);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const subline = t(
+      'Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung',
+      'The 5 most impactful actions for immediate score improvement'
+    );
+    doc.text(subline, CONTENT_LEFT, y);
+    y += 8;
+
+    const priorityLabelEs: Record<string, { de: string; en: string }> = {
+      critical: { de: 'Kritisch', en: 'Critical' },
+      important: { de: 'Wichtig', en: 'Important' },
+      recommended: { de: 'Empfohlen', en: 'Recommended' },
+      optional: { de: 'Optional', en: 'Optional' },
+    };
+
+    result.topFindings.forEach((f, idx) => {
+      const title = isDE ? f.title_de : f.title_en;
+      const rec = isDE ? f.recommendation_de : f.recommendation_en;
+      const gain = f.priority === 'critical' ? 25 : f.priority === 'important' ? 12 : f.priority === 'recommended' ? 5 : 2;
+      const pLabel = priorityLabelEs[f.priority][lang];
+      const gainLabel = `+${gain} ${t('Pkt.', 'pts')}`;
+
+      // Reserve right-hand column for the gain badge
+      const gainBoxW = 22;
+      const textW = CONTENT_W - gainBoxW - 4 - 8; // 4mm gap, 8mm left indent for number
+      const titleLines = doc.splitTextToSize(title, textW);
+      const recLines = doc.splitTextToSize(rec, textW);
+
+      const entryH = titleLines.length * 4.8 + 4 + recLines.length * 4 + 6;
+      checkPage(entryH + 2);
+
+      const entryTop = y;
+
+      // Orange index number
+      setText(BRAND_ORANGE);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text(`${idx + 1}.`, CONTENT_LEFT, entryTop + 4);
+
+      // Title in bold black
+      setText(COLOR_TEXT);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text(titleLines, CONTENT_LEFT + 8, entryTop + 4);
+      let cursor = entryTop + 4 + titleLines.length * 4.8;
+
+      // Module + severity subline in subtext grey
+      setText(COLOR_SUBTEXT);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(`${f.module.toUpperCase()} · ${pLabel}`, CONTENT_LEFT + 8, cursor);
+      cursor += 4;
+
+      // Recommendation (full length, wrapped)
+      setText(COLOR_TEXT);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.text(recLines, CONTENT_LEFT + 8, cursor);
+      cursor += recLines.length * 4;
+
+      // Score gain badge right-aligned on the entry's title row
+      setText(COLOR_GOOD);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(gainLabel, CONTENT_RIGHT, entryTop + 4, { align: 'right' });
+
+      // Divider line between entries (not after the last one)
+      if (idx < result.topFindings.length - 1) {
+        y = cursor + 4;
+        setDraw(COLOR_BORDER);
+        doc.setLineWidth(0.2);
+        doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
+        y += 4;
+      } else {
+        y = cursor + 4;
+      }
+    });
+  }
+
+  // ============================================================
+  //  Module overview
   // ============================================================
   doc.addPage();
   addPageHeader();

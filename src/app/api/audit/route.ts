@@ -20,7 +20,7 @@ import {
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateWwwConsistencyFindings,
-  calculateModuleScore
+  calculateModuleScore, getTopFindings
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
@@ -274,6 +274,7 @@ async function runAudit(
     sitemapInfo,
     wwwConsistency,
     pages,
+    topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,
     summary_en,
