@@ -118,7 +118,9 @@ export async function checkDNS(domain: string): Promise<DNSInfo> {
 // ============================================================
 //  PAGESPEED INSIGHTS API
 // ============================================================
-export async function checkPageSpeed(url: string, apiKey: string): Promise<PageSpeedData> {
+// Single PSI run — one HTTP call, one Lighthouse execution. Kept
+// as a private helper so checkPageSpeed can average multiple runs.
+async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<PageSpeedData> {
   try {
     const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&key=${apiKey}`;
     const resp = await fetch(endpoint, { signal: AbortSignal.timeout(30000) });
@@ -157,6 +159,70 @@ export async function checkPageSpeed(url: string, apiKey: string): Promise<PageS
   } catch (err) {
     return { error: String(err) };
   }
+}
+
+// Average defined numeric values across runs; return undefined if none are defined.
+function avgDefined(values: (number | undefined)[]): number | undefined {
+  const defined = values.filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
+  if (defined.length === 0) return undefined;
+  return defined.reduce((a, b) => a + b, 0) / defined.length;
+}
+
+// Aggregate multiple PSI runs by averaging numeric fields. Scores are
+// rounded back to integers (Lighthouse convention). Raw timings and
+// ratios stay at full precision. The structured-data warning is taken
+// from the first run since it's a deterministic manual-audit verdict.
+function aggregatePageSpeedRuns(runs: PageSpeedData[]): PageSpeedData {
+  const round = (v: number | undefined) => (v === undefined ? undefined : Math.round(v));
+  return {
+    performanceScore: round(avgDefined(runs.map(r => r.performanceScore))),
+    accessibilityScore: round(avgDefined(runs.map(r => r.accessibilityScore))),
+    seoScore: round(avgDefined(runs.map(r => r.seoScore))),
+    bestPracticesScore: round(avgDefined(runs.map(r => r.bestPracticesScore))),
+    lcp: avgDefined(runs.map(r => r.lcp)),
+    cls: avgDefined(runs.map(r => r.cls)),
+    fid: avgDefined(runs.map(r => r.fid)),
+    // CrUX field data (inp, fidField) is already a 28-day p75 so it's
+    // identical across runs within the same day — averaging is a no-op
+    // but cheap, and keeps the code shape uniform.
+    inp: avgDefined(runs.map(r => r.inp)),
+    fidField: avgDefined(runs.map(r => r.fidField)),
+    ttfb: avgDefined(runs.map(r => r.ttfb)),
+    fcp: avgDefined(runs.map(r => r.fcp)),
+    si: avgDefined(runs.map(r => r.si)),
+    tbt: avgDefined(runs.map(r => r.tbt)),
+    structuredDataAuditWarning: runs[0]?.structuredDataAuditWarning,
+  };
+}
+
+// Public entry point. When runs >= 2 the PSI endpoint is hit multiple
+// times sequentially (with a short gap to be polite to rate limits)
+// and the numeric metrics are averaged to smooth out the ±3-7 point
+// variance Google openly documents for Lighthouse.
+export async function checkPageSpeed(
+  url: string,
+  apiKey: string,
+  runs: number = 1,
+  onRun?: (runNumber: number, totalRuns: number) => void
+): Promise<PageSpeedData> {
+  const effectiveRuns = Math.max(1, Math.floor(runs));
+  const results: PageSpeedData[] = [];
+
+  for (let i = 0; i < effectiveRuns; i++) {
+    if (i > 0) {
+      // 1s pause between runs to avoid hitting the per-second PSI quota
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    onRun?.(i + 1, effectiveRuns);
+    const single = await runSinglePageSpeedCheck(url, apiKey);
+    // If any run errors, bail out immediately — averaging partial data
+    // would be worse than a single-run result.
+    if (single.error) return single;
+    results.push(single);
+  }
+
+  if (results.length === 1) return results[0];
+  return aggregatePageSpeedRuns(results);
 }
 
 // ============================================================

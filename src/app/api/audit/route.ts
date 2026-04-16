@@ -108,10 +108,18 @@ async function runAudit(
   // ---- STEP 6: PageSpeed + Safe Browsing (75%) ----
   // Use client-provided key first, fall back to server env so the Env-
   // configured key actually drives the audit when the UI field is empty.
-  progress('pagespeed_check', 75);
+  // Run PSI twice by default (quickMode=false) and average the numeric
+  // metrics to smooth out the ~±5-point Lighthouse score variance.
   const googleKey = config.googleApiKey || process.env.GOOGLE_API_KEY || '';
+  const psiRuns = config.quickMode ? 1 : 2;
+  progress('pagespeed_check', 75);
   const pageSpeedData = (googleKey && config.modules.includes('performance'))
-    ? await checkPageSpeed(url, googleKey)
+    ? await checkPageSpeed(url, googleKey, psiRuns, (runNumber, totalRuns) => {
+        // Run 1 emits at 75%, subsequent runs at +3% each — keeps the
+        // bar moving while staying below the 80% security_headers step.
+        const pct = Math.min(79, 75 + (runNumber - 1) * 3);
+        progress('pagespeed_check', pct, totalRuns > 1 ? `Run ${runNumber}/${totalRuns}` : undefined);
+      })
     : undefined;
   const safeBrowsingData = googleKey
     ? await checkSafeBrowsing(url, googleKey)

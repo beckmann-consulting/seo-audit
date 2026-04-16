@@ -25,7 +25,12 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
 
   if (!pageSpeed || pageSpeed.error) return findings;
 
-  if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 50) {
+  // Hysterese-Puffer: Lighthouse-Score variiert dokumentiert ±3-7 Punkte
+  // zwischen Läufen selbst nach Multi-Run-Averaging. Schwellen wurden
+  // von <50 auf <47 bzw. <75 auf <72 zurückgezogen, damit Scores im
+  // Grenzbereich (48-50, 73-75) nicht zwischen Audits hin- und her-
+  // kippen und das Finding konsistenter erscheint/verschwindet.
+  if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 47) {
     findings.push({
       id: id(), priority: 'critical', module: 'performance', effort: 'high', impact: 'high',
       title_de: `PageSpeed Score kritisch: ${pageSpeed.performanceScore}/100`,
@@ -35,7 +40,7 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
       recommendation_de: 'Bilder optimieren, Render-blocking Scripts entfernen, Server-Response-Zeit verbessern.',
       recommendation_en: 'Optimise images, remove render-blocking scripts, improve server response time.',
     });
-  } else if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 75) {
+  } else if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 72) {
     findings.push({
       id: id(), priority: 'important', module: 'performance', effort: 'medium', impact: 'high',
       title_de: `PageSpeed Score verbesserungswürdig: ${pageSpeed.performanceScore}/100`,
