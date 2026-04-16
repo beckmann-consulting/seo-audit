@@ -83,8 +83,6 @@ export async function generatePDF(result: AuditResult, lang: Lang): Promise<void
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text(t('SEO Audit Report', 'SEO Audit Report'), CONTENT_LEFT, 8);
-    doc.setFont('helvetica', 'normal');
-    doc.text('beckmanndigital.com', CONTENT_RIGHT, 8, { align: 'right' });
   };
 
   // Mutable cursor — helpers advance this in place
