@@ -106,12 +106,15 @@ async function runAudit(
   pages[0].hasSitemap = hasSitemap;
 
   // ---- STEP 6: PageSpeed + Safe Browsing (75%) ----
+  // Use client-provided key first, fall back to server env so the Env-
+  // configured key actually drives the audit when the UI field is empty.
   progress('pagespeed_check', 75);
-  const pageSpeedData = (config.googleApiKey && config.modules.includes('performance'))
-    ? await checkPageSpeed(url, config.googleApiKey)
+  const googleKey = config.googleApiKey || process.env.GOOGLE_API_KEY || '';
+  const pageSpeedData = (googleKey && config.modules.includes('performance'))
+    ? await checkPageSpeed(url, googleKey)
     : undefined;
-  const safeBrowsingData = config.googleApiKey
-    ? await checkSafeBrowsing(url, config.googleApiKey)
+  const safeBrowsingData = googleKey
+    ? await checkSafeBrowsing(url, googleKey)
     : undefined;
 
   // ---- STEP 7: Security Headers (80%) ----
