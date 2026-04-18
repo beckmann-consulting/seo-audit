@@ -165,7 +165,10 @@ export default function WidgetPage() {
     };
   }, [embed]);
 
-  // Resize the embedding iframe whenever layout changes.
+  // Resize the embedding iframe whenever layout changes. A ResizeObserver
+  // on <body> catches every reflow (state changes, font swap, viewport
+  // rotation, flex-wrap breakpoints) so the parent iframe is always
+  // exactly tall enough to hold the content — no internal scrollbar.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const postHeight = () => {
@@ -173,9 +176,14 @@ export default function WidgetPage() {
       window.parent.postMessage({ type: 'seo-audit-resize', height: h }, '*');
     };
     postHeight();
-    const t = setTimeout(postHeight, 200);
-    return () => clearTimeout(t);
-  }, [state, emailSent, emailError]);
+    const observer = new ResizeObserver(postHeight);
+    observer.observe(document.body);
+    window.addEventListener('resize', postHeight);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', postHeight);
+    };
+  }, []);
 
   const isDE = lang === 'de';
   const t = (de: string, en: string) => (isDE ? de : en);
