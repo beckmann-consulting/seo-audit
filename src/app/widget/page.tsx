@@ -140,6 +140,8 @@ export default function WidgetPage() {
   // otherwise leak through the iframe and force the iframe to be at least
   // viewport-tall. In embed mode we override both so the parent page shows
   // through and the iframe shrinks tightly to the widget content.
+  // Also clamp horizontal overflow so the iframe never shows a scroll-x
+  // bar — any rogue fixed-width element just gets clipped instead.
   useEffect(() => {
     if (typeof document === 'undefined' || !embed) return;
     const body = document.body;
@@ -147,13 +149,19 @@ export default function WidgetPage() {
     const prevBodyBg = body.style.background;
     const prevHtmlBg = html.style.background;
     const prevBodyMinH = body.style.minHeight;
+    const prevBodyOverflowX = body.style.overflowX;
+    const prevHtmlOverflowX = html.style.overflowX;
     body.style.background = 'transparent';
     html.style.background = 'transparent';
     body.style.minHeight = '0';
+    body.style.overflowX = 'hidden';
+    html.style.overflowX = 'hidden';
     return () => {
       body.style.background = prevBodyBg;
       html.style.background = prevHtmlBg;
       body.style.minHeight = prevBodyMinH;
+      body.style.overflowX = prevBodyOverflowX;
+      html.style.overflowX = prevHtmlOverflowX;
     };
   }, [embed]);
 
@@ -276,7 +284,7 @@ export default function WidgetPage() {
           <p style={{ margin: '0 0 16px', textAlign: 'center', fontSize: 12, color: theme.textSecondary }}>
             {t('In 30 Sekunden Score, Top-Fixes und Empfehlungen.', 'Score, top fixes and recommendations in 30 seconds.')}
           </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
             <input
               value={url}
               onChange={e => setUrl(e.target.value)}
@@ -516,7 +524,7 @@ function ResultView({
                 'Enter your email to unlock the implementation details for all recommendations.',
               )}
             </p>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 6 }}>
               <input
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -524,7 +532,7 @@ function ResultView({
                 placeholder="name@example.com"
                 type="email"
                 style={{
-                  flex: 1, height: 36, padding: '0 10px', fontSize: 13,
+                  flex: '1 1 180px', minWidth: 0, height: 36, padding: '0 10px', fontSize: 13,
                   background: theme.inputBg, color: theme.inputText,
                   border: `1px solid ${theme.inputBorder}`, borderRadius: 6, outline: 'none',
                 }}
@@ -532,6 +540,7 @@ function ResultView({
               <button
                 onClick={onSubmitEmail}
                 style={{
+                  flex: '0 1 auto',
                   height: 36, padding: '0 14px', fontSize: 12, fontWeight: 600,
                   border: 'none', borderRadius: 6,
                   background: theme.secondaryBtnBg, color: theme.secondaryBtnText,
