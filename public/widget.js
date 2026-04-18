@@ -21,7 +21,7 @@
     var baseUrl = 'https://seo-audit.beckmanndigital.com';
 
     var iframe = document.createElement('iframe');
-    iframe.src = baseUrl + '/widget?lang=' + encodeURIComponent(lang);
+    iframe.src = baseUrl + '/widget?lang=' + encodeURIComponent(lang) + '&embed=1';
     iframe.style.width = '100%';
     iframe.style.height = '500px';
     iframe.style.border = 'none';

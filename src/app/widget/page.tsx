@@ -30,17 +30,85 @@ type WidgetState =
 
 const BRAND_ORANGE = '#FF7A00';
 
-const PRIORITY_BG: Record<string, string> = {
-  critical: '#fcebeb',
-  important: '#faeeda',
-  recommended: '#e6f1fb',
-  optional: '#f1efe8',
+// Color palette per mode. The widget is rendered either:
+//   - standalone (?embed=0/missing) → light theme on a white card,
+//   - embedded   (?embed=1)         → fully transparent, light text on a
+//                                      dark parent (beckmanndigital.com).
+type Theme = {
+  cardBg: string;
+  cardBorder: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  inputBg: string;
+  inputBorder: string;
+  inputText: string;
+  ringTrack: string;
+  findingBorder: string;
+  emailBoxBg: string;
+  emailBoxBorder: string;
+  secondaryBtnBg: string;
+  secondaryBtnText: string;
+  badgeBg: Record<string, string>;
+  badgeFg: Record<string, string>;
 };
-const PRIORITY_FG: Record<string, string> = {
-  critical: '#a32d2d',
-  important: '#854f0b',
-  recommended: '#185fa5',
-  optional: '#555',
+
+const STANDALONE_THEME: Theme = {
+  cardBg: '#fff',
+  cardBorder: `2px solid ${BRAND_ORANGE}`,
+  textPrimary: '#1a1a1a',
+  textSecondary: '#555',
+  textMuted: '#888',
+  inputBg: '#fff',
+  inputBorder: '#e0e0e0',
+  inputText: '#1a1a1a',
+  ringTrack: '#e0e0e0',
+  findingBorder: '#e0e0e0',
+  emailBoxBg: '#fafaf8',
+  emailBoxBorder: 'transparent',
+  secondaryBtnBg: '#1a1a1a',
+  secondaryBtnText: '#fff',
+  badgeBg: {
+    critical: '#fcebeb',
+    important: '#faeeda',
+    recommended: '#e6f1fb',
+    optional: '#f1efe8',
+  },
+  badgeFg: {
+    critical: '#a32d2d',
+    important: '#854f0b',
+    recommended: '#185fa5',
+    optional: '#555',
+  },
+};
+
+const EMBED_THEME: Theme = {
+  cardBg: 'transparent',
+  cardBorder: 'none',
+  textPrimary: 'rgba(255,255,255,0.95)',
+  textSecondary: 'rgba(255,255,255,0.65)',
+  textMuted: 'rgba(255,255,255,0.45)',
+  inputBg: 'rgba(255,255,255,0.06)',
+  inputBorder: 'rgba(255,255,255,0.18)',
+  inputText: '#fff',
+  ringTrack: 'rgba(255,255,255,0.12)',
+  findingBorder: 'rgba(255,255,255,0.14)',
+  emailBoxBg: 'rgba(255,255,255,0.04)',
+  emailBoxBorder: 'rgba(255,255,255,0.1)',
+  secondaryBtnBg: BRAND_ORANGE,
+  secondaryBtnText: '#fff',
+  badgeBg: {
+    critical: 'rgba(211,47,47,0.18)',
+    important: 'rgba(245,158,11,0.18)',
+    recommended: 'rgba(74,155,222,0.18)',
+    optional: 'rgba(255,255,255,0.08)',
+  },
+  badgeFg: {
+    critical: '#ff7676',
+    important: '#f4b35c',
+    recommended: '#7fb6e8',
+    optional: 'rgba(255,255,255,0.7)',
+  },
 };
 
 function scoreColor(s: number): string {
@@ -51,6 +119,7 @@ function scoreColor(s: number): string {
 
 export default function WidgetPage() {
   const [lang, setLang] = useState<Lang>('de');
+  const [embed, setEmbed] = useState(false);
   const [url, setUrl] = useState('');
   const [state, setState] = useState<WidgetState>({ kind: 'input' });
   const [email, setEmail] = useState('');
@@ -58,13 +127,31 @@ export default function WidgetPage() {
   const [emailError, setEmailError] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // Read ?lang= from the URL once on mount
+  // Read ?lang= and ?embed= from the URL once on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const l = params.get('lang');
     if (l === 'en' || l === 'de') setLang(l);
+    if (params.get('embed') === '1') setEmbed(true);
   }, []);
+
+  // RootLayout sets a beige body background that would otherwise leak through
+  // the iframe and look like a coloured frame around the widget. In embed
+  // mode we override it to transparent so the parent page shows through.
+  useEffect(() => {
+    if (typeof document === 'undefined' || !embed) return;
+    const body = document.body;
+    const html = document.documentElement;
+    const prevBody = body.style.background;
+    const prevHtml = html.style.background;
+    body.style.background = 'transparent';
+    html.style.background = 'transparent';
+    return () => {
+      body.style.background = prevBody;
+      html.style.background = prevHtml;
+    };
+  }, [embed]);
 
   // Resize the embedding iframe whenever layout changes.
   useEffect(() => {
@@ -74,13 +161,13 @@ export default function WidgetPage() {
       window.parent.postMessage({ type: 'seo-audit-resize', height: h }, '*');
     };
     postHeight();
-    // Repeat on next frame to catch font loads etc.
     const t = setTimeout(postHeight, 200);
     return () => clearTimeout(t);
   }, [state, emailSent, emailError]);
 
   const isDE = lang === 'de';
   const t = (de: string, en: string) => (isDE ? de : en);
+  const theme = embed ? EMBED_THEME : STANDALONE_THEME;
 
   function isValidUrl(raw: string): boolean {
     let u = raw.trim();
@@ -163,23 +250,26 @@ export default function WidgetPage() {
       maxWidth: 520,
       margin: '0 auto',
       padding: '24px 20px',
-      border: `2px solid ${BRAND_ORANGE}`,
+      border: theme.cardBorder,
       borderRadius: 12,
-      background: '#fff',
+      background: theme.cardBg,
       boxSizing: 'border-box',
+      color: theme.textPrimary,
     }}>
-      {/* Logo */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/TWB_Logo_Transparent.png" alt="TWB" style={{ height: 30, width: 'auto' }} />
-      </div>
+      {/* Logo — only in standalone mode (parent site brands the embed) */}
+      {!embed && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/TWB_Logo_Transparent.png" alt="TWB" style={{ height: 30, width: 'auto' }} />
+        </div>
+      )}
 
       {state.kind === 'input' && (
         <>
-          <h1 style={{ margin: '0 0 4px', textAlign: 'center', fontSize: 20, fontWeight: 700, color: '#1a1a1a' }}>
+          <h1 style={{ margin: '0 0 4px', textAlign: 'center', fontSize: 20, fontWeight: 700, color: theme.textPrimary }}>
             {t('Kostenlosen SEO-Audit starten', 'Start Free SEO Audit')}
           </h1>
-          <p style={{ margin: '0 0 16px', textAlign: 'center', fontSize: 12, color: '#555' }}>
+          <p style={{ margin: '0 0 16px', textAlign: 'center', fontSize: 12, color: theme.textSecondary }}>
             {t('In 30 Sekunden Score, Top-Fixes und Empfehlungen.', 'Score, top fixes and recommendations in 30 seconds.')}
           </p>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -194,7 +284,9 @@ export default function WidgetPage() {
                 height: 42,
                 padding: '0 12px',
                 fontSize: 14,
-                border: '1px solid #e0e0e0',
+                background: theme.inputBg,
+                border: `1px solid ${theme.inputBorder}`,
+                color: theme.inputText,
                 borderRadius: 8,
                 outline: 'none',
               }}
@@ -216,7 +308,7 @@ export default function WidgetPage() {
               {t('Analysieren', 'Analyse')}
             </button>
           </div>
-          <p style={{ margin: 0, fontSize: 11, color: '#888', textAlign: 'center' }}>
+          <p style={{ margin: 0, fontSize: 11, color: theme.textMuted, textAlign: 'center' }}>
             {t('Kein Account. Kein Spam. Nur Ergebnisse.', 'No account. No spam. Just results.')}
           </p>
         </>
@@ -224,13 +316,13 @@ export default function WidgetPage() {
 
       {state.kind === 'loading' && (
         <>
-          <h2 style={{ margin: '8px 0 16px', textAlign: 'center', fontSize: 16, fontWeight: 600 }}>
+          <h2 style={{ margin: '8px 0 16px', textAlign: 'center', fontSize: 16, fontWeight: 600, color: theme.textPrimary }}>
             {t(`Analysiere ${state.domain}…`, `Analysing ${state.domain}…`)}
           </h2>
           <div style={{
             position: 'relative',
             height: 6,
-            background: '#eee',
+            background: theme.ringTrack,
             borderRadius: 3,
             overflow: 'hidden',
           }}>
@@ -242,7 +334,7 @@ export default function WidgetPage() {
               transformOrigin: 'left center',
             }} />
           </div>
-          <p style={{ margin: '12px 0 0', textAlign: 'center', fontSize: 12, color: '#888' }}>
+          <p style={{ margin: '12px 0 0', textAlign: 'center', fontSize: 12, color: theme.textMuted }}>
             {t('Crawl, PageSpeed, Security Headers — ca. 20-40 Sekunden.', 'Crawl, PageSpeed, security headers — about 20-40 seconds.')}
           </p>
           <style>{`
@@ -265,7 +357,8 @@ export default function WidgetPage() {
               onClick={() => setState({ kind: 'input' })}
               style={{
                 height: 38, padding: '0 16px', fontSize: 13, fontWeight: 600,
-                border: '1px solid #e0e0e0', borderRadius: 8, background: '#fff', color: '#1a1a1a', cursor: 'pointer',
+                border: `1px solid ${theme.inputBorder}`, borderRadius: 8,
+                background: theme.inputBg, color: theme.textPrimary, cursor: 'pointer',
               }}
             >
               {t('Erneut versuchen', 'Try again')}
@@ -279,6 +372,7 @@ export default function WidgetPage() {
           data={state.data}
           isDE={isDE}
           t={t}
+          theme={theme}
           email={email}
           setEmail={setEmail}
           emailSent={emailSent}
@@ -287,7 +381,7 @@ export default function WidgetPage() {
         />
       )}
 
-      <p style={{ margin: '18px 0 0', textAlign: 'center', fontSize: 10, color: '#aaa' }}>
+      <p style={{ margin: '18px 0 0', textAlign: 'center', fontSize: 10, color: theme.textMuted }}>
         SEO Audit by{' '}
         <a href="https://beckmanndigital.com" target="_blank" rel="noopener noreferrer" style={{ color: BRAND_ORANGE, textDecoration: 'none' }}>
           Beckmann Digital
@@ -298,11 +392,12 @@ export default function WidgetPage() {
 }
 
 function ResultView({
-  data, isDE, t, email, setEmail, emailSent, emailError, onSubmitEmail,
+  data, isDE, t, theme, email, setEmail, emailSent, emailError, onSubmitEmail,
 }: {
   data: WidgetAuditResponse;
   isDE: boolean;
   t: (de: string, en: string) => string;
+  theme: Theme;
   email: string;
   setEmail: (v: string) => void;
   emailSent: boolean;
@@ -329,7 +424,7 @@ function ResultView({
       {/* Score circle */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 16 }}>
         <svg width="120" height="120" viewBox="0 0 120 120">
-          <circle cx="60" cy="60" r={r} fill="none" stroke="#e0e0e0" strokeWidth="8" />
+          <circle cx="60" cy="60" r={r} fill="none" stroke={theme.ringTrack} strokeWidth="8" />
           <circle
             cx="60" cy="60" r={r}
             fill="none"
@@ -343,18 +438,18 @@ function ResultView({
           <text x="60" y="64" textAnchor="middle" fontSize="30" fontWeight="700" fill={color} fontFamily="system-ui, sans-serif">
             {data.score}
           </text>
-          <text x="60" y="82" textAnchor="middle" fontSize="10" fill="#888" fontFamily="system-ui, sans-serif">
+          <text x="60" y="82" textAnchor="middle" fontSize="10" fill={theme.textMuted} fontFamily="system-ui, sans-serif">
             / 100
           </text>
         </svg>
         <p style={{ margin: '6px 0 0', fontSize: 14, fontWeight: 600, color }}>{label}</p>
-        <p style={{ margin: '2px 0 0', fontSize: 12, color: '#666' }}>{data.domain}</p>
+        <p style={{ margin: '2px 0 0', fontSize: 12, color: theme.textSecondary }}>{data.domain}</p>
       </div>
 
-      {/* Top 3 findings */}
+      {/* Top 3 findings — recommendation lines are gated behind the email lead */}
       {data.topFindings.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: theme.textPrimary }}>
             {t('Top 3 Handlungsempfehlungen', 'Top 3 Action Items')}
           </h3>
           {data.topFindings.map(f => {
@@ -363,12 +458,12 @@ function ResultView({
             const recTrim = rec.length > 80 ? rec.slice(0, 80) + '…' : rec;
             return (
               <div key={f.id} style={{
-                border: '1px solid #e0e0e0', borderRadius: 8, padding: '8px 10px', marginBottom: 6,
+                border: `1px solid ${theme.findingBorder}`, borderRadius: 8, padding: '8px 10px', marginBottom: 6,
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                   <span style={{
                     fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                    background: PRIORITY_BG[f.priority], color: PRIORITY_FG[f.priority],
+                    background: theme.badgeBg[f.priority], color: theme.badgeFg[f.priority],
                     whiteSpace: 'nowrap',
                   }}>
                     {isDE
@@ -376,27 +471,44 @@ function ResultView({
                       : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
                     }
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#1a1a1a' }}>{title}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: theme.textPrimary }}>{title}</span>
                 </div>
-                <p style={{ margin: 0, fontSize: 11, color: '#666', lineHeight: 1.4 }}>{recTrim}</p>
+                {emailSent ? (
+                  <p style={{ margin: 0, fontSize: 11, color: theme.textSecondary, lineHeight: 1.4 }}>{recTrim}</p>
+                ) : (
+                  <p style={{
+                    margin: 0, fontSize: 11, color: theme.textMuted, lineHeight: 1.4,
+                    fontStyle: 'italic',
+                  }}>
+                    🔒 {t(
+                      'Umsetzungs-Details nach E-Mail-Freischaltung sichtbar',
+                      'Implementation details unlocked after email',
+                    )}
+                  </p>
+                )}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Email capture */}
+      {/* Email capture / lead gate */}
       <div style={{
-        padding: '12px 14px', background: '#fafaf8', borderRadius: 8, marginBottom: 12,
+        padding: '12px 14px', background: theme.emailBoxBg,
+        border: `1px solid ${theme.emailBoxBorder}`,
+        borderRadius: 8, marginBottom: 12,
       }}>
         {emailSent ? (
           <p style={{ margin: 0, fontSize: 13, color: '#4A9B8E', fontWeight: 600, textAlign: 'center' }}>
-            {t('Danke! Wir melden uns bei Ihnen.', 'Thank you! We will be in touch.')}
+            {t('Danke! Umsetzungs-Details wurden freigeschaltet — wir melden uns.', 'Thanks! Implementation details unlocked — we will be in touch.')}
           </p>
         ) : (
           <>
-            <p style={{ margin: '0 0 8px', fontSize: 12, color: '#1a1a1a' }}>
-              {t('Interesse an einem vollständigen Audit-Bericht? Hinterlassen Sie Ihre E-Mail-Adresse — wir melden uns mit einem Angebot.', 'Interested in a complete audit report? Leave your email address and we will get back to you with a quote.')}
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: theme.textPrimary }}>
+              {t(
+                'Geben Sie Ihre E-Mail ein, um die Umsetzungs-Details zu allen Empfehlungen freizuschalten.',
+                'Enter your email to unlock the implementation details for all recommendations.',
+              )}
             </p>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
@@ -407,22 +519,31 @@ function ResultView({
                 type="email"
                 style={{
                   flex: 1, height: 36, padding: '0 10px', fontSize: 13,
-                  border: '1px solid #e0e0e0', borderRadius: 6, outline: 'none',
+                  background: theme.inputBg, color: theme.inputText,
+                  border: `1px solid ${theme.inputBorder}`, borderRadius: 6, outline: 'none',
                 }}
               />
               <button
                 onClick={onSubmitEmail}
                 style={{
                   height: 36, padding: '0 14px', fontSize: 12, fontWeight: 600,
-                  border: 'none', borderRadius: 6, background: '#1a1a1a', color: '#fff', cursor: 'pointer',
+                  border: 'none', borderRadius: 6,
+                  background: theme.secondaryBtnBg, color: theme.secondaryBtnText,
+                  cursor: 'pointer',
                 }}
               >
-                {t('Bericht anfordern', 'Request report')}
+                {t('Details freischalten', 'Unlock details')}
               </button>
             </div>
             {emailError && (
               <p style={{ margin: '6px 0 0', fontSize: 11, color: '#a32d2d' }}>{emailError}</p>
             )}
+            <p style={{ margin: '6px 0 0', fontSize: 10, color: theme.textMuted }}>
+              {t(
+                'Ihre E-Mail wird nur zur Kontaktaufnahme verwendet, kein Newsletter.',
+                'Your email will only be used to get in touch — no newsletter.',
+              )}
+            </p>
           </>
         )}
       </div>
