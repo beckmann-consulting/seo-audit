@@ -16,7 +16,6 @@ export default function WidgetLayout({ children }: { children: React.ReactNode }
         margin: 0,
         padding: 0,
         background: 'transparent',
-        minHeight: '100vh',
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >

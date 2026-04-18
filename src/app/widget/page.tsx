@@ -136,20 +136,24 @@ export default function WidgetPage() {
     if (params.get('embed') === '1') setEmbed(true);
   }, []);
 
-  // RootLayout sets a beige body background that would otherwise leak through
-  // the iframe and look like a coloured frame around the widget. In embed
-  // mode we override it to transparent so the parent page shows through.
+  // RootLayout sets a beige body background and min-height: 100vh that would
+  // otherwise leak through the iframe and force the iframe to be at least
+  // viewport-tall. In embed mode we override both so the parent page shows
+  // through and the iframe shrinks tightly to the widget content.
   useEffect(() => {
     if (typeof document === 'undefined' || !embed) return;
     const body = document.body;
     const html = document.documentElement;
-    const prevBody = body.style.background;
-    const prevHtml = html.style.background;
+    const prevBodyBg = body.style.background;
+    const prevHtmlBg = html.style.background;
+    const prevBodyMinH = body.style.minHeight;
     body.style.background = 'transparent';
     html.style.background = 'transparent';
+    body.style.minHeight = '0';
     return () => {
-      body.style.background = prevBody;
-      html.style.background = prevHtml;
+      body.style.background = prevBodyBg;
+      html.style.background = prevHtmlBg;
+      body.style.minHeight = prevBodyMinH;
     };
   }, [embed]);
 

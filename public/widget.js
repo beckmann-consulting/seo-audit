@@ -23,7 +23,9 @@
     var iframe = document.createElement('iframe');
     iframe.src = baseUrl + '/widget?lang=' + encodeURIComponent(lang) + '&embed=1';
     iframe.style.width = '100%';
-    iframe.style.height = '500px';
+    // Compact starting height — the widget posts its real height as soon
+    // as it mounts, so this is only visible for the iframe-load flash.
+    iframe.style.height = '280px';
     iframe.style.border = 'none';
     iframe.style.borderRadius = '8px';
     iframe.style.display = 'block';
