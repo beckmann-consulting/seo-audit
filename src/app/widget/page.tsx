@@ -276,7 +276,7 @@ export default function WidgetPage() {
           <p style={{ margin: '0 0 16px', textAlign: 'center', fontSize: 12, color: theme.textSecondary }}>
             {t('In 30 Sekunden Score, Top-Fixes und Empfehlungen.', 'Score, top fixes and recommendations in 30 seconds.')}
           </p>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
             <input
               value={url}
               onChange={e => setUrl(e.target.value)}
@@ -284,7 +284,8 @@ export default function WidgetPage() {
               placeholder={t('https://ihre-website.de', 'https://your-website.com')}
               type="url"
               style={{
-                flex: 1,
+                flex: '1 1 200px',
+                minWidth: 0,
                 height: 42,
                 padding: '0 12px',
                 fontSize: 14,
@@ -298,6 +299,7 @@ export default function WidgetPage() {
             <button
               onClick={startAudit}
               style={{
+                flex: '0 1 auto',
                 height: 42,
                 padding: '0 18px',
                 fontSize: 14,
