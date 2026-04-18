@@ -1,10 +1,10 @@
 /*!
  * SEO Audit Widget — Beckmann Digital
- * Embedded via <script src="https://beckmanndigital.com/seo-audit/widget.js"></script>
+ * Embedded via <script src="https://seo-audit.beckmanndigital.com/widget.js"></script>
  *
  * Usage:
  *   <div id="seo-audit-widget" data-lang="de"></div>
- *   <script src="https://beckmanndigital.com/seo-audit/widget.js"></script>
+ *   <script src="https://seo-audit.beckmanndigital.com/widget.js"></script>
  */
 (function () {
   'use strict';
@@ -18,7 +18,7 @@
     var lang = container.getAttribute('data-lang') || 'de';
     if (lang !== 'de' && lang !== 'en') lang = 'de';
 
-    var baseUrl = 'https://beckmanndigital.com/seo-audit';
+    var baseUrl = 'https://seo-audit.beckmanndigital.com';
 
     var iframe = document.createElement('iframe');
     iframe.src = baseUrl + '/widget?lang=' + encodeURIComponent(lang);
