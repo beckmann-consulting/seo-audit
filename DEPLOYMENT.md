@@ -17,8 +17,8 @@ server. The target layout is:
 
 | Component | Version            | Install                                                   |
 |-----------|--------------------|-----------------------------------------------------------|
-| Node.js   | **20.x LTS** (≥20.9) | `curl -fsSL https://deb.nodesource.com/setup_20.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
-| npm       | ≥10.x (comes with Node 20) | — |
+| Node.js   | **24.x LTS** (see `.nvmrc`) | `curl -fsSL https://deb.nodesource.com/setup_24.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
+| npm       | ≥10.x (comes with Node 24) | — |
 | git       | any current        | `sudo apt-get install -y git`                             |
 | nginx     | 1.22+              | `sudo apt-get install -y nginx`                           |
 | pm2       | latest             | `sudo npm install -g pm2`                                 |
@@ -693,7 +693,7 @@ pm2 logs seo-audit --lines 50 --nostream
 
 ## Ready-Checklist (TL;DR)
 
-- [ ] Node 20 / nginx / pm2 / certbot installiert
+- [ ] Node 24 / nginx / pm2 / certbot installiert
 - [ ] Deploy-User `deploy` angelegt, Repo unter `/var/www/seo-audit` geklont
 - [ ] `npm ci && npm run build` durchgelaufen
 - [ ] `next.config.js`: `outputFileTracingRoot` entfernt, `basePath: '/seo-audit'` gesetzt, erneut gebaut
