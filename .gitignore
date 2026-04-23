@@ -16,3 +16,6 @@ tsconfig.tsbuildinfo
 # Misc
 .DS_Store
 *.log
+
+# next.js typegen output
+next-env.d.ts
