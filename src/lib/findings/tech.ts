@@ -489,6 +489,61 @@ export function generateThirdPartyScriptFindings(pages: PageSEOData[]): Finding[
 }
 
 // ============================================================
+//  INSECURE INTERNAL LINK FINDINGS
+// ============================================================
+// Distinct from "mixed content": that flag in checkSecurityHeaders
+// catches sub-resources (img/script/css) loaded via http:// from
+// an https:// page. Hyperlinks are different — Browsers don't block
+// them, so they're easy to overlook, but they still hurt: the user
+// silently leaves HTTPS, the canonical signal weakens, and Google
+// sees inconsistent same-domain references between schemes.
+export function generateInsecureLinkFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Aggregate: target URL → set of source pages that link to it
+  const insecureTargets = new Map<string, Set<string>>();
+  for (const page of pages) {
+    if (!page.url.startsWith('https://')) continue;
+    for (const link of page.internalLinks) {
+      if (!link.startsWith('http://')) continue;
+      const sources = insecureTargets.get(link) ?? new Set<string>();
+      sources.add(page.url);
+      insecureTargets.set(link, sources);
+    }
+  }
+  if (insecureTargets.size === 0) return findings;
+
+  const totalLinks = [...insecureTargets.values()].reduce((s, set) => s + set.size, 0);
+  const affectedPages = new Set<string>();
+  for (const sources of insecureTargets.values()) {
+    for (const src of sources) affectedPages.add(src);
+  }
+
+  const sample = [...insecureTargets.entries()]
+    .slice(0, 10)
+    .map(([target, sources]) => {
+      const firstSrc = [...sources][0];
+      return `${target} (auf ${firstSrc})`;
+    })
+    .join('; ');
+
+  findings.push({
+    id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+    title_de: `${insecureTargets.size} interne http://-Link(s) auf HTTPS-Seiten`,
+    title_en: `${insecureTargets.size} internal http:// link(s) on HTTPS pages`,
+    description_de: `Auf ${affectedPages.size} HTTPS-Seite(n) verweisen ${totalLinks} interne <a href="http://…">-Verlinkungen weiterhin auf das unverschlüsselte Schema. Browser zeigen das nicht als Mixed Content (das gilt nur für Sub-Ressourcen), aber Nutzer verlassen beim Klick die HTTPS-Verbindung. Google interpretiert die HTTP- und HTTPS-Variante zudem als unterschiedliche URLs — Linkjuice und Canonical-Signale verteilen sich. Beispiele: ${sample}`,
+    description_en: `On ${affectedPages.size} HTTPS page(s), ${totalLinks} internal <a href="http://…"> links still point to the unencrypted scheme. Browsers don't show this as mixed content (that's only for sub-resources), but users leave HTTPS the moment they click. Google also treats the HTTP and HTTPS variants as distinct URLs — link equity and canonical signals get split. Examples: ${sample}`,
+    recommendation_de: 'Alle hartkodierten http://-Links zur eigenen Domain auf https:// umstellen. Idealerweise als relative URLs ("/page" statt "http://example.com/page") oder protokolllose ("//example.com/page") schreiben — dann erbt der Link automatisch das Schema der Seite.',
+    recommendation_en: 'Switch all hard-coded http:// links pointing to the same domain to https://. Better still: use relative URLs ("/page" instead of "http://example.com/page") or protocol-relative ("//example.com/page") so the link inherits the page scheme automatically.',
+    affectedUrl: [...affectedPages][0],
+  });
+
+  return findings;
+}
+
+
+// ============================================================
 //  WWW / NON-WWW CONSISTENCY FINDINGS (Block D1)
 // ============================================================
 export function generateWwwConsistencyFindings(info?: WwwConsistencyInfo): Finding[] {
