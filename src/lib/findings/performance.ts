@@ -1,5 +1,32 @@
 import type { Finding, PageSEOData, PageSpeedData } from '@/types';
+import { analyzeLcpImage, describeImageHints } from '../util/lcp-image';
 import { id } from './utils';
+
+// Build the per-language element-context lines that get appended to
+// LCP findings when Lighthouse identified a specific node. Returns
+// empty strings when no element data is available, so callers can
+// concat unconditionally.
+function buildLcpElementContext(pageSpeed: PageSpeedData): {
+  descSuffix_de: string;
+  descSuffix_en: string;
+  recSuffix_de: string;
+  recSuffix_en: string;
+} {
+  const empty = { descSuffix_de: '', descSuffix_en: '', recSuffix_de: '', recSuffix_en: '' };
+  const el = pageSpeed.lcpElement;
+  if (!el) return empty;
+
+  // Trim long snippets so the finding stays readable in PDF and UI.
+  const snippet = el.snippet.length > 200 ? el.snippet.slice(0, 197) + '…' : el.snippet;
+
+  const descSuffix_de = ` LCP-Element: ${el.selector} — ${snippet}`;
+  const descSuffix_en = ` LCP element: ${el.selector} — ${snippet}`;
+
+  const hints = describeImageHints(analyzeLcpImage(el.snippet));
+  const recSuffix_de = hints.de.length > 0 ? ' ' + hints.de.join(' ') : '';
+  const recSuffix_en = hints.en.length > 0 ? ' ' + hints.en.join(' ') : '';
+  return { descSuffix_de, descSuffix_en, recSuffix_de, recSuffix_en };
+}
 
 // ============================================================
 //  PERFORMANCE FINDINGS
@@ -89,14 +116,28 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
   }
 
   if (pageSpeed.lcp && pageSpeed.lcp > 4000) {
+    const ctx = buildLcpElementContext(pageSpeed);
     findings.push({
       id: id(), priority: 'important', module: 'performance', effort: 'medium', impact: 'high',
       title_de: `Largest Contentful Paint zu langsam: ${Math.round(pageSpeed.lcp / 100) / 10}s`,
       title_en: `Largest Contentful Paint too slow: ${Math.round(pageSpeed.lcp / 100) / 10}s`,
-      description_de: 'LCP > 4s ist ein kritisches Core Web Vital. Google stuft dies als "schlecht" ein.',
-      description_en: 'LCP > 4s is a critical Core Web Vital. Google rates this as "poor".',
-      recommendation_de: 'Hero-Bild preloaden, Server-Response-Zeit optimieren, nicht-kritische Scripts verzögern.',
-      recommendation_en: 'Preload hero image, optimise server response time, defer non-critical scripts.',
+      description_de: 'LCP > 4s ist ein kritisches Core Web Vital. Google stuft dies als "schlecht" ein.' + ctx.descSuffix_de,
+      description_en: 'LCP > 4s is a critical Core Web Vital. Google rates this as "poor".' + ctx.descSuffix_en,
+      recommendation_de: 'Hero-Bild preloaden, Server-Response-Zeit optimieren, nicht-kritische Scripts verzögern.' + ctx.recSuffix_de,
+      recommendation_en: 'Preload hero image, optimise server response time, defer non-critical scripts.' + ctx.recSuffix_en,
+    });
+  } else if (pageSpeed.lcp && pageSpeed.lcp > 2500) {
+    // 2.5–4s = "needs improvement" per Google's CWV rubric. Recommended
+    // because the page isn't failing the threshold but is at risk.
+    const ctx = buildLcpElementContext(pageSpeed);
+    findings.push({
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+      title_de: `Largest Contentful Paint verbesserungswürdig: ${Math.round(pageSpeed.lcp / 100) / 10}s`,
+      title_en: `Largest Contentful Paint needs improvement: ${Math.round(pageSpeed.lcp / 100) / 10}s`,
+      description_de: 'LCP zwischen 2.5s und 4s liegt im "Verbesserungswürdig"-Bereich nach Google\'s Core-Web-Vital-Skala. Ziel: < 2.5s.' + ctx.descSuffix_de,
+      description_en: 'LCP between 2.5s and 4s is rated "needs improvement" on Google\'s Core Web Vital scale. Target: < 2.5s.' + ctx.descSuffix_en,
+      recommendation_de: 'Hero-Bild preloaden, Server-Response-Zeit optimieren, nicht-kritische Scripts verzögern.' + ctx.recSuffix_de,
+      recommendation_en: 'Preload hero image, optimise server response time, defer non-critical scripts.' + ctx.recSuffix_en,
     });
   }
 

@@ -106,6 +106,14 @@ export interface PageSpeedData {
   si?: number;
   tbt?: number;
   structuredDataAuditWarning?: string; // Lighthouse 'structured-data' audit surfaces a warning
+  // The DOM node Lighthouse identified as the largest contentful paint
+  // target. snippet is the raw HTML, useful for showing the developer
+  // exactly which element to optimize.
+  lcpElement?: {
+    selector: string;
+    snippet: string;
+    nodeLabel?: string;
+  };
   error?: string;
 }
 

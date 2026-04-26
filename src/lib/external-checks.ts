@@ -140,6 +140,22 @@ async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<Pag
       ? (structuredDataAudit.title || 'Structured data audit flagged issues')
       : undefined;
 
+    // LCP element — Lighthouse's "largest-contentful-paint-element" audit
+    // points at the specific DOM node that triggered the LCP measurement.
+    // Knowing whether it's a hero image vs. a paragraph vs. a video makes
+    // the recommendation actionable; we also keep the raw snippet so the
+    // finding can do follow-up analysis (lazy-loaded hero, missing
+    // fetchpriority, etc.).
+    let lcpElement: PageSpeedData['lcpElement'] | undefined;
+    const lcpItem = audits?.['largest-contentful-paint-element']?.details?.items?.[0]?.node;
+    if (lcpItem && typeof lcpItem.selector === 'string' && typeof lcpItem.snippet === 'string') {
+      lcpElement = {
+        selector: lcpItem.selector,
+        snippet: lcpItem.snippet,
+        nodeLabel: typeof lcpItem.nodeLabel === 'string' ? lcpItem.nodeLabel : undefined,
+      };
+    }
+
     return {
       performanceScore: cats?.performance?.score != null ? Math.round(cats.performance.score * 100) : undefined,
       accessibilityScore: cats?.accessibility?.score != null ? Math.round(cats.accessibility.score * 100) : undefined,
@@ -155,6 +171,7 @@ async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<Pag
       si: audits?.['speed-index']?.numericValue,
       tbt: audits?.['total-blocking-time']?.numericValue,
       structuredDataAuditWarning,
+      lcpElement,
     };
   } catch (err) {
     return { error: String(err) };
@@ -170,8 +187,9 @@ function avgDefined(values: (number | undefined)[]): number | undefined {
 
 // Aggregate multiple PSI runs by averaging numeric fields. Scores are
 // rounded back to integers (Lighthouse convention). Raw timings and
-// ratios stay at full precision. The structured-data warning is taken
-// from the first run since it's a deterministic manual-audit verdict.
+// ratios stay at full precision. The structured-data warning and LCP
+// element are taken from the first run — they're deterministic for
+// the same page.
 function aggregatePageSpeedRuns(runs: PageSpeedData[]): PageSpeedData {
   const round = (v: number | undefined) => (v === undefined ? undefined : Math.round(v));
   return {
@@ -192,6 +210,7 @@ function aggregatePageSpeedRuns(runs: PageSpeedData[]): PageSpeedData {
     si: avgDefined(runs.map(r => r.si)),
     tbt: avgDefined(runs.map(r => r.tbt)),
     structuredDataAuditWarning: runs[0]?.structuredDataAuditWarning,
+    lcpElement: runs[0]?.lcpElement,
   };
 }
 
