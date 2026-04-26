@@ -206,6 +206,11 @@ export interface PageSEOData {
   schemaTypes: string[];
   schemas: ParsedSchema[];
   schemaParseErrors: number;
+  // Which structured-data formats the page actually publishes —
+  // a single page can mix all three, which is its own (mild) issue.
+  hasJsonLd: boolean;
+  hasMicrodata: boolean;
+  hasRdfa: boolean;
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
   redirectChain: string[]; // propagated from PageData

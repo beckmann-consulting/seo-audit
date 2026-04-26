@@ -1496,6 +1496,52 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
 
 
 // ============================================================
+//  MIXED STRUCTURED-DATA FORMAT FINDING
+// ============================================================
+// Sites occasionally publish the same item in JSON-LD, Microdata AND
+// RDFa simultaneously — usually because the JSON-LD was bolted onto a
+// theme that already shipped Microdata, and nobody removed the old
+// markup. Google handles this fine, but it doubles maintenance and
+// invites field drift. Optional severity — purely an information-quality
+// note, not a ranking risk.
+export function generateMixedStructuredDataFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // Aggregate which formats appear at least once across the crawl.
+  const mixedPages = pages.filter(p => {
+    let count = 0;
+    if (p.hasJsonLd) count++;
+    if (p.hasMicrodata) count++;
+    if (p.hasRdfa) count++;
+    return count >= 2;
+  });
+  if (mixedPages.length === 0) return findings;
+
+  // Build a per-format breakdown for the description.
+  const fmts: string[] = [];
+  if (mixedPages.some(p => p.hasJsonLd)) fmts.push('JSON-LD');
+  if (mixedPages.some(p => p.hasMicrodata)) fmts.push('Microdata');
+  if (mixedPages.some(p => p.hasRdfa)) fmts.push('RDFa');
+  const fmtList = fmts.join(' + ');
+  const sample = mixedPages.slice(0, 3).map(p => p.url).join(', ');
+
+  findings.push({
+    id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+    title_de: `Mehrere Strukturierte-Daten-Formate parallel auf ${mixedPages.length} Seite(n)`,
+    title_en: `Multiple structured-data formats coexisting on ${mixedPages.length} page(s)`,
+    description_de: `Auf diesen Seiten werden ${fmtList} gleichzeitig veröffentlicht. Google verarbeitet das ohne Probleme, aber Pflege-/Konsistenzkosten verdoppeln sich (zwei Stellen müssen aktualisiert werden) und Felder driften häufig auseinander. Beispiele: ${sample}`,
+    description_en: `These pages publish ${fmtList} side by side. Google handles this fine, but maintenance/consistency cost doubles (two sources to keep in sync) and fields tend to drift. Examples: ${sample}`,
+    recommendation_de: 'Auf ein Format konsolidieren — JSON-LD ist Google\'s Empfehlung und am wartungsärmsten (kompletter Block im <head>, kein HTML-Markup-Klebeband). Die alten Microdata-/RDFa-Reste aus dem Theme entfernen.',
+    recommendation_en: 'Consolidate on one format — JSON-LD is Google\'s recommendation and the lowest-maintenance one (single block in <head>, no markup glue). Remove leftover Microdata/RDFa from the theme.',
+    affectedUrl: mixedPages[0].url,
+  });
+
+  return findings;
+}
+
+
+// ============================================================
 //  PIXEL-WIDTH FINDINGS (Title / Meta Description SERP truncation)
 // ============================================================
 // Character count is a poor predictor of SERP truncation: an "i"-heavy

@@ -2,6 +2,7 @@ import { parse } from 'node-html-parser';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 import { parseXRobotsTag, xRobotsImpliesNoindex } from './util/x-robots';
 import { measurePixelWidth } from './util/pixel-width';
+import { extractMicrodata, extractRdfa, hasMicrodata, hasRdfa } from './structured-data';
 
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
@@ -154,7 +155,9 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Charset
   const hasCharset = !!root.querySelector('meta[charset]');
 
-  // Schema.org
+  // Schema.org — JSON-LD (the primary path), Microdata, and RDFa.
+  // All three formats normalize to the same ParsedSchema shape so the
+  // per-type required-field validation in seo.ts works regardless.
   const schemaScripts = root.querySelectorAll('script[type="application/ld+json"]');
   const schemas: ParsedSchema[] = [];
   let schemaParseErrors = 0;
@@ -166,6 +169,16 @@ export function extractPageSEO(page: PageData): PageSEOData {
       schemaParseErrors++;
     }
   });
+  const hasJsonLd = schemaScripts.length > 0;
+
+  const microdataItems = extractMicrodata(root);
+  schemas.push(...microdataItems);
+  const pageHasMicrodata = hasMicrodata(root);
+
+  const rdfaItems = extractRdfa(root);
+  schemas.push(...rdfaItems);
+  const pageHasRdfa = hasRdfa(root);
+
   const schemaTypes: string[] = schemas.map(s => s.type);
 
   // Images + per-image details for Check 2
@@ -475,5 +488,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
     xRobotsTag: page.xRobotsTag,
     xRobotsNoindex,
     xRobotsBotSpecific,
+    hasJsonLd,
+    hasMicrodata: pageHasMicrodata,
+    hasRdfa: pageHasRdfa,
   };
 }
