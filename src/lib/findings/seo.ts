@@ -1490,3 +1490,91 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
   return findings;
 }
 
+
+// ============================================================
+//  X-ROBOTS-TAG FINDINGS
+// ============================================================
+// X-Robots-Tag in the HTTP response header is functionally equivalent
+// to <meta name="robots"> but lives outside the HTML — easy to set
+// accidentally via a CDN/edge worker and easy to overlook in audits.
+// We surface three shapes:
+//   - header noindex (page is excluded from index — the same severity
+//     bracket as a missing title; the spec calls this Important)
+//   - header/meta conflict (one side excludes the page, the other
+//     does not — typically a misconfigured edge / CMS plugin combo)
+//   - bot-specific directives (informational — confirms that an
+//     audit would otherwise miss bot-prefixed rules entirely)
+export function generateXRobotsFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // 1) Header signals noindex
+  const noindexed = pages.filter(p => p.xRobotsNoindex);
+  if (noindexed.length > 0) {
+    const homepageAffected = noindexed.some(p => p.depth === 0);
+    const sample = noindexed.slice(0, 5).map(p => `${p.url} (X-Robots-Tag: ${p.xRobotsTag})`).join('; ');
+    // Homepage noindex via header is critical — the entire site is excluded.
+    const priority: 'critical' | 'important' = homepageAffected ? 'critical' : 'important';
+    findings.push({
+      id: id(), priority, module: 'seo', effort: 'low', impact: 'high',
+      title_de: `X-Robots-Tag setzt noindex auf ${noindexed.length} Seite(n)`,
+      title_en: `X-Robots-Tag sets noindex on ${noindexed.length} page(s)`,
+      description_de: `Der HTTP-Header "X-Robots-Tag" enthält "noindex" (oder eine Googlebot-spezifische Variante). Diese Seiten werden aus dem Google-Index entfernt — auch wenn das HTML kein <meta name="robots" content="noindex"> enthält. Beispiele: ${sample}`,
+      description_en: `The HTTP "X-Robots-Tag" header contains "noindex" (or a Googlebot-specific variant). These pages are removed from Google's index even when the HTML carries no <meta name="robots" content="noindex">. Examples: ${sample}`,
+      recommendation_de: 'Server- bzw. CDN-Konfiguration prüfen (nginx add_header, Apache Header set, Cloudflare Worker, Next.js Middleware). Falls die Seiten ranken sollen: den Header entfernen oder auf "all" setzen. Falls sie wirklich raus sollen: zusätzlich <meta robots="noindex"> setzen, damit der Status auch im HTML sichtbar ist.',
+      recommendation_en: 'Check server or CDN configuration (nginx add_header, Apache Header set, Cloudflare Worker, Next.js middleware). If the pages should rank: remove the header or set it to "all". If they truly should be excluded: additionally set <meta robots="noindex"> so the status is visible in the HTML.',
+      affectedUrl: noindexed[0].url,
+    });
+  }
+
+  // 2) Header/meta conflict — exactly one side asserts noindex
+  // Direction A: header excludes, meta does not
+  // Direction B: meta excludes, header is set to something non-noindex
+  const conflictPages = pages.filter(p => {
+    if (p.xRobotsNoindex && !p.hasNoindex) return true;
+    if (!p.xRobotsNoindex && p.hasNoindex && p.xRobotsTag) return true;
+    return false;
+  });
+  if (conflictPages.length > 0) {
+    const sample = conflictPages.slice(0, 3).map(p => {
+      const headerSays = p.xRobotsNoindex ? 'header=noindex' : `header="${p.xRobotsTag}"`;
+      const metaSays = p.hasNoindex ? 'meta=noindex' : 'meta=index';
+      return `${p.url} (${headerSays}, ${metaSays})`;
+    }).join('; ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      title_de: `Widersprüchliche Indexierungs-Signale auf ${conflictPages.length} Seite(n)`,
+      title_en: `Conflicting indexability signals on ${conflictPages.length} page(s)`,
+      description_de: `<meta name="robots"> und der HTTP-Header "X-Robots-Tag" geben unterschiedliche Direktiven aus. Google folgt der restriktiveren Anweisung — typischerweise gewinnt damit der Header. Das Risiko: ein Entwickler liest nur das HTML, sieht "index" und vermutet die Seite sei indexiert, obwohl ein Header sie blockiert. Beispiele: ${sample}`,
+      description_en: `<meta name="robots"> and the HTTP "X-Robots-Tag" header carry different directives. Google obeys the most restrictive one — typically that means the header wins. The risk: a developer reads only the HTML, sees "index" and assumes the page is indexed even though a header blocks it. Examples: ${sample}`,
+      recommendation_de: 'Eine Quelle als Wahrheit definieren (üblicherweise das <meta>-Tag) und die andere konsistent angleichen. CDN-/Edge-Worker auf "Header-Mutationen" prüfen, da sie häufig stillschweigend X-Robots-Tag setzen.',
+      recommendation_en: 'Pick one source of truth (usually the <meta> tag) and align the other consistently. Audit CDN/edge workers for header mutations — they often set X-Robots-Tag silently.',
+      affectedUrl: conflictPages[0].url,
+    });
+  }
+
+  // 3) Bot-specific directives — informational
+  const botSpecific = pages.filter(p => p.xRobotsBotSpecific.length > 0);
+  if (botSpecific.length > 0) {
+    const summary = new Map<string, number>();
+    for (const p of botSpecific) {
+      for (const entry of p.xRobotsBotSpecific) {
+        summary.set(entry.bot, (summary.get(entry.bot) ?? 0) + 1);
+      }
+    }
+    const breakdown = [...summary.entries()].map(([bot, count]) => `${bot} (${count})`).join(', ');
+    findings.push({
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `Bot-spezifische X-Robots-Tag Direktiven erkannt: ${breakdown}`,
+      title_en: `Bot-specific X-Robots-Tag directives detected: ${breakdown}`,
+      description_de: `Auf ${botSpecific.length} Seite(n) sind bot-präfixte Direktiven gesetzt (z.B. "googlebot: noindex"). Das ist kein Fehler — aber eine bewusste Wahl: stelle sicher, dass die Bot-Liste vollständig ist und keine wichtigen Crawler vergessen wurden (Bingbot, Applebot, Bots für KI-Antworten).`,
+      description_en: `On ${botSpecific.length} page(s) bot-prefixed directives are set (e.g. "googlebot: noindex"). This isn't an error — but it's a deliberate choice: make sure the bot list is complete and no important crawler is forgotten (Bingbot, Applebot, AI-answer bots).`,
+      recommendation_de: 'Pro betroffener URL die Bot-Liste prüfen und ggf. um die fehlenden Bots ergänzen. Als Alternative bietet sich "X-Robots-Tag: noindex" (ohne Prefix) an, wenn dieselbe Regel für alle gelten soll.',
+      recommendation_en: 'For each affected URL, review the bot list and add missing bots where needed. As an alternative use "X-Robots-Tag: noindex" (no prefix) when the same rule should apply universally.',
+      affectedUrl: botSpecific[0].url,
+    });
+  }
+
+  return findings;
+}
+
