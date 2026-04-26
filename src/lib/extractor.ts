@@ -1,6 +1,7 @@
 import { parse } from 'node-html-parser';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 import { parseXRobotsTag, xRobotsImpliesNoindex } from './util/x-robots';
+import { measurePixelWidth } from './util/pixel-width';
 
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
@@ -405,8 +406,10 @@ export function extractPageSEO(page: PageData): PageSEOData {
     url: page.url,
     title,
     titleLength: title ? title.length : undefined,
+    titlePixelWidth: title ? measurePixelWidth(title) : undefined,
     metaDescription: metaDesc,
     metaDescriptionLength: metaDesc ? metaDesc.length : undefined,
+    metaDescriptionPixelWidth: metaDesc ? measurePixelWidth(metaDesc) : undefined,
     h1s,
     h2s,
     h3s,

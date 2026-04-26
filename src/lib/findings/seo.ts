@@ -3,6 +3,10 @@ import type {
   AIReadinessInfo, SitemapInfo,
 } from '@/types';
 import { parseRobotsTxt, type RobotsGroup } from '../external-checks';
+import {
+  TITLE_LIMIT_MOBILE_PX,
+  META_DESC_LIMIT_PX,
+} from '../util/pixel-width';
 import { id } from './utils';
 
 // ============================================================
@@ -1484,6 +1488,65 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
       description_en: `Fragment URLs are ignored by search engines (client-side only). Their presence in the crawl indicates a linking or normalisation issue. Examples: ${fragmentUrls.slice(0, 2).map(p => p.url).join(', ')}`,
       recommendation_de: 'Interne Links auf die URLs ohne #-Fragment umstellen. Crawler-Normalisierung prüfen.',
       recommendation_en: 'Switch internal links to the URLs without #-fragments. Check crawler normalisation logic.',
+    });
+  }
+
+  return findings;
+}
+
+
+// ============================================================
+//  PIXEL-WIDTH FINDINGS (Title / Meta Description SERP truncation)
+// ============================================================
+// Character count is a poor predictor of SERP truncation: an "i"-heavy
+// title fits where a "W"-heavy one of the same length wouldn't. These
+// findings complement the char-count checks rather than replacing them
+// because the two thresholds catch different mistakes (a 70-char title
+// of "iiiii…" trips char-length but not pixel-width; a 50-char title of
+// "WWWWW…" trips pixel-width but not char-length).
+export function generatePixelWidthFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  // 1) Title pixel overrun (mobile threshold = 580px, the stricter cut)
+  const longTitles = pages.filter(p =>
+    p.titlePixelWidth !== undefined && p.titlePixelWidth > TITLE_LIMIT_MOBILE_PX
+  );
+  if (longTitles.length > 0) {
+    const sample = longTitles
+      .slice(0, 3)
+      .map(p => `"${p.title}" (${p.titlePixelWidth}px / ${p.titleLength} Z.)`)
+      .join('; ');
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `${longTitles.length} Title-Tag(s) zu breit für die mobile SERP (>${TITLE_LIMIT_MOBILE_PX}px)`,
+      title_en: `${longTitles.length} title tag(s) too wide for the mobile SERP (>${TITLE_LIMIT_MOBILE_PX}px)`,
+      description_de: `Der Title wird in Google's mobiler SERP bei ca. ${TITLE_LIMIT_MOBILE_PX}px abgeschnitten — Zeichenanzahl ist eine ungenaue Annäherung, weil "W" mehr als dreimal so breit rendert wie "i". Beispiele: ${sample}`,
+      description_en: `Titles are clipped at roughly ${TITLE_LIMIT_MOBILE_PX}px in Google's mobile SERP — character count is a rough approximation because "W" renders more than 3× as wide as "i". Examples: ${sample}`,
+      recommendation_de: 'Title kürzen oder mit schmaleren Wörtern umformulieren. Faustregel: Brand am Ende mit "|"-Separator weglassen oder durch "-" ersetzen, "Großbuchstaben"-Wörter prüfen.',
+      recommendation_en: 'Shorten the title or rephrase using narrower words. Rule of thumb: drop the trailing brand suffix after "|" or use "-" instead, and audit ALL-CAPS words.',
+      affectedUrl: longTitles[0].url,
+    });
+  }
+
+  // 2) Meta description pixel overrun
+  const longDescs = pages.filter(p =>
+    p.metaDescriptionPixelWidth !== undefined && p.metaDescriptionPixelWidth > META_DESC_LIMIT_PX
+  );
+  if (longDescs.length > 0) {
+    const sample = longDescs
+      .slice(0, 3)
+      .map(p => `${p.url} (${p.metaDescriptionPixelWidth}px / ${p.metaDescriptionLength} Z.)`)
+      .join('; ');
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `${longDescs.length} Meta-Description(s) zu breit für die SERP (>${META_DESC_LIMIT_PX}px)`,
+      title_en: `${longDescs.length} meta description(s) too wide for the SERP (>${META_DESC_LIMIT_PX}px)`,
+      description_de: `Google schneidet Meta-Descriptions bei ca. ${META_DESC_LIMIT_PX}px ab. Wie beim Title gilt: Zeichenanzahl ist nur eine Näherung, weil unterschiedliche Buchstaben unterschiedlich breit rendern. Beispiele: ${sample}`,
+      description_en: `Google clips meta descriptions at roughly ${META_DESC_LIMIT_PX}px. Like for the title, character count is only an approximation because different letters render at different widths. Examples: ${sample}`,
+      recommendation_de: 'Description kürzen, sodass die wichtigste Aussage und der Call-to-Action vor dem Schnitt stehen. Bei mehrsprachigen Templates: Pixel-Länge je Sprache messen, weil Übersetzungen oft länger werden.',
+      recommendation_en: 'Shorten the description so the key message and call-to-action come before the cut. For multilingual templates: measure pixel-length per language, since translations are usually longer.',
+      affectedUrl: longDescs[0].url,
     });
   }
 

@@ -173,8 +173,10 @@ export interface PageSEOData {
   url: string;
   title?: string;
   titleLength?: number;
+  titlePixelWidth?: number; // approx Arial 20px advance-width sum, used for SERP truncation prediction
   metaDescription?: string;
   metaDescriptionLength?: number;
+  metaDescriptionPixelWidth?: number;
   h1s: string[];
   h2s: string[];
   h3s: string[];

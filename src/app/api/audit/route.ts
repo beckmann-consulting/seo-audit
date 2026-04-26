@@ -20,6 +20,7 @@ import {
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateWwwConsistencyFindings, generateXRobotsFindings,
+  generatePixelWidthFindings,
   calculateModuleScore, getTopFindings
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
@@ -162,6 +163,7 @@ async function runAudit(
     allFindings.push(...generateRichResultsFindings(pages, pageSpeedData));
     allFindings.push(...generateURLQualityFindings(pages));
     allFindings.push(...generateXRobotsFindings(pages));
+    allFindings.push(...generatePixelWidthFindings(pages));
   }
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
