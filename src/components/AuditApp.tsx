@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang } from '@/types';
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
+import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
 
 // ============================================================
 //  LocalStorage cache — one AuditResult per hostname.
@@ -646,7 +647,7 @@ export default function AuditApp() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: '#f8f8f6' }}>
-                      {['URL', 'Title', t('Länge', 'Length'), 'H1', 'Schema', t('Wörter', 'Words'), t('Bilder/Alt', 'Img/Alt')].map(h => (
+                      {['URL', 'Title', t('Title Z. / px', 'Title chars / px'), t('Description Z. / px', 'Description chars / px'), 'H1', 'Schema', t('Wörter', 'Words'), t('Bilder/Alt', 'Img/Alt')].map(h => (
                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', border: '1px solid #e0ddd8', fontWeight: 600, color: '#444' }}>{h}</th>
                       ))}
                     </tr>
@@ -665,8 +666,39 @@ export default function AuditApp() {
                             : <span style={{ color: '#a32d2d', fontWeight: 600 }}>FEHLT</span>
                           }
                         </td>
-                        <td style={{ ...tdStyle, color: p.titleLength && (p.titleLength < 30 || p.titleLength > 65) ? '#854f0b' : '#3b6d11' }}>
-                          {p.titleLength ?? '—'}
+                        <td style={{
+                          ...tdStyle,
+                          color: (
+                            (p.titleLength != null && (p.titleLength < 30 || p.titleLength > 65)) ||
+                            (p.titlePixelWidth != null && p.titlePixelWidth > TITLE_LIMIT_MOBILE_PX)
+                          ) ? '#854f0b' : '#3b6d11',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {p.titleLength != null ? (
+                            <>
+                              {p.titleLength}
+                              <span style={{ color: '#9b9b98', marginLeft: 4 }}>
+                                / {p.titlePixelWidth ?? '—'}px
+                              </span>
+                            </>
+                          ) : '—'}
+                        </td>
+                        <td style={{
+                          ...tdStyle,
+                          color: (
+                            (p.metaDescriptionLength != null && (p.metaDescriptionLength < 70 || p.metaDescriptionLength > 165)) ||
+                            (p.metaDescriptionPixelWidth != null && p.metaDescriptionPixelWidth > META_DESC_LIMIT_PX)
+                          ) ? '#854f0b' : '#3b6d11',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {p.metaDescriptionLength != null ? (
+                            <>
+                              {p.metaDescriptionLength}
+                              <span style={{ color: '#9b9b98', marginLeft: 4 }}>
+                                / {p.metaDescriptionPixelWidth ?? '—'}px
+                              </span>
+                            </>
+                          ) : '—'}
                         </td>
                         <td style={tdStyle}>
                           {p.h1s.length === 1
