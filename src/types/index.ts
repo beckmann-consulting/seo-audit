@@ -37,6 +37,7 @@ export interface PageData {
   finalUrl: string; // the URL the body was served from (last hop)
   httpStatus: number; // final HTTP status code after redirects
   protocol: string | null; // 'h2' if alt-svc advertises HTTP/2+, else null (unknown)
+  xRobotsTag?: string; // raw X-Robots-Tag response header on the final hop, joined if multi-valued
 }
 
 export interface Finding {
@@ -255,6 +256,10 @@ export interface PageSEOData {
   hasAuthorSignal: boolean; // Schema.org author or meta[name=author] or rel="author"
   hasDateSignal: boolean; // <time> tag or meta publication/modified date
   externalLinksDetailed: { href: string; hasNofollow: boolean; hasNoopener: boolean }[];
+  // X-Robots-Tag (HTTP header) — parsed alongside <meta robots>
+  xRobotsTag?: string; // raw header value (joined if multiple)
+  xRobotsNoindex: boolean; // generic '*' / unprefixed directive contains 'noindex', or 'googlebot: noindex'
+  xRobotsBotSpecific: { bot: string; directives: string[] }[]; // bot-prefixed rules (e.g. 'googlebot: noindex')
 }
 
 export interface WwwConsistencyInfo {

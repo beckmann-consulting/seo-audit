@@ -141,6 +141,10 @@ export async function crawlSite(
       if (/\bh3\b|\bh2\b|hq=/i.test(altSvc)) protocol = 'h2';
       else if (/2\.0/.test(viaHeader)) protocol = 'h2';
 
+      // X-Robots-Tag — Node's Headers.get() joins multiple values with ', '.
+      // We keep the raw string and let the parser handle splitting.
+      const xRobotsTag = resp.headers.get('x-robots-tag') || undefined;
+
       pages.push({
         url: tracked.finalUrl,
         html,
@@ -153,6 +157,7 @@ export async function crawlSite(
         finalUrl: tracked.finalUrl,
         httpStatus: resp.status,
         protocol,
+        xRobotsTag,
       });
 
       // Extract links from this page (resolve against the FINAL url after redirects)

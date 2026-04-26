@@ -1,5 +1,6 @@
 import { parse } from 'node-html-parser';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
+import { parseXRobotsTag, xRobotsImpliesNoindex } from './util/x-robots';
 
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
@@ -132,6 +133,12 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const robotsMeta = root.querySelector('meta[name="robots" i]')?.getAttribute('content') || '';
   const googlebotMeta = root.querySelector('meta[name="googlebot" i]')?.getAttribute('content') || '';
   const hasNoindex = /\bnoindex\b/i.test(robotsMeta) || /\bnoindex\b/i.test(googlebotMeta);
+
+  // X-Robots-Tag (HTTP response header) — parsed alongside <meta robots>
+  // because the two can disagree, and the union is what Google obeys.
+  const xRobotsParsed = parseXRobotsTag(page.xRobotsTag);
+  const xRobotsNoindex = xRobotsImpliesNoindex(xRobotsParsed);
+  const xRobotsBotSpecific = xRobotsParsed?.botSpecific ?? [];
 
   // Viewport
   const viewportContent = root.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
@@ -462,5 +469,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasAuthorSignal,
     hasDateSignal,
     externalLinksDetailed,
+    xRobotsTag: page.xRobotsTag,
+    xRobotsNoindex,
+    xRobotsBotSpecific,
   };
 }
