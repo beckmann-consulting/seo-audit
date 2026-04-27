@@ -1,7 +1,15 @@
 import type { Finding, PageSEOData } from '@/types';
+import type { ImageSizeResult } from '../external-image-sizes';
 import { signatureJaccard, UnionFind } from '../util/text-similarity';
 import { readabilityThreshold } from '../util/readability';
 import { id } from './utils';
+
+// Threshold for the oversized-image finding. 200KB matches the spec
+// and is consistent with Lighthouse's "efficiently-encoded-images"
+// heuristic for hero/listing images. Real-time pages with many
+// product photos will routinely exceed this; the finding aims at the
+// outlier case (one 2MB hero image dragging LCP).
+const OVERSIZED_IMAGE_THRESHOLD_BYTES = 200 * 1024;
 
 // Threshold for the MinHash-based near-duplicate detection. 0.85 was
 // chosen because at K=64 the standard error is ~0.05, so true J=0.80
@@ -430,6 +438,42 @@ export function generateReadabilityFindings(pages: PageSEOData[]): Finding[] {
     recommendation_de: 'Sätze kürzen (Ziel: ≤ 20 Wörter pro Satz im Schnitt), lange Wörter durch kürzere Synonyme ersetzen wo passend, aktive statt passive Konstruktionen, Fachbegriffe beim ersten Vorkommen kurz erklären.',
     recommendation_en: 'Shorten sentences (target: average ≤ 20 words per sentence), replace long words with shorter synonyms where it fits, prefer active over passive voice, briefly explain jargon on first use.',
     affectedUrl: hardToRead[0].url,
+  });
+
+  return findings;
+}
+
+
+// ============================================================
+//  OVERSIZED IMAGES (HEAD-probed file size > 200KB)
+// ============================================================
+// Independent of the existing image-detail checks (alt, lazy, dimensions)
+// — this one is about file weight, which extractor.ts can't measure
+// without an HTTP probe. Recommended severity; not all big images are
+// wrong (a hero photo CAN be 500KB if it's the LCP element and quality
+// matters), but anything over 200KB is worth a developer look.
+export function generateOversizedImageFindings(imageSizes?: { url: string; sizeBytes: number; contentType?: string }[]): Finding[] {
+  const findings: Finding[] = [];
+  if (!imageSizes || imageSizes.length === 0) return findings;
+
+  const oversized = imageSizes
+    .filter(i => i.sizeBytes > OVERSIZED_IMAGE_THRESHOLD_BYTES)
+    .sort((a, b) => b.sizeBytes - a.sizeBytes);
+  if (oversized.length === 0) return findings;
+
+  const sample = oversized.slice(0, 5).map(i =>
+    `${i.url} (${(i.sizeBytes / 1024).toFixed(0)} KB)`,
+  ).join(', ');
+
+  findings.push({
+    id: id(), priority: 'recommended', module: 'content', effort: 'medium', impact: 'medium',
+    title_de: `${oversized.length} Bild(er) > ${OVERSIZED_IMAGE_THRESHOLD_BYTES / 1024} KB`,
+    title_en: `${oversized.length} image(s) larger than ${OVERSIZED_IMAGE_THRESHOLD_BYTES / 1024} KB`,
+    description_de: `HEAD-Probe ergab: diese Bilder überschreiten ${OVERSIZED_IMAGE_THRESHOLD_BYTES / 1024} KB Dateigröße — das verlangsamt LCP merkbar, besonders auf Mobile/3G. Nicht jeder Treffer ist ein Fehler (Hero-Bilder dürfen bewusst größer sein), aber jeder verdient einen Blick. Größte Treffer: ${sample}`,
+    description_en: `HEAD probe results: these images exceed ${OVERSIZED_IMAGE_THRESHOLD_BYTES / 1024} KB in file size — that measurably slows LCP, especially on mobile / 3G. Not every hit is wrong (hero images may be intentionally larger), but each deserves a look. Largest offenders: ${sample}`,
+    recommendation_de: 'In WebP/AVIF konvertieren (25-50% kleiner), responsive srcset/sizes nutzen, qualitätsbasierte Kompression (75-85 statt 100). Lazy-Loading für Below-the-Fold-Bilder. Cloudinary, imgix, Next/Image automatisieren das.',
+    recommendation_en: 'Convert to WebP/AVIF (25-50% smaller), use responsive srcset/sizes, quality-based compression (75-85 instead of 100). Lazy-load below-the-fold images. Cloudinary, imgix, Next/Image automate this.',
+    affectedUrl: oversized[0].url,
   });
 
   return findings;

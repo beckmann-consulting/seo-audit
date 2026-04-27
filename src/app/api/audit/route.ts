@@ -6,6 +6,7 @@ import {
   checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders,
   checkAIReadiness, fetchSitemap, checkWwwConsistency,
 } from '@/lib/external-checks';
+import { checkImageSizes } from '@/lib/external-image-sizes';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
@@ -18,7 +19,7 @@ import {
   generateOpenGraphFindings, generateSitemapQualityFindings,
   generateRichResultsFindings, generateImageDetailFindings,
   generateBodyDuplicateFindings, generateTextHtmlRatioFindings,
-  generateReadabilityFindings,
+  generateReadabilityFindings, generateOversizedImageFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateTouchTargetFindings,
@@ -169,6 +170,13 @@ async function runAudit(
     ? await checkAIReadiness(url, robotsContent, userAgent, authHeader, customHeaders)
     : undefined;
 
+  // ---- STEP 8b: Image-size HEAD probes ----
+  // Default 20 unique images probed; user can disable by setting 0.
+  const imageProbeLimit = config.imageHeadCheckLimit ?? 20;
+  const imageSizes = (imageProbeLimit > 0 && config.modules.includes('content'))
+    ? await checkImageSizes(pages, imageProbeLimit, userAgent, authHeader, customHeaders)
+    : undefined;
+
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
@@ -198,6 +206,7 @@ async function runAudit(
     allFindings.push(...generateBodyDuplicateFindings(pages));
     allFindings.push(...generateTextHtmlRatioFindings(pages));
     allFindings.push(...generateReadabilityFindings(pages));
+    allFindings.push(...generateOversizedImageFindings(imageSizes));
   }
   if (config.modules.includes('tech')) {
     allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
@@ -311,6 +320,7 @@ async function runAudit(
     sitemapInfo,
     wwwConsistency,
     pages,
+    imageSizes,
     topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,

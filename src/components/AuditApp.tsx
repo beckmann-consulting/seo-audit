@@ -111,6 +111,7 @@ export default function AuditApp() {
   const [basicAuthPass, setBasicAuthPass] = useState('');
   const [customHeadersText, setCustomHeadersText] = useState('');
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
+  const [imageProbeLimit, setImageProbeLimit] = useState(20);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -287,6 +288,7 @@ export default function AuditApp() {
         ? { username: basicAuthUser, password: basicAuthPass }
         : undefined,
       customHeaders: parseHeaders(customHeadersText),
+      imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
     };
 
     try {
@@ -524,6 +526,24 @@ export default function AuditApp() {
                 style={inputStyle}
               />
             </div>
+          </div>
+
+          {/* Image-size HEAD probe */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>
+              {t('Bild-Probe-Limit', 'Image probe limit')}{' '}
+              <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                ({t('HEAD-Requests für Datei-Größe; 0 deaktiviert; ~5s pro Bild', 'HEAD requests for file size; 0 disables; ~5s per image')})
+              </span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={imageProbeLimit}
+              onChange={e => setImageProbeLimit(parseInt(e.target.value, 10) || 0)}
+              style={{ ...inputStyle, maxWidth: 120 }}
+            />
           </div>
 
           {/* Custom headers */}

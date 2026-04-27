@@ -53,6 +53,11 @@ export interface AuditConfig {
   // values (Cookie, Authorization, X-API-Key, X-Auth-*) are masked
   // before round-trip to the client.
   customHeaders?: Record<string, string>;
+  // HEAD-probe at most this many unique image URLs to estimate file
+  // size from Content-Length. 0 disables the probe entirely; default
+  // (when undefined) is 20 — enough to catch typical hero/listing
+  // image weight without making the audit drag.
+  imageHeadCheckLimit?: number;
 }
 
 export interface PageData {
@@ -357,6 +362,9 @@ export interface AuditResult {
   sitemapInfo?: SitemapInfo;
   wwwConsistency?: WwwConsistencyInfo;
   pages: PageSEOData[];
+  // HEAD-probed image sizes; undefined when the probe was disabled
+  // (imageHeadCheckLimit === 0) or when no images were probeable.
+  imageSizes?: { url: string; sizeBytes: number; contentType?: string }[];
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;
