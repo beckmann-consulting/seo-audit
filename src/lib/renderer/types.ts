@@ -6,6 +6,8 @@
 // the static fetch result captured in parallel — the SPA / "JS
 // required" finding compares the two.
 
+import type { AxeViolation } from '@/types';
+
 export interface RenderResult {
   url: string;            // the URL we asked for
   finalUrl: string;       // after redirects
@@ -23,6 +25,7 @@ export interface RenderResult {
   staticWordCount?: number;  // word count of the static HTML
   consoleErrors?: string[];  // page.on('console') / page.on('pageerror')
   failedRequests?: string[]; // resources the browser couldn't load
+  axeViolations?: AxeViolation[]; // populated when JsRenderer.runAxe is true
 }
 
 export interface Renderer {

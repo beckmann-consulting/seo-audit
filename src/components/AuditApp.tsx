@@ -68,6 +68,7 @@ const ALL_MODULES: { id: Module; label_de: string; label_en: string; desc_de: st
   { id: 'ux', label_de: 'UX & Struktur', label_en: 'UX & Structure', desc_de: 'Navigation, CTAs, Verlinkung', desc_en: 'Navigation, CTAs, linking' },
   { id: 'tech', label_de: 'Technik', label_en: 'Tech', desc_de: 'SSL, DNS, defekte Links, Bildformate', desc_en: 'SSL, DNS, broken links, image formats' },
   { id: 'performance', label_de: 'Performance', label_en: 'Performance', desc_de: 'PageSpeed, Core Web Vitals (braucht Google API Key)', desc_en: 'PageSpeed, Core Web Vitals (needs Google API key)' },
+  { id: 'accessibility', label_de: 'Barrierefreiheit', label_en: 'Accessibility', desc_de: 'WCAG 2.1 AA via axe-core (braucht JS-Mode)', desc_en: 'WCAG 2.1 AA via axe-core (requires JS mode)' },
   { id: 'offers', label_de: 'Angebote', label_en: 'Offers', desc_de: 'CTAs, Produktseiten — nur im Claude-Prompt, kein Auto-Check', desc_en: 'CTAs, product pages — Claude prompt only, no auto-check' },
 ];
 
@@ -102,7 +103,11 @@ export default function AuditApp() {
   const [url, setUrl] = useState('');
   const [googleKey, setGoogleKey] = useState('');
   const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false);
-  const [modules, setModules] = useState<Module[]>(ALL_MODULES.map(m => m.id).filter(m => m !== 'offers'));
+  const [modules, setModules] = useState<Module[]>(
+    // accessibility off by default — adds 1-2s per page when JS-mode
+    // is enabled, and is meaningless without it.
+    ALL_MODULES.map(m => m.id).filter(m => m !== 'offers' && m !== 'accessibility'),
+  );
   const [userAgent, setUserAgent] = useState<UserAgentPreset>('default');
   const [customUserAgent, setCustomUserAgent] = useState('');
   const [includePatterns, setIncludePatterns] = useState('');

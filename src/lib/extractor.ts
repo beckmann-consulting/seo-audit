@@ -562,5 +562,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     staticWordCount: page.staticWordCount,
     consoleErrors: page.consoleErrors,
     failedRequests: page.failedRequests,
+    axeViolations: page.axeViolations,
   };
 }

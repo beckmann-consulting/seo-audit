@@ -7,6 +7,18 @@ export type Effort = 'low' | 'medium' | 'high';
 export type Impact = 'low' | 'medium' | 'high';
 export type Lang = 'de' | 'en';
 
+// Subset of the @axe-core/playwright violation shape that we actually
+// surface — keeps the audit-result payload compact and version-stable.
+export interface AxeViolation {
+  id: string;            // axe rule id, e.g. "color-contrast"
+  impact: 'critical' | 'serious' | 'moderate' | 'minor' | null;
+  description: string;
+  help: string;
+  helpUrl: string;
+  tags: string[];        // includes WCAG criteria like "wcag2aa", "wcag143"
+  nodes: number;         // count of affected elements on this page
+}
+
 export type Module =
   | 'seo'
   | 'content'
@@ -14,6 +26,7 @@ export type Module =
   | 'ux'
   | 'tech'
   | 'performance'
+  | 'accessibility'
   | 'offers';
 
 export type UserAgentPreset =
@@ -94,6 +107,7 @@ export interface PageData {
   consoleErrors?: string[];
   failedRequests?: string[];
   renderMode?: 'static' | 'js';
+  axeViolations?: AxeViolation[];
 }
 
 export interface Finding {
@@ -272,6 +286,7 @@ export interface PageSEOData {
   staticWordCount?: number;        // word count of the un-rendered HTML
   consoleErrors?: string[];        // browser console / page errors during render
   failedRequests?: string[];       // sub-resources that failed to load
+  axeViolations?: AxeViolation[];  // axe-core WCAG findings (only when accessibility module is active + rendering=js)
   // Body-content fingerprints for duplicate / near-duplicate detection.
   // bodyTextHash is FNV-1a hex over normalised body text — equality means
   // exact-duplicate content. bodyMinhash is a fixed-length MinHash

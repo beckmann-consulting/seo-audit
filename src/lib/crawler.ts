@@ -51,6 +51,7 @@ function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number
     consoleErrors: r.consoleErrors,
     failedRequests: r.failedRequests,
     renderMode: r.mode,
+    axeViolations: r.axeViolations,
   };
 }
 

@@ -21,8 +21,9 @@
 // compared to the JS render (~2-5s) so the parallel cost is rounding
 // error.
 
-import type { Browser, BrowserContext, Response as PWResponse } from 'playwright-core';
+import type { Browser, BrowserContext, Page, Response as PWResponse } from 'playwright-core';
 import type { Renderer, RenderResult, RendererOptions } from './types';
+import type { AxeViolation } from '@/types';
 import { StaticRenderer } from './static';
 import { countVisibleWords } from '../util/visible-text';
 
@@ -30,8 +31,16 @@ export interface JsRendererOptions extends RendererOptions {
   endpoint: string;       // ws://localhost:9223 (no trailing slash, no token)
   token: string;
   pageTimeoutMs?: number; // default 30000
+  // When true, axe-core runs after the page renders and the resulting
+  // violations are attached to RenderResult.axeViolations. Adds ~1-2s
+  // per page; only enable when the accessibility module is selected.
+  runAxe?: boolean;
   // Test seam: stub out the actual chromium.connect call.
   connect?: (wsEndpoint: string) => Promise<Browser>;
+  // Test seam: stub the axe runner so we don't ship axe-core through
+  // a stub Playwright in unit tests. Production wiring uses the real
+  // @axe-core/playwright AxeBuilder.
+  axeRunner?: (page: Page) => Promise<AxeViolation[]>;
 }
 
 const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
@@ -129,6 +138,18 @@ export class JsRenderer implements Renderer {
 
       const html = await page.content();
       const finalUrl = page.url();
+      // axe runs AFTER content capture so the page DOM is what users
+      // see, not what's loading. Failures are swallowed — a flaky axe
+      // run shouldn't tank the whole audit.
+      let axeViolations: AxeViolation[] | undefined;
+      if (this.opts.runAxe) {
+        try {
+          const runner = this.opts.axeRunner ?? defaultAxeRunner;
+          axeViolations = await runner(page);
+        } catch {
+          axeViolations = undefined;
+        }
+      }
 
       // Build redirect chain: 3xx responses observed before the final URL.
       const chain: string[] = [];
@@ -158,6 +179,7 @@ export class JsRenderer implements Renderer {
         mode: 'js',
         consoleErrors,
         failedRequests,
+        axeViolations,
       };
     } finally {
       await page.close().catch(() => { /* page may already be closed */ });
@@ -201,6 +223,29 @@ export class JsRenderer implements Renderer {
       try { await (await this.browserPromise).close(); } catch { /* ignore */ }
     }
   }
+}
+
+// The default axe runner: dynamically loads @axe-core/playwright,
+// runs against WCAG 2.0 + 2.1 levels A and AA, and projects the
+// verbose AxeBuilder result into our compact AxeViolation shape.
+// Dynamic import keeps the dependency lazy — static-mode audits
+// never load it.
+async function defaultAxeRunner(page: Page): Promise<AxeViolation[]> {
+  const mod = await import('@axe-core/playwright');
+  const AxeBuilder = (mod as { default?: typeof import('@axe-core/playwright').default }).default
+    ?? (mod as unknown as typeof import('@axe-core/playwright').default);
+  const result = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  return result.violations.map(v => ({
+    id: v.id,
+    impact: v.impact ?? null,
+    description: v.description,
+    help: v.help,
+    helpUrl: v.helpUrl,
+    tags: v.tags,
+    nodes: v.nodes.length,
+  }));
 }
 
 // Cheap connectivity probe used by the route handler before opening

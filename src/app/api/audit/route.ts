@@ -21,6 +21,7 @@ import {
   generateRichResultsFindings, generateImageDetailFindings,
   generateBodyDuplicateFindings, generateTextHtmlRatioFindings,
   generateReadabilityFindings, generateOversizedImageFindings,
+  generateAccessibilityFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateTouchTargetFindings,
@@ -48,6 +49,7 @@ const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   ux: { de: 'UX & Struktur', en: 'UX & Structure' },
   tech: { de: 'Technik', en: 'Tech' },
   performance: { de: 'Performance', en: 'Performance' },
+  accessibility: { de: 'Barrierefreiheit', en: 'Accessibility' },
   offers: { de: 'Angebote', en: 'Offers' },
 };
 
@@ -256,6 +258,10 @@ async function runAudit(
   if (safeBrowsingData) {
     allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
   }
+  // Accessibility runs as its own module — generates findings whenever
+  // the user picked the module, even in static mode (where it just
+  // emits the "JS-mode required" guidance finding).
+  allFindings.push(...generateAccessibilityFindings(pages, config.modules.includes('accessibility')));
 
   // ---- Scores ----
   const moduleScores: ModuleScore[] = config.modules.map(m => ({
@@ -419,6 +425,9 @@ export async function POST(req: NextRequest) {
       userAgent: ua,
       authHeader: auth,
       customHeaders: config.customHeaders,
+      // Run axe-core on each page only when the user explicitly
+      // selected the accessibility module. Adds ~1-2s per page.
+      runAxe: config.modules.includes('accessibility'),
     });
   } else {
     renderer = new StaticRenderer({

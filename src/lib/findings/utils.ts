@@ -41,6 +41,10 @@ const PRIORITY_BASE: Record<Priority, number> = {
 const MODULE_WEIGHT: Record<string, number> = {
   seo: 1.5,
   performance: 1.4,
+  // Accessibility findings come from axe-core — concrete WCAG-tagged
+  // violations rather than heuristics, so they sit just below tech in
+  // weight and ahead of content/ux/legal.
+  accessibility: 1.35,
   tech: 1.3,
   content: 1.2,
   ux: 1.1,

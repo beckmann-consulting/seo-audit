@@ -5,3 +5,4 @@ export * from './tech';
 export * from './ux';
 export * from './performance';
 export * from './legal';
+export * from './accessibility';

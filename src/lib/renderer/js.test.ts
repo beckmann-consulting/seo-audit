@@ -276,6 +276,64 @@ describe('JsRenderer', () => {
   });
 });
 
+describe('JsRenderer.runAxe option', () => {
+  it('does not call axeRunner when runAxe is false', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const page = createStubPage({ html: '', finalUrl: 'https://x.com/', status: 200 });
+    const browser = createStubBrowser(page);
+    const axeRunner = vi.fn(async () => []);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+      axeRunner,
+      // runAxe defaults to false
+    });
+    const result = await r.fetch('https://x.com/');
+    expect(axeRunner).not.toHaveBeenCalled();
+    expect(result.axeViolations).toBeUndefined();
+    await r.close();
+  });
+
+  it('calls axeRunner and attaches violations when runAxe is true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const page = createStubPage({ html: '', finalUrl: 'https://x.com/', status: 200 });
+    const browser = createStubBrowser(page);
+    const axeRunner = vi.fn(async () => [
+      { id: 'color-contrast', impact: 'serious' as const, description: 'd',
+        help: 'h', helpUrl: 'u', tags: ['wcag2aa'], nodes: 3 },
+    ]);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+      axeRunner,
+      runAxe: true,
+    });
+    const result = await r.fetch('https://x.com/');
+    expect(axeRunner).toHaveBeenCalledTimes(1);
+    expect(result.axeViolations).toHaveLength(1);
+    expect(result.axeViolations![0].id).toBe('color-contrast');
+    await r.close();
+  });
+
+  it('swallows axeRunner errors — sets axeViolations to undefined', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const page = createStubPage({ html: '', finalUrl: 'https://x.com/', status: 200 });
+    const browser = createStubBrowser(page);
+    const axeRunner = vi.fn(async () => { throw new Error('axe injection failed'); });
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+      axeRunner,
+      runAxe: true,
+    });
+    // Must not throw — fetch should complete with no axe data.
+    const result = await r.fetch('https://x.com/');
+    expect(result.axeViolations).toBeUndefined();
+    expect(result.html).toBeDefined(); // rest of the result is intact
+    await r.close();
+  });
+});
+
 describe('JsRenderer.captureScreenshot', () => {
   function setupForScreenshot() {
     const setViewportSize = vi.fn(async () => {});
