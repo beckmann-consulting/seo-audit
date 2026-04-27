@@ -11,10 +11,9 @@
 // Googlebot Desktop. Word counts are compared; a > 20% gap surfaces
 // as the mobile-desktop-mismatch finding.
 
-import { parse } from 'node-html-parser';
-import type { HTMLElement } from 'node-html-parser';
 import type { PageSEOData } from '@/types';
 import { resolveUserAgent } from './util/user-agents';
+import { countVisibleWords } from './util/visible-text';
 
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -46,36 +45,6 @@ function buildHeaders(
   return h;
 }
 
-// Same word-counting rule as extractor.ts: visible body text only
-// (skip script / style / noscript), collapse whitespace, drop tokens
-// of length ≤ 2. Keeps the parity comparison apples-to-apples with
-// the wordCount field elsewhere in the audit.
-function visibleWordCount(html: string): number {
-  const root = parse(html, { comment: false });
-  const body = root.querySelector('body');
-  if (!body) return 0;
-
-  let raw = '';
-  const walk = (node: { nodeType: number; tagName?: string; rawText?: string; text?: string; childNodes?: unknown[] }): void => {
-    if (!node) return;
-    if (node.nodeType === 3) {
-      raw += node.rawText ?? node.text ?? '';
-      return;
-    }
-    if (node.nodeType !== 1) return;
-    const tag = node.tagName?.toLowerCase();
-    if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
-    for (const child of node.childNodes ?? []) {
-      walk(child as Parameters<typeof walk>[0]);
-    }
-  };
-  walk(body as unknown as Parameters<typeof walk>[0]);
-
-  const text = raw.replace(/\s+/g, ' ').trim();
-  if (!text) return 0;
-  return text.split(' ').filter(w => w.length > 2).length;
-}
-
 async function fetchWords(url: string, headers: HeadersInit): Promise<number | undefined> {
   try {
     const resp = await fetch(url, {
@@ -88,7 +57,7 @@ async function fetchWords(url: string, headers: HeadersInit): Promise<number | u
     const ct = resp.headers.get('content-type') || '';
     if (!ct.includes('text/html')) return undefined;
     const html = await resp.text();
-    return visibleWordCount(html);
+    return countVisibleWords(html);
   } catch {
     return undefined;
   }

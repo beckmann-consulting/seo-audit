@@ -1,0 +1,45 @@
+# Browserless Chromium container for the seo-audit JS-rendering mode.
+#
+# Deployment: this lives next to the seo-audit.service systemd unit on
+# twb-server. Start with: docker compose up -d (run from this dir).
+# Status / logs: docker compose ps / docker compose logs -f.
+#
+# The image tag is pinned to a specific Browserless v2 release so that
+# Chromium and the playwright-core protocol stay in sync. To upgrade,
+# read the Browserless changelog, bump the tag here, and run
+# `docker compose pull && docker compose up -d`.
+#
+# RAM sizing: the container is bounded to 2 GiB to keep the host (8 GiB
+# total, swap = 0) safe under bursty traffic from the public embed
+# widget. With MAX_CONCURRENT_SESSIONS=2 the typical peak is ~1.5 GiB.
+
+services:
+  browserless:
+    image: ghcr.io/browserless/chromium:v2.41.0
+    container_name: browserless
+    restart: unless-stopped
+    # localhost-only binding — Caddy never proxies this. The TOKEN below
+    # is defence in depth, not the primary boundary.
+    ports:
+      - "127.0.0.1:9223:3000"
+    environment:
+      # Concurrency: validated against twb-server CPX32 (8 GiB, swap=0).
+      MAX_CONCURRENT_SESSIONS: 2
+      MAX_QUEUE_LENGTH: 4
+      # Aggressive timeouts because no swap = no OOM safety net.
+      CONNECTION_TIMEOUT: 30000
+      DEFAULT_LAUNCH_ARGS: '["--no-sandbox"]'
+      # Token must be set in .env (see .env.example). The seo-audit
+      # service reads BROWSERLESS_TOKEN from its own env and connects
+      # via ws://localhost:9223?token=...
+      TOKEN: "${BROWSERLESS_TOKEN}"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health?token=${BROWSERLESS_TOKEN}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

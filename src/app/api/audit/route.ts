@@ -33,6 +33,8 @@ import { generateClaudePrompt } from '@/lib/claude-prompt';
 import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
 import { compileFilterPatterns, FilterPatternError } from '@/lib/util/url-filter';
 import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
+import { StaticRenderer } from '@/lib/renderer';
+import type { Renderer } from '@/lib/renderer';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -64,6 +66,7 @@ async function runAudit(
   send: (event: StreamEvent) => void,
   includeRegexes: RegExp[],
   excludeRegexes: RegExp[],
+  renderer: Renderer,
 ): Promise<AuditResult | null> {
   const progress = (step: string, percent: number, detail?: string) =>
     send({ type: 'progress', step, percent, detail });
@@ -122,6 +125,7 @@ async function runAudit(
     excludeRegexes,
     authHeader,
     customHeaders,
+    renderer,
   );
 
   if (rawPages.length === 0) {
@@ -374,6 +378,43 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
+  // Build the renderer once, up-front. JS-mode probes Browserless health
+  // before opening the SSE stream — a clear 502 beats a stuck audit.
+  let renderer: Renderer;
+  if (config.rendering === 'js') {
+    const endpoint = process.env.BROWSERLESS_ENDPOINT || 'ws://localhost:9223';
+    const token = process.env.BROWSERLESS_TOKEN || '';
+    if (!token) {
+      return NextResponse.json(
+        { error: 'JS rendering requested but BROWSERLESS_TOKEN is not set on the server' },
+        { status: 500 },
+      );
+    }
+    const ua = resolveUserAgent(config);
+    const auth = buildBasicAuthHeader(config.basicAuth);
+    const { JsRenderer, probeBrowserless } = await import('@/lib/renderer');
+    const probe = await probeBrowserless(endpoint, token);
+    if (!probe.ok) {
+      return NextResponse.json(
+        { error: `Browserless not reachable: ${probe.error}. Start the container in infra/browserless or fall back to rendering=static.` },
+        { status: 502 },
+      );
+    }
+    renderer = new JsRenderer({
+      endpoint,
+      token,
+      userAgent: ua,
+      authHeader: auth,
+      customHeaders: config.customHeaders,
+    });
+  } else {
+    renderer = new StaticRenderer({
+      userAgent: resolveUserAgent(config),
+      authHeader: buildBasicAuthHeader(config.basicAuth),
+      customHeaders: config.customHeaders,
+    });
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
@@ -388,7 +429,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const result = await runAudit(config, send, includeRegexes, excludeRegexes);
+        const result = await runAudit(config, send, includeRegexes, excludeRegexes, renderer);
         if (result) {
           send({ type: 'result', payload: result });
         }
@@ -397,6 +438,10 @@ export async function POST(req: NextRequest) {
         console.error('Audit error:', message);
         send({ type: 'error', message });
       } finally {
+        // Ensure the renderer's resources (Browserless session) are
+        // released even if the audit threw. StaticRenderer.close is a
+        // no-op so the cost is zero in static mode.
+        try { await renderer.close(); } catch { /* ignore */ }
         closed = true;
         try { controller.close(); } catch {}
       }

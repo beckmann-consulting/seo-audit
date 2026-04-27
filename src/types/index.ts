@@ -63,6 +63,11 @@ export interface AuditConfig {
   // loaded content or hidden-by-default mobile sections.
   mobileDesktopParityCheck?: boolean;
   mobileDesktopParitySampleSize?: number; // default 10
+  // Render mode for the crawl. 'static' (default) is a plain HTTP fetch
+  // — what every audit has done historically. 'js' routes every page
+  // through a real Chromium (Browserless container) so SPAs render
+  // their content the same way Googlebot's renderer would.
+  rendering?: 'static' | 'js';
 }
 
 export interface PageData {
@@ -78,6 +83,12 @@ export interface PageData {
   httpStatus: number; // final HTTP status code after redirects
   protocol: string | null; // 'h2' if alt-svc advertises HTTP/2+, else null (unknown)
   xRobotsTag?: string; // raw X-Robots-Tag response header on the final hop, joined if multi-valued
+  // JS-mode only: captured for the static-vs-rendered diff finding.
+  staticHtml?: string;
+  staticWordCount?: number;
+  consoleErrors?: string[];
+  failedRequests?: string[];
+  renderMode?: 'static' | 'js';
 }
 
 export interface Finding {
