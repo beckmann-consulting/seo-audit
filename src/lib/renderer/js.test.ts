@@ -276,6 +276,90 @@ describe('JsRenderer', () => {
   });
 });
 
+describe('JsRenderer.captureScreenshot', () => {
+  function setupForScreenshot() {
+    const setViewportSize = vi.fn(async () => {});
+    const screenshot = vi.fn(async () => Buffer.from('FAKE_PNG_BYTES'));
+    const goto = vi.fn(async () => {});
+    const close = vi.fn(async () => {});
+    const page = {
+      on: vi.fn(),
+      setViewportSize,
+      goto,
+      content: vi.fn(async () => ''),
+      url: vi.fn(() => ''),
+      screenshot,
+      close,
+    };
+    const browser = {
+      newContext: vi.fn(async () => ({
+        newPage: vi.fn(async () => page),
+        close: vi.fn(async () => {}),
+      })),
+      close: vi.fn(async () => {}),
+    };
+    return { page, browser, setViewportSize, screenshot, goto, close };
+  }
+
+  it('sets the viewport before navigation and returns a base64 PNG', async () => {
+    const { browser, setViewportSize, goto, screenshot } = setupForScreenshot();
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+
+    expect(setViewportSize).toHaveBeenCalledWith({ width: 375, height: 667 });
+    expect(goto).toHaveBeenCalledWith('https://x.com/', expect.any(Object));
+    expect(screenshot).toHaveBeenCalledWith({ fullPage: false, type: 'png' });
+    // base64 of "FAKE_PNG_BYTES"
+    expect(result).toBe(Buffer.from('FAKE_PNG_BYTES').toString('base64'));
+    await r.close();
+  });
+
+  it('returns undefined when navigation throws — never propagates the error', async () => {
+    const { browser, goto, close } = setupForScreenshot();
+    goto.mockRejectedValueOnce(new Error('Timeout'));
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    expect(result).toBeUndefined();
+    expect(close).toHaveBeenCalled(); // page is still closed cleanly
+    await r.close();
+  });
+
+  it('closes the page even when screenshot throws', async () => {
+    const { browser, screenshot, close } = setupForScreenshot();
+    screenshot.mockRejectedValueOnce(new Error('disconnected'));
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    await r.captureScreenshot('https://x.com/', { width: 1920, height: 1080 });
+    expect(close).toHaveBeenCalled();
+    await r.close();
+  });
+
+  it('reuses the BrowserContext across screenshot + fetch calls', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const { browser } = setupForScreenshot();
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    await r.captureScreenshot('https://x.com/', { width: 1920, height: 1080 });
+    expect(browser.newContext).toHaveBeenCalledTimes(1);
+    await r.close();
+  });
+});
+
 describe('probeBrowserless', () => {
   it('returns ok when /health responds 2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));

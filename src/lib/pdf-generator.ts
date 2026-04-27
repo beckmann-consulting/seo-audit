@@ -899,6 +899,58 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   }
 
   // ============================================================
+  //  Screenshots (only when JS-mode captured them)
+  // ============================================================
+  if (result.screenshots && result.screenshots.length > 0) {
+    h1(t('Screenshots', 'Screenshots'));
+    // Mobile (50mm × 89mm — preserves the 375:667 aspect of an iPhone
+    // SE viewport) and Desktop (110mm × 62mm — 1920:1080) side by side
+    // with a 10mm gutter, totalling 170mm of the 180mm content width.
+    const MOBILE_W = 50, MOBILE_H = 89;
+    const DESKTOP_W = 110, DESKTOP_H = 62;
+    const ROW_GAP = 6;
+    const ROW_HEIGHT = Math.max(MOBILE_H, DESKTOP_H) + 12; // image area + caption + spacing
+
+    for (const shot of result.screenshots) {
+      checkPage(ROW_HEIGHT + 5);
+      setText(COLOR_TEXT);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      const urlLines = doc.splitTextToSize(shot.url, CONTENT_W);
+      doc.text(urlLines.slice(0, 1), CONTENT_LEFT, y + 4);
+      y += 7;
+
+      const imgY = y;
+      if (shot.mobileBase64) {
+        try {
+          doc.addImage(
+            'data:image/png;base64,' + shot.mobileBase64,
+            'PNG', CONTENT_LEFT, imgY, MOBILE_W, MOBILE_H,
+          );
+          setText(COLOR_SUBTEXT);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.text(t('Mobile · 375×667', 'Mobile · 375×667'), CONTENT_LEFT, imgY + MOBILE_H + 4);
+        } catch { /* malformed PNG — skip silently */ }
+      }
+      if (shot.desktopBase64) {
+        try {
+          const dx = CONTENT_LEFT + MOBILE_W + ROW_GAP;
+          doc.addImage(
+            'data:image/png;base64,' + shot.desktopBase64,
+            'PNG', dx, imgY, DESKTOP_W, DESKTOP_H,
+          );
+          setText(COLOR_SUBTEXT);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.text(t('Desktop · 1920×1080', 'Desktop · 1920×1080'), dx, imgY + DESKTOP_H + 4);
+        } catch { /* malformed PNG — skip silently */ }
+      }
+      y = imgY + Math.max(MOBILE_H, DESKTOP_H) + 10;
+    }
+  }
+
+  // ============================================================
   //  Footers — unified across every page including the cover.
   //  White background, thin grey top line, centred muted text.
   // ============================================================

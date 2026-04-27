@@ -114,6 +114,7 @@ export default function AuditApp() {
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
   const [rendering, setRendering] = useState<'static' | 'js'>('static');
+  const [includeScreenshots, setIncludeScreenshots] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -293,6 +294,7 @@ export default function AuditApp() {
       imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
       mobileDesktopParityCheck: mobileDesktopParity,
       rendering,
+      includeScreenshots: rendering === 'js' ? includeScreenshots : undefined,
     };
 
     try {
@@ -497,6 +499,21 @@ export default function AuditApp() {
               <option value="static">{t('Static (HTTP fetch — Default)', 'Static (HTTP fetch — default)')}</option>
               <option value="js">{t('JavaScript (Browserless / Chromium)', 'JavaScript (Browserless / Chromium)')}</option>
             </select>
+            {rendering === 'js' && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={includeScreenshots}
+                  onChange={e => setIncludeScreenshots(e.target.checked)}
+                />
+                <span style={{ fontSize: 13, fontWeight: 500 }}>
+                  {t('Screenshots (Mobile + Desktop) im PDF anhängen', 'Attach Mobile + Desktop screenshots to PDF')}
+                </span>
+                <span style={{ fontSize: 11, color: '#9b9b98' }}>
+                  ({t('Top-4-Seiten, je 2 Viewports', 'top 4 pages × 2 viewports')})
+                </span>
+              </label>
+            )}
           </div>
 
           {/* User-Agent */}

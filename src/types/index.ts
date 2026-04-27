@@ -68,6 +68,11 @@ export interface AuditConfig {
   // through a real Chromium (Browserless container) so SPAs render
   // their content the same way Googlebot's renderer would.
   rendering?: 'static' | 'js';
+  // Screenshot capture in JS-mode. Adds Mobile (375×667) and Desktop
+  // (1920×1080) screenshots of the homepage + top-3 pages by depth
+  // to the audit result and the PDF export. Only honoured when
+  // rendering === 'js' (static mode has no Chromium to drive).
+  includeScreenshots?: boolean;
 }
 
 export interface PageData {
@@ -389,6 +394,9 @@ export interface AuditResult {
   // Mobile vs Desktop word-count parity for the sampled pages.
   // Undefined when the probe was disabled or no comparable data.
   mobileDesktopParity?: { url: string; mobileWords: number; desktopWords: number; diffRatio: number }[];
+  // JS-mode screenshots (base64-encoded PNGs). Undefined when the
+  // capture was disabled or static mode was used.
+  screenshots?: { url: string; mobileBase64?: string; desktopBase64?: string }[];
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;

@@ -164,6 +164,34 @@ export class JsRenderer implements Renderer {
     }
   }
 
+  // Capture a screenshot of `url` at the given viewport. Used by E2
+  // for the optional PDF screenshot section. Returns a base64-encoded
+  // PNG so the result can be embedded directly in jsPDF without
+  // extra round-trips. Returns undefined on any failure — the audit
+  // shouldn't break because Chromium hiccupped on a screenshot.
+  async captureScreenshot(
+    url: string,
+    viewport: { width: number; height: number },
+  ): Promise<string | undefined> {
+    try {
+      const ctx = await this.getContext();
+      const page = await ctx.newPage();
+      try {
+        await page.setViewportSize(viewport);
+        await page.goto(url, {
+          waitUntil: 'networkidle',
+          timeout: this.pageTimeoutMs,
+        });
+        const buffer = await page.screenshot({ fullPage: false, type: 'png' });
+        return Buffer.from(buffer).toString('base64');
+      } finally {
+        await page.close().catch(() => { /* page may already be closed */ });
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
   async close(): Promise<void> {
     // Best-effort close — never let cleanup errors poison the audit.
     if (this.contextPromise) {

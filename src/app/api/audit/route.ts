@@ -35,7 +35,8 @@ import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
 import { compileFilterPatterns, FilterPatternError } from '@/lib/util/url-filter';
 import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
 import { StaticRenderer } from '@/lib/renderer';
-import type { Renderer } from '@/lib/renderer';
+import type { JsRenderer, Renderer } from '@/lib/renderer';
+import { captureScreenshotsForAudit } from '@/lib/screenshots';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -189,6 +190,15 @@ async function runAudit(
     ? await checkMobileDesktopParity(pages, paritySampleSize, authHeader, customHeaders)
     : undefined;
 
+  // ---- STEP 8d: Screenshots (opt-in, JS-mode only) ----
+  // Captured by the same Browserless session that drove the crawl;
+  // static-mode audits skip silently because there's no Chromium to
+  // drive. Failures are tolerated — we don't want a flaky screenshot
+  // pass to invalidate an otherwise-completed audit.
+  const screenshots = (config.includeScreenshots && config.rendering === 'js')
+    ? await captureScreenshotsForAudit(renderer as JsRenderer, pages)
+    : undefined;
+
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
@@ -336,6 +346,7 @@ async function runAudit(
     pages,
     imageSizes,
     mobileDesktopParity,
+    screenshots,
     topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,
