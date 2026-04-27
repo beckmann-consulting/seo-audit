@@ -1,90 +1,16 @@
+// The crawler delegates the actual HTTP fetch to a Renderer instance:
+// StaticRenderer for the default behaviour and JsRenderer (Browserless)
+// when the user opts into rendering=js. Everything else — link
+// discovery, queue management, filtering, broken-link tracking — stays
+// here and works identically regardless of mode.
+
 import { parse } from 'node-html-parser';
 import type { PageData, CrawlStats } from '@/types';
+import type { Renderer, RenderResult } from './renderer/types';
+import { StaticRenderer } from './renderer/static';
 import { urlMatches } from './util/url-filter';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
-
-function buildHeaders(userAgent: string, authHeader?: string, customHeaders?: Record<string, string>): HeadersInit {
-  const h: Record<string, string> = {
-    'User-Agent': userAgent,
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en,de;q=0.9',
-  };
-  if (authHeader) h['Authorization'] = authHeader;
-  // Custom headers are merged LAST so explicit user-set values override
-  // the built-ins (e.g. user can replace Accept-Language for locale
-  // testing or override Authorization with a bearer token).
-  if (customHeaders) {
-    for (const [name, value] of Object.entries(customHeaders)) {
-      h[name] = value;
-    }
-  }
-  return h;
-}
-
-const MAX_REDIRECT_HOPS = 10;
-
-interface FetchWithRedirectsResult {
-  response?: Response;
-  chain: string[]; // URLs visited in order (excluding the final one)
-  finalUrl: string;
-  loopDetected: boolean;
-  error?: string;
-}
-
-// Follows redirects manually so we can record the full chain, detect
-// loops, and spot protocol downgrades. Returns the last response
-// along with the ordered list of intermediate URLs.
-async function fetchWithRedirectTracking(
-  startUrl: string,
-  userAgent: string,
-  authHeader?: string,
-  customHeaders?: Record<string, string>,
-): Promise<FetchWithRedirectsResult> {
-  const chain: string[] = [];
-  let currentUrl = startUrl;
-  let loopDetected = false;
-  const headers = buildHeaders(userAgent, authHeader, customHeaders);
-
-  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
-    try {
-      const resp = await fetch(currentUrl, {
-        headers,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(12000),
-      });
-
-      // 3xx with Location → follow
-      if (resp.status >= 300 && resp.status < 400) {
-        const location = resp.headers.get('location');
-        if (!location) {
-          return { response: resp, chain, finalUrl: currentUrl, loopDetected };
-        }
-        let nextUrl: string;
-        try {
-          nextUrl = new URL(location, currentUrl).href;
-        } catch {
-          return { response: resp, chain, finalUrl: currentUrl, loopDetected };
-        }
-        chain.push(currentUrl);
-        if (chain.includes(nextUrl)) {
-          loopDetected = true;
-          return { response: resp, chain, finalUrl: nextUrl, loopDetected };
-        }
-        currentUrl = nextUrl;
-        continue;
-      }
-
-      // Non-redirect → done
-      return { response: resp, chain, finalUrl: currentUrl, loopDetected };
-    } catch (err) {
-      return { chain, finalUrl: currentUrl, loopDetected, error: String(err) };
-    }
-  }
-
-  // Exhausted hop budget
-  return { chain, finalUrl: currentUrl, loopDetected: true, error: `Exceeded ${MAX_REDIRECT_HOPS} redirect hops` };
-}
 
 function normalizeUrl(url: string, base: string): string | null {
   try {
@@ -102,6 +28,25 @@ function normalizeUrl(url: string, base: string): string | null {
   }
 }
 
+// Build a PageData from a successful RenderResult. Preserves the
+// fields the rest of the audit pipeline already depends on.
+function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number): PageData {
+  return {
+    url: r.finalUrl,
+    html: r.html,
+    statusCode: r.status,
+    redirectedFrom: r.redirectChain.length > 0 ? requestedUrl : undefined,
+    loadTime: r.loadTimeMs,
+    contentType: r.contentType,
+    depth,
+    redirectChain: r.redirectChain,
+    finalUrl: r.finalUrl,
+    httpStatus: r.status,
+    protocol: r.protocol,
+    xRobotsTag: r.headers['x-robots-tag'] || undefined,
+  };
+}
+
 export async function crawlSite(
   startUrl: string,
   maxPages: number = 0,
@@ -111,6 +56,7 @@ export async function crawlSite(
   excludeRegexes: RegExp[] = [],
   authHeader?: string,
   customHeaders?: Record<string, string>,
+  renderer?: Renderer,
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -122,99 +68,84 @@ export async function crawlSite(
 
   const baseDomain = new URL(startUrl).hostname;
 
-  while (queue.length > 0) {
-    if (maxPages > 0 && pages.length >= maxPages) break;
+  // Default to a freshly-built StaticRenderer when none is passed. Keeps
+  // the test surface small — most call sites just hand over the URL +
+  // userAgent and don't think about renderer composition.
+  const ownsRenderer = !renderer;
+  const activeRenderer: Renderer = renderer ?? new StaticRenderer({
+    userAgent, authHeader, customHeaders,
+  });
 
-    const { url, depth } = queue.shift()!;
-    if (visited.has(url)) continue;
-    visited.add(url);
+  try {
+    while (queue.length > 0) {
+      if (maxPages > 0 && pages.length >= maxPages) break;
 
-    onProgress?.(pages.length, queue.length + pages.length + 1, url);
+      const { url, depth } = queue.shift()!;
+      if (visited.has(url)) continue;
+      visited.add(url);
 
-    try {
-      const start = Date.now();
-      const tracked = await fetchWithRedirectTracking(url, userAgent, authHeader, customHeaders);
-      const resp = tracked.response;
-      const loadTime = Date.now() - start;
+      onProgress?.(pages.length, queue.length + pages.length + 1, url);
 
-      if (!resp) {
-        brokenLinks.push(url);
-        continue;
-      }
+      try {
+        const result = await activeRenderer.fetch(url);
 
-      const contentType = resp.headers.get('content-type') || '';
-      if (!contentType.includes('text/html')) {
-        continue;
-      }
+        // Network error / no response
+        if (result.status === 0) {
+          brokenLinks.push(url);
+          continue;
+        }
 
-      // Track redirects in crawl stats (legacy from/to pairs for compatibility)
-      if (tracked.chain.length > 0) {
-        redirectChains.push({ from: url, to: tracked.finalUrl });
-      }
+        // Track redirects in crawl stats (legacy from/to pairs).
+        if (result.redirectChain.length > 0) {
+          redirectChains.push({ from: url, to: result.finalUrl });
+        }
 
-      if (!resp.ok) {
-        brokenLinks.push(url);
-        errorPages.push({ url, status: resp.status });
-        continue;
-      }
+        // Skip non-HTML content types
+        if (!result.contentType || !result.contentType.includes('text/html')) {
+          continue;
+        }
 
-      const html = await resp.text();
-      // Protocol heuristic — Node's fetch doesn't expose the wire protocol.
-      // alt-svc / via headers are the closest proxy we can check.
-      const altSvc = resp.headers.get('alt-svc') || '';
-      const viaHeader = resp.headers.get('via') || '';
-      let protocol: string | null = null;
-      if (/\bh3\b|\bh2\b|hq=/i.test(altSvc)) protocol = 'h2';
-      else if (/2\.0/.test(viaHeader)) protocol = 'h2';
+        // 4xx / 5xx
+        if (result.status < 200 || result.status >= 400) {
+          brokenLinks.push(url);
+          errorPages.push({ url, status: result.status });
+          continue;
+        }
 
-      // X-Robots-Tag — Node's Headers.get() joins multiple values with ', '.
-      // We keep the raw string and let the parser handle splitting.
-      const xRobotsTag = resp.headers.get('x-robots-tag') || undefined;
+        pages.push(pageDataFromRender(result, url, depth));
 
-      pages.push({
-        url: tracked.finalUrl,
-        html,
-        statusCode: resp.status,
-        redirectedFrom: tracked.chain.length > 0 ? url : undefined,
-        loadTime,
-        contentType,
-        depth,
-        redirectChain: tracked.chain,
-        finalUrl: tracked.finalUrl,
-        httpStatus: resp.status,
-        protocol,
-        xRobotsTag,
-      });
-
-      // Extract links from this page (resolve against the FINAL url after redirects)
-      const root = parse(html);
-      const anchors = root.querySelectorAll('a[href]');
-      for (const a of anchors) {
-        const href = a.getAttribute('href') || '';
-        try {
-          const fullUrl = new URL(href, tracked.finalUrl);
-          if (fullUrl.hostname === baseDomain) {
-            const normalized = normalizeUrl(href, tracked.finalUrl);
-            if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
-              // Discovered URL — apply user filter. The start URL itself
-              // bypasses this check (handled by being seeded directly into
-              // the queue before the loop), so users who set a narrow
-              // include list still get a working seed crawl.
-              if (urlMatches(normalized, includeRegexes, excludeRegexes)) {
-                queue.push({ url: normalized, depth: depth + 1 });
+        // Extract links from this page (resolve against the FINAL url after redirects)
+        const root = parse(result.html);
+        const anchors = root.querySelectorAll('a[href]');
+        for (const a of anchors) {
+          const href = a.getAttribute('href') || '';
+          try {
+            const fullUrl = new URL(href, result.finalUrl);
+            if (fullUrl.hostname === baseDomain) {
+              const normalized = normalizeUrl(href, result.finalUrl);
+              if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
+                // Discovered URL — apply user filter. The start URL itself
+                // bypasses this check (handled by being seeded directly into
+                // the queue before the loop), so users who set a narrow
+                // include list still get a working seed crawl.
+                if (urlMatches(normalized, includeRegexes, excludeRegexes)) {
+                  queue.push({ url: normalized, depth: depth + 1 });
+                }
               }
+            } else if (href.startsWith('http')) {
+              externalLinkCount++;
             }
-          } else if (href.startsWith('http')) {
-            externalLinkCount++;
-          }
-        } catch {}
+          } catch {}
+        }
+      } catch {
+        brokenLinks.push(url);
       }
-    } catch {
-      brokenLinks.push(url);
-    }
 
-    // Small delay to be polite
-    await new Promise(r => setTimeout(r, 150));
+      // Small delay to be polite
+      await new Promise(r => setTimeout(r, 150));
+    }
+  } finally {
+    if (ownsRenderer) await activeRenderer.close();
   }
 
   return {
