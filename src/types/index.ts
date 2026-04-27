@@ -42,6 +42,10 @@ export interface AuditConfig {
   // the SSE stream opens.
   include?: string[];
   exclude?: string[];
+  // HTTP Basic Auth credentials sent on every audit request. Stripped
+  // from AuditResult.config before round-trip to the client so they
+  // never end up in localStorage / PDF / cached audits.
+  basicAuth?: { username: string; password: string };
 }
 
 export interface PageData {

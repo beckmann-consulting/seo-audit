@@ -4,12 +4,14 @@ import { urlMatches } from './util/url-filter';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
-function buildHeaders(userAgent: string): HeadersInit {
-  return {
+function buildHeaders(userAgent: string, authHeader?: string): HeadersInit {
+  const h: Record<string, string> = {
     'User-Agent': userAgent,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en,de;q=0.9',
   };
+  if (authHeader) h['Authorization'] = authHeader;
+  return h;
 }
 
 const MAX_REDIRECT_HOPS = 10;
@@ -25,11 +27,11 @@ interface FetchWithRedirectsResult {
 // Follows redirects manually so we can record the full chain, detect
 // loops, and spot protocol downgrades. Returns the last response
 // along with the ordered list of intermediate URLs.
-async function fetchWithRedirectTracking(startUrl: string, userAgent: string): Promise<FetchWithRedirectsResult> {
+async function fetchWithRedirectTracking(startUrl: string, userAgent: string, authHeader?: string): Promise<FetchWithRedirectsResult> {
   const chain: string[] = [];
   let currentUrl = startUrl;
   let loopDetected = false;
-  const headers = buildHeaders(userAgent);
+  const headers = buildHeaders(userAgent, authHeader);
 
   for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
     try {
@@ -94,6 +96,7 @@ export async function crawlSite(
   userAgent: string = DEFAULT_USER_AGENT,
   includeRegexes: RegExp[] = [],
   excludeRegexes: RegExp[] = [],
+  authHeader?: string,
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -116,7 +119,7 @@ export async function crawlSite(
 
     try {
       const start = Date.now();
-      const tracked = await fetchWithRedirectTracking(url, userAgent);
+      const tracked = await fetchWithRedirectTracking(url, userAgent, authHeader);
       const resp = tracked.response;
       const loadTime = Date.now() - start;
 

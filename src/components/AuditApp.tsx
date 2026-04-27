@@ -107,6 +107,8 @@ export default function AuditApp() {
   const [customUserAgent, setCustomUserAgent] = useState('');
   const [includePatterns, setIncludePatterns] = useState('');
   const [excludePatterns, setExcludePatterns] = useState('');
+  const [basicAuthUser, setBasicAuthUser] = useState('');
+  const [basicAuthPass, setBasicAuthPass] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -261,6 +263,9 @@ export default function AuditApp() {
       customUserAgent: userAgent === 'custom' ? customUserAgent.trim() || undefined : undefined,
       include: splitLines(includePatterns),
       exclude: splitLines(excludePatterns),
+      basicAuth: basicAuthUser && basicAuthPass
+        ? { username: basicAuthUser, password: basicAuthPass }
+        : undefined,
     };
 
     try {
@@ -443,6 +448,33 @@ export default function AuditApp() {
                 style={{ ...inputStyle, maxWidth: 400, marginTop: 6 }}
               />
             )}
+          </div>
+
+          {/* Basic Auth */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>
+              {t('HTTP Basic Auth', 'HTTP Basic Auth')}{' '}
+              <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                ({t('für passwortgeschützte Staging-Sites — Credentials werden nicht im Report gespeichert', 'for password-protected staging sites — credentials are not stored in the report')})
+              </span>
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <input
+                value={basicAuthUser}
+                onChange={e => setBasicAuthUser(e.target.value)}
+                placeholder={t('Benutzername', 'Username')}
+                autoComplete="off"
+                style={inputStyle}
+              />
+              <input
+                value={basicAuthPass}
+                onChange={e => setBasicAuthPass(e.target.value)}
+                placeholder={t('Passwort', 'Password')}
+                type="password"
+                autoComplete="off"
+                style={inputStyle}
+              />
+            </div>
           </div>
 
           {/* Crawler URL filters */}
