@@ -113,6 +113,7 @@ export default function AuditApp() {
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
+  const [rendering, setRendering] = useState<'static' | 'js'>('static');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -291,6 +292,7 @@ export default function AuditApp() {
       customHeaders: parseHeaders(customHeadersText),
       imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
       mobileDesktopParityCheck: mobileDesktopParity,
+      rendering,
     };
 
     try {
@@ -478,6 +480,24 @@ export default function AuditApp() {
               </p>
             </div>
           )}
+
+          {/* Rendering mode */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>
+              {t('Rendering-Modus', 'Rendering mode')}{' '}
+              <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                ({t('JS-Mode rendert über Headless-Chromium — langsamer, aber sieht SPAs', 'JS mode renders via headless Chromium — slower, but sees SPAs')})
+              </span>
+            </label>
+            <select
+              value={rendering}
+              onChange={e => setRendering(e.target.value as 'static' | 'js')}
+              style={{ ...inputStyle, maxWidth: 400 }}
+            >
+              <option value="static">{t('Static (HTTP fetch — Default)', 'Static (HTTP fetch — default)')}</option>
+              <option value="js">{t('JavaScript (Browserless / Chromium)', 'JavaScript (Browserless / Chromium)')}</option>
+            </select>
+          </div>
 
           {/* User-Agent */}
           <div style={{ marginBottom: '1rem' }}>

@@ -28,6 +28,37 @@ npm run dev
 - Content-Analyse: Widersprüche, Platzhalter, Tonalität, Angebote, CTAs, UX-Qualität
 - Tiefe inhaltliche Bewertung die kein automatisches Tool leisten kann
 
+### Optional: JavaScript-Rendering via Browserless
+Ohne JS-Rendering werden SPAs (React/Vue/Next/Nuxt mit Client-Routing) als
+leere Seiten gecrawlt. Im JS-Modus läuft jede Seite durch ein echtes
+Chromium und Findings wie `js-rendering-required` und `js-console-errors`
+werden möglich.
+
+```bash
+# Token generieren
+openssl rand -hex 32
+
+# In zwei .env-Dateien eintragen (gleicher Wert):
+# - infra/browserless/.env  (BROWSERLESS_TOKEN=...)
+# - .env.local              (BROWSERLESS_TOKEN=...)
+
+# Container starten
+cd infra/browserless
+cp .env.example .env  # und Token einsetzen
+docker compose up -d
+
+# Prüfen, dass /health antwortet
+curl "http://localhost:9223/health?token=$(grep ^BROWSERLESS_TOKEN .env | cut -d= -f2)"
+# → {"status":"ok"}
+```
+
+Im Audit-UI: Rendering-Modus auf "JavaScript (Browserless / Chromium)"
+umstellen. Static bleibt der Default.
+
+Cap auf twb-server: MAX_CONCURRENT_SESSIONS=2 (gilt für 8-GiB-Maschine
+ohne Swap). Bei höheren Specs in `infra/browserless/docker-compose.yml`
+anheben.
+
 ## Google API Key erstellen
 
 1. https://console.cloud.google.com

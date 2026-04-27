@@ -65,6 +65,8 @@ The app currently consumes **one** process env var. A minimal
 | `LEAD_WEBHOOK_SECRET` | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | Shared Secret für den Lead-Mailer — muss identisch mit `$SHARED_SECRET` in `seo-lead.php` sein. Generieren mit `openssl rand -hex 32`. | `3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd` |
 | `NODE_ENV`            | required | Next.js internals                                              | Must be `production` when running via `next start`                                                           | `production`                     |
 | `PORT`                | optional | Next.js                                                        | Defaults to 3000 if unset. Override only if port 3000 is taken.                                              | `3000`                           |
+| `BROWSERLESS_TOKEN`   | optional | `src/app/api/audit/route.ts` (only when audit config sets `rendering=js`) | Auth token for the local Browserless container. Only needed if you run the JS-rendering Docker container in `infra/browserless/`. Same value must be in `infra/browserless/.env`. | `c0f3e1…` (`openssl rand -hex 32`) |
+| `BROWSERLESS_ENDPOINT` | optional | `src/app/api/audit/route.ts` | Override the WebSocket endpoint the Node service connects to. Defaults to `ws://localhost:9223` (the address the bundled docker-compose binds to). | `ws://localhost:9223`              |
 
 **Nicht im Code verwendet** (im Spec erwähnt, aber aktuell keine Referenz):
 `PERPLEXITY_API_KEY`, `CLAUDE_API_KEY`, `OPENAI_API_KEY`. Keine LLM-
@@ -85,6 +87,43 @@ PORT=3000
 
 Rechte: `chmod 600 .env.production` und `chown deploy:deploy`
 (entsprechend dem Deploy-User).
+
+### 2a. Optional: Browserless Container für JS-Rendering
+
+Wenn der Audit JS-rendering anbieten soll (SPAs, Hydration-Diff,
+console-error-Detection), muss der Browserless-Container neben dem
+Node-Service laufen. Der Container ist intentional NICHT Teil der
+Default-Pipeline — Static-Audits brauchen ihn nicht.
+
+```bash
+# 1. Token generieren und in BEIDEN env-Dateien hinterlegen
+TOKEN=$(openssl rand -hex 32)
+echo "BROWSERLESS_TOKEN=$TOKEN" >> infra/browserless/.env
+# In .env.production der Audit-App auch eintragen:
+echo "BROWSERLESS_TOKEN=$TOKEN" >> /var/www/seo-audit/.env.production
+
+# 2. Container starten
+cd infra/browserless
+docker compose up -d
+
+# 3. Health-Check
+curl -fsS "http://localhost:9223/health?token=$TOKEN" && echo " — ok"
+```
+
+Sizing-Begründung (auf twb-server CPX32, 8 GiB RAM, swap=0):
+- `MAX_CONCURRENT_SESSIONS=2` — Browserless idle ~300 MB, jede aktive
+  Session ~500-700 MB peak. 2 Sessions parallel = ~1.5 GiB peak.
+- `MAX_QUEUE_LENGTH=4` — bursty 1-3 parallele Audits aus dem Embed-
+  Widget werden geserved oder kurz gequeued, nicht abgewiesen.
+- Container hat hartes `memory: 2g` Limit (Swap=0 → kein OOM-Safety-Net).
+- `CONNECTION_TIMEOUT=30000` — stuck Chromium wird in <1min recycled.
+
+**Kein externer Port-Zugang:** Der Container bindet nur an `127.0.0.1:9223`;
+Caddy proxy't ihn nie nach außen. Token ist Defence-in-Depth, nicht die
+primäre Sicherheitsgrenze.
+
+Im Audit-UI: Modul-Sektion → "Rendering-Modus" → "JavaScript". Static
+bleibt der Default; JS-Mode ist eine bewusste Entscheidung pro Audit.
 
 ---
 
