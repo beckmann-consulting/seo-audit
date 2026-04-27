@@ -37,6 +37,7 @@ function pageWithText(url: string, text: string): PageSEOData {
     bodyTextHash: fnv1aHex(normalised),
     bodyMinhash: minhashSignature(buildShingles(normalised)),
     textHtmlRatio: 0.2,
+    smallTouchTargetCount: 0,
   };
 }
 

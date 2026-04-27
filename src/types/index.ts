@@ -258,6 +258,11 @@ export interface PageSEOData {
   // (< 200 visible words) for the metric to be meaningful.
   readabilityScore?: number;
   readabilityLang?: 'de' | 'en';
+  // Heuristic count of interactive elements that look smaller than the
+  // mobile-friendly 48×48 px threshold (icon-only <a>/<button> with
+  // explicit small dimensions). Conservative — under-counts; Phase E
+  // (Playwright) will replace with bounding-rect measurement.
+  smallTouchTargetCount: number;
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
   redirectChain: string[]; // propagated from PageData

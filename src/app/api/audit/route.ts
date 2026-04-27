@@ -21,6 +21,7 @@ import {
   generateReadabilityFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
+  generateTouchTargetFindings,
   generateWwwConsistencyFindings, generateXRobotsFindings,
   generatePixelWidthFindings, generateInsecureLinkFindings,
   generateMixedStructuredDataFindings,
@@ -214,6 +215,7 @@ async function runAudit(
     allFindings.push(...generateUXFindings(pages));
     allFindings.push(...generateFontLoadingFindings(pages));
     allFindings.push(...generateFaviconFindings(pages));
+    allFindings.push(...generateTouchTargetFindings(pages));
   }
   if (config.modules.includes('performance')) {
     allFindings.push(...generatePerformanceFindings(pageSpeedData, pages));

@@ -1,4 +1,5 @@
 import type { Finding, PageSEOData } from '@/types';
+import { TOUCH_TARGET_THRESHOLD_PX } from '../util/touch-targets';
 import { id } from './utils';
 
 // ============================================================
@@ -199,6 +200,45 @@ export function generateFaviconFindings(pages: PageSEOData[]): Finding[] {
       affectedUrl: homepage.url,
     });
   }
+
+  return findings;
+}
+
+
+// ============================================================
+//  TOUCH-TARGET FINDINGS (heuristic, pre-Phase E)
+// ============================================================
+// Heuristic count of icon-only interactive elements with explicit
+// dimensions under the 48×48 px mobile-friendly threshold. The
+// detection in util/touch-targets.ts is intentionally conservative —
+// without a layout engine we can only catch the most obvious cases.
+// Phase E (Playwright) will replace the heuristic with bounding-rect
+// measurements; the finding logic here will keep working unchanged.
+export function generateTouchTargetFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const totalSmall = pages.reduce((s, p) => s + p.smallTouchTargetCount, 0);
+  if (totalSmall === 0) return findings;
+
+  // Pages contributing at least one suspicious target — used for the
+  // affected-URL sample.
+  const affected = pages.filter(p => p.smallTouchTargetCount > 0);
+  const sample = affected
+    .slice(0, 5)
+    .map(p => `${p.url} (${p.smallTouchTargetCount}×)`)
+    .join(', ');
+
+  findings.push({
+    id: id(), priority: 'recommended', module: 'ux', effort: 'medium', impact: 'medium',
+    title_de: `Mögliche zu kleine Touch-Targets: ${totalSmall} Element(e) auf ${affected.length} Seite(n)`,
+    title_en: `Potentially small touch targets: ${totalSmall} element(s) across ${affected.length} page(s)`,
+    description_de: `Heuristik-basierte Schätzung: Interaktive Elemente (Links/Buttons) mit explizit gesetzten Dimensionen unter ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px und ohne nennenswerten Text-Inhalt — typischerweise Icon-Buttons ohne ausreichendes Padding. Ohne Layout-Engine ist diese Detection vorsichtig (eher Untererfassung als Falschalarme); CSS-Padding kann das echte Tap-Target vergrößern. Beispiele: ${sample}`,
+    description_en: `Heuristic estimate: interactive elements (links/buttons) with explicit dimensions under ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px and no meaningful text content — typically icon buttons without sufficient padding. Without a layout engine the detection is conservative (under-counts rather than false-flags); CSS padding can grow the real tap target. Examples: ${sample}`,
+    recommendation_de: `Die genannten Seiten in den DevTools auf Mobile-Viewport prüfen: jedes Touch-Target sollte mindestens ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px Klickfläche haben (WCAG 2.5.5 AAA, Apple HIG, Material Design). Lösung meist: padding rund um Icons setzen, oder Icon-Container vergrößern.`,
+    recommendation_en: `Verify the listed pages in DevTools at a mobile viewport: each touch target should have at least ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px hit area (WCAG 2.5.5 AAA, Apple HIG, Material Design). Usual fix: add padding around icons or enlarge the icon container.`,
+    affectedUrl: affected[0].url,
+  });
 
   return findings;
 }

@@ -46,7 +46,7 @@ function makePage(o: Partial<PageSEOData> = {}): PageSEOData {
     hasAuthorSignal: true, hasDateSignal: true, externalLinksDetailed: [],
     xRobotsNoindex: false, xRobotsBotSpecific: [],
     hasJsonLd: false, hasMicrodata: false, hasRdfa: false,
-    bodyTextHash: '', bodyMinhash: [], textHtmlRatio: 0.18,
+    bodyTextHash: '', bodyMinhash: [], textHtmlRatio: 0.18, smallTouchTargetCount: 0,
     ...o,
   };
 }

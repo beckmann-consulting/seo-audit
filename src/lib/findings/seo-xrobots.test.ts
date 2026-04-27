@@ -29,7 +29,7 @@ function page(partial: Partial<PageSEOData>): PageSEOData {
     hasAuthorSignal: true, hasDateSignal: true, externalLinksDetailed: [],
     xRobotsNoindex: false, xRobotsBotSpecific: [],
     hasJsonLd: false, hasMicrodata: false, hasRdfa: false,
-    bodyTextHash: '', bodyMinhash: [], textHtmlRatio: 0.2,
+    bodyTextHash: '', bodyMinhash: [], textHtmlRatio: 0.2, smallTouchTargetCount: 0,
     ...partial,
   };
 }

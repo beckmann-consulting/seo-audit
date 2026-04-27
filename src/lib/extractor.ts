@@ -9,6 +9,7 @@ import {
 import {
   fleschReadingEase, pickReadabilityLang,
 } from './util/readability';
+import { countSmallTouchTargets } from './util/touch-targets';
 
 // Pages with fewer words than this skip duplicate fingerprinting —
 // shingling needs ≥ k words to produce anything, and very thin pages
@@ -556,5 +557,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     textHtmlRatio,
     readabilityScore,
     readabilityLang,
+    smallTouchTargetCount: countSmallTouchTargets(root),
   };
 }
