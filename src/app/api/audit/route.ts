@@ -80,6 +80,7 @@ async function runAudit(
   // string — credentials never appear unmasked in any code path past
   // this line.
   const authHeader = buildBasicAuthHeader(config.basicAuth);
+  const customHeaders = config.customHeaders;
 
   // ---- STEP 1: DNS (5%) ----
   progress('dns_check', 5);
@@ -91,12 +92,12 @@ async function runAudit(
 
   // ---- STEP 3: robots.txt (15%) ----
   progress('robots_fetch', 15);
-  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url, userAgent, authHeader);
+  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url, userAgent, authHeader, customHeaders);
 
   // ---- STEP 4: sitemap.xml (20%) ----
   progress('sitemap_fetch', 20);
   const sitemapInfo = (hasSitemap && sitemapUrl && config.modules.includes('seo'))
-    ? await fetchSitemap(sitemapUrl, userAgent, authHeader)
+    ? await fetchSitemap(sitemapUrl, userAgent, authHeader, customHeaders)
     : undefined;
 
   // ---- STEP 5: Crawl (25% → 70%) ----
@@ -117,6 +118,7 @@ async function runAudit(
     includeRegexes,
     excludeRegexes,
     authHeader,
+    customHeaders,
   );
 
   if (rawPages.length === 0) {
@@ -152,18 +154,18 @@ async function runAudit(
   // ---- STEP 7: Security Headers (80%) ----
   progress('security_headers', 80);
   const securityHeaders = config.modules.includes('tech')
-    ? await checkSecurityHeaders(url, rawPages[0]?.html, userAgent, authHeader)
+    ? await checkSecurityHeaders(url, rawPages[0]?.html, userAgent, authHeader, customHeaders)
     : undefined;
 
   // ---- STEP 7b: www / non-www consistency ----
   const wwwConsistency = config.modules.includes('tech')
-    ? await checkWwwConsistency(url, userAgent, authHeader)
+    ? await checkWwwConsistency(url, userAgent, authHeader, customHeaders)
     : undefined;
 
   // ---- STEP 8: AI Crawler Readiness (85%) ----
   progress('ai_crawler_check', 85);
   const aiReadiness = config.modules.includes('seo')
-    ? await checkAIReadiness(url, robotsContent, userAgent, authHeader)
+    ? await checkAIReadiness(url, robotsContent, userAgent, authHeader, customHeaders)
     : undefined;
 
   // ---- STEP 9: Findings generation (90%) ----

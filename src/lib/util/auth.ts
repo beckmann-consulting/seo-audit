@@ -26,10 +26,32 @@ export function buildBasicAuthHeader(creds: BasicAuthCredentials | undefined): s
   return `Basic ${encoded}`;
 }
 
+// Headers whose values we always mask before round-trip to the client.
+// Match is case-insensitive. The X-Auth- prefix catches the broad
+// family of bespoke bearer-token / signed-request headers (X-Auth-Token,
+// X-Auth-User, X-Auth-Signature, …).
+const SENSITIVE_HEADER_NAMES = new Set([
+  'cookie',
+  'authorization',
+  'proxy-authorization',
+  'x-api-key',
+  'x-auth-token',
+  'x-csrf-token',
+]);
+const SENSITIVE_HEADER_PREFIX = 'x-auth-';
+
+export function isSensitiveHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (SENSITIVE_HEADER_NAMES.has(lower)) return true;
+  if (lower.startsWith(SENSITIVE_HEADER_PREFIX)) return true;
+  return false;
+}
+
 // Returns a copy of the config safe to embed in AuditResult.config.
-// We drop basicAuth entirely (no half-masked passwords) and mask the
-// API key with a fixed token so consumers can tell "a key was used"
-// without seeing the value.
+// We drop basicAuth entirely (no half-masked passwords), mask the
+// API key with a fixed token, and mask the value of any sensitive
+// custom header — leaving benign headers (Accept-Language, custom
+// debug headers) visible so users can verify their config round-tripped.
 export function sanitizeConfigForClient(config: AuditConfig): AuditConfig {
   const clone: AuditConfig = { ...config };
   if (clone.basicAuth) {
@@ -37,6 +59,13 @@ export function sanitizeConfigForClient(config: AuditConfig): AuditConfig {
   }
   if (clone.googleApiKey) {
     clone.googleApiKey = '***';
+  }
+  if (clone.customHeaders) {
+    const masked: Record<string, string> = {};
+    for (const [name, value] of Object.entries(clone.customHeaders)) {
+      masked[name] = isSensitiveHeader(name) ? '***' : value;
+    }
+    clone.customHeaders = masked;
   }
   return clone;
 }

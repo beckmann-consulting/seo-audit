@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBasicAuthHeader, sanitizeConfigForClient } from './auth';
+import { buildBasicAuthHeader, sanitizeConfigForClient, isSensitiveHeader } from './auth';
 import type { AuditConfig } from '@/types';
 
 const baseConfig: AuditConfig = {
@@ -83,5 +83,60 @@ describe('sanitizeConfigForClient', () => {
     sanitizeConfigForClient(original);
     expect(original.basicAuth).toEqual({ username: 'a', password: 'b' });
     expect(original.googleApiKey).toBe('AIzaXXX');
+  });
+
+  it('masks sensitive customHeaders but leaves benign ones untouched', () => {
+    const sanitized = sanitizeConfigForClient({
+      ...baseConfig,
+      customHeaders: {
+        'Cookie': 'session=abc123',
+        'Authorization': 'Bearer xyz',
+        'X-API-Key': 'sk_live_42',
+        'X-Auth-Token': 'sig123',
+        'X-Auth-User': 'admin',
+        'Accept-Language': 'de-DE',
+        'X-Custom-Tracking': 'experiment-A',
+      },
+    });
+    expect(sanitized.customHeaders).toEqual({
+      'Cookie': '***',
+      'Authorization': '***',
+      'X-API-Key': '***',
+      'X-Auth-Token': '***',
+      'X-Auth-User': '***',
+      'Accept-Language': 'de-DE',
+      'X-Custom-Tracking': 'experiment-A',
+    });
+  });
+
+  it('does not mutate input customHeaders', () => {
+    const headers = { 'Cookie': 'real-value' };
+    const original: AuditConfig = { ...baseConfig, customHeaders: headers };
+    sanitizeConfigForClient(original);
+    expect(headers['Cookie']).toBe('real-value');
+  });
+});
+
+describe('isSensitiveHeader', () => {
+  it('catches the standard credential-bearing headers, case-insensitively', () => {
+    expect(isSensitiveHeader('Cookie')).toBe(true);
+    expect(isSensitiveHeader('cookie')).toBe(true);
+    expect(isSensitiveHeader('AUTHORIZATION')).toBe(true);
+    expect(isSensitiveHeader('Proxy-Authorization')).toBe(true);
+    expect(isSensitiveHeader('X-API-Key')).toBe(true);
+    expect(isSensitiveHeader('X-CSRF-Token')).toBe(true);
+  });
+
+  it('catches anything starting with X-Auth- (broad bearer-token family)', () => {
+    expect(isSensitiveHeader('X-Auth-Token')).toBe(true);
+    expect(isSensitiveHeader('X-Auth-Signature')).toBe(true);
+    expect(isSensitiveHeader('x-auth-anything')).toBe(true);
+  });
+
+  it('leaves benign headers alone', () => {
+    expect(isSensitiveHeader('Accept-Language')).toBe(false);
+    expect(isSensitiveHeader('User-Agent')).toBe(false);
+    expect(isSensitiveHeader('X-Custom-Tracking')).toBe(false);
+    expect(isSensitiveHeader('X-Forwarded-For')).toBe(false);
   });
 });

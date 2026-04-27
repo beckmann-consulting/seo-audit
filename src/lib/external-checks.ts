@@ -7,12 +7,22 @@ import { promises as dns } from 'dns';
 
 // Shared header builder for the audit's HTTP probes. The crawler has
 // its own (slightly richer) version because it also sets Accept /
-// Accept-Language; the probes here only need UA + optional auth.
-function probeHeaders(userAgent?: string, authHeader?: string): HeadersInit | undefined {
-  if (!userAgent && !authHeader) return undefined;
+// Accept-Language; the probes here only need UA + optional auth +
+// any user-supplied custom headers (which override the built-ins).
+function probeHeaders(
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): HeadersInit | undefined {
+  if (!userAgent && !authHeader && !customHeaders) return undefined;
   const h: Record<string, string> = {};
   if (userAgent) h['User-Agent'] = userAgent;
   if (authHeader) h['Authorization'] = authHeader;
+  if (customHeaders) {
+    for (const [name, value] of Object.entries(customHeaders)) {
+      h[name] = value;
+    }
+  }
   return h;
 }
 
@@ -295,14 +305,19 @@ export async function checkSafeBrowsing(url: string, apiKey: string): Promise<Sa
 // Both the www and the bare host should redirect to the same canonical
 // variant. We fetch both with redirect: 'follow' and compare the final
 // URLs (trailing slash normalised).
-export async function checkWwwConsistency(url: string, userAgent?: string, authHeader?: string): Promise<WwwConsistencyInfo> {
+export async function checkWwwConsistency(
+  url: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<WwwConsistencyInfo> {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;
     const isWww = host.startsWith('www.');
     const variantHost = isWww ? host.slice(4) : `www.${host}`;
     const variantUrl = `${parsed.protocol}//${variantHost}${parsed.pathname}${parsed.search}`;
-    const headers = probeHeaders(userAgent, authHeader);
+    const headers = probeHeaders(userAgent, authHeader, customHeaders);
 
     const fetchFinal = async (target: string): Promise<string | undefined> => {
       try {
@@ -357,14 +372,20 @@ export async function checkWwwConsistency(url: string, userAgent?: string, authH
 // ============================================================
 //  SECURITY HEADERS CHECK
 // ============================================================
-export async function checkSecurityHeaders(url: string, html?: string, userAgent?: string, authHeader?: string): Promise<SecurityHeadersInfo> {
+export async function checkSecurityHeaders(
+  url: string,
+  html?: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<SecurityHeadersInfo> {
   try {
     // Use GET (not HEAD) because some servers handle HEAD differently
     // and we want the exact headers a real browser would see.
     const resp = await fetch(url, {
       method: 'GET',
       redirect: 'follow',
-      headers: probeHeaders(userAgent, authHeader),
+      headers: probeHeaders(userAgent, authHeader, customHeaders),
       signal: AbortSignal.timeout(10000),
     });
 
@@ -502,7 +523,13 @@ function botStatusFromGroups(groups: RobotsGroup[], botName: string): AIBotStatu
   return 'allowed';
 }
 
-export async function checkAIReadiness(baseUrl: string, robotsContent?: string, userAgent?: string, authHeader?: string): Promise<AIReadinessInfo> {
+export async function checkAIReadiness(
+  baseUrl: string,
+  robotsContent?: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<AIReadinessInfo> {
   try {
     const origin = new URL(baseUrl).origin;
 
@@ -522,7 +549,7 @@ export async function checkAIReadiness(baseUrl: string, robotsContent?: string, 
     });
 
     // Check llms.txt and llms-full.txt
-    const headers = probeHeaders(userAgent, authHeader);
+    const headers = probeHeaders(userAgent, authHeader, customHeaders);
     let hasLlmsTxt = false;
     let hasLlmsFullTxt = false;
     let llmsTxtUrl: string | undefined;
@@ -600,10 +627,15 @@ function parseSitemapIndexBlock(xml: string): string[] {
   return out;
 }
 
-async function fetchSitemapXml(url: string, userAgent?: string, authHeader?: string): Promise<string | undefined> {
+async function fetchSitemapXml(
+  url: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<string | undefined> {
   try {
     const r = await fetch(url, {
-      headers: probeHeaders(userAgent, authHeader),
+      headers: probeHeaders(userAgent, authHeader, customHeaders),
       signal: AbortSignal.timeout(12000),
     });
     if (!r.ok) return undefined;
@@ -613,9 +645,14 @@ async function fetchSitemapXml(url: string, userAgent?: string, authHeader?: str
   }
 }
 
-export async function fetchSitemap(sitemapUrl: string, userAgent?: string, authHeader?: string): Promise<SitemapInfo> {
+export async function fetchSitemap(
+  sitemapUrl: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<SitemapInfo> {
   try {
-    const xml = await fetchSitemapXml(sitemapUrl, userAgent, authHeader);
+    const xml = await fetchSitemapXml(sitemapUrl, userAgent, authHeader, customHeaders);
     if (!xml) {
       return { urls: [], sitemapUrl, isIndex: false, subSitemaps: [], error: 'Could not fetch sitemap' };
     }
@@ -626,7 +663,7 @@ export async function fetchSitemap(sitemapUrl: string, userAgent?: string, authH
       const allUrls: SitemapUrlEntry[] = [];
       for (const sub of subs) {
         if (allUrls.length >= MAX_SITEMAP_URLS) break;
-        const subXml = await fetchSitemapXml(sub, userAgent, authHeader);
+        const subXml = await fetchSitemapXml(sub, userAgent, authHeader, customHeaders);
         if (!subXml) continue;
         const entries = parseUrlSetBlock(subXml);
         for (const e of entries) {
@@ -651,14 +688,19 @@ export async function fetchSitemap(sitemapUrl: string, userAgent?: string, authH
 // ============================================================
 //  ROBOTS.TXT & SITEMAP CHECK
 // ============================================================
-export async function checkRobotsAndSitemap(baseUrl: string, userAgent?: string, authHeader?: string): Promise<{
+export async function checkRobotsAndSitemap(
+  baseUrl: string,
+  userAgent?: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<{
   hasRobots: boolean;
   hasSitemap: boolean;
   robotsContent?: string;
   sitemapUrl?: string;
 }> {
   const origin = new URL(baseUrl).origin;
-  const headers = probeHeaders(userAgent, authHeader);
+  const headers = probeHeaders(userAgent, authHeader, customHeaders);
   let hasRobots = false;
   let hasSitemap = false;
   let robotsContent: string | undefined;

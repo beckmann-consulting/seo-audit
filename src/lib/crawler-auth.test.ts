@@ -69,3 +69,42 @@ describe('crawlSite — Authorization header', () => {
     }
   });
 });
+
+describe('crawlSite — custom headers', () => {
+  it('attaches user-supplied custom headers to outbound requests', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeHtmlResponse());
+    await crawlSite(
+      'https://example.com/',
+      1,
+      undefined,
+      'UA',
+      [], [],
+      undefined,
+      { 'Cookie': 'session=xyz', 'X-Custom': 'test' },
+    );
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Cookie']).toBe('session=xyz');
+    expect(headers['X-Custom']).toBe('test');
+    // Built-in UA still present (no override here)
+    expect(headers['User-Agent']).toBe('UA');
+  });
+
+  it('lets a custom header override a built-in one', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeHtmlResponse());
+    await crawlSite(
+      'https://example.com/',
+      1,
+      undefined,
+      'OriginalUA',
+      [], [],
+      undefined,
+      { 'User-Agent': 'OverriddenUA', 'Authorization': 'Bearer custom' },
+    );
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    // Custom value wins
+    expect(headers['User-Agent']).toBe('OverriddenUA');
+    expect(headers['Authorization']).toBe('Bearer custom');
+  });
+});

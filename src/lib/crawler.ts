@@ -4,13 +4,21 @@ import { urlMatches } from './util/url-filter';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
-function buildHeaders(userAgent: string, authHeader?: string): HeadersInit {
+function buildHeaders(userAgent: string, authHeader?: string, customHeaders?: Record<string, string>): HeadersInit {
   const h: Record<string, string> = {
     'User-Agent': userAgent,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en,de;q=0.9',
   };
   if (authHeader) h['Authorization'] = authHeader;
+  // Custom headers are merged LAST so explicit user-set values override
+  // the built-ins (e.g. user can replace Accept-Language for locale
+  // testing or override Authorization with a bearer token).
+  if (customHeaders) {
+    for (const [name, value] of Object.entries(customHeaders)) {
+      h[name] = value;
+    }
+  }
   return h;
 }
 
@@ -27,11 +35,16 @@ interface FetchWithRedirectsResult {
 // Follows redirects manually so we can record the full chain, detect
 // loops, and spot protocol downgrades. Returns the last response
 // along with the ordered list of intermediate URLs.
-async function fetchWithRedirectTracking(startUrl: string, userAgent: string, authHeader?: string): Promise<FetchWithRedirectsResult> {
+async function fetchWithRedirectTracking(
+  startUrl: string,
+  userAgent: string,
+  authHeader?: string,
+  customHeaders?: Record<string, string>,
+): Promise<FetchWithRedirectsResult> {
   const chain: string[] = [];
   let currentUrl = startUrl;
   let loopDetected = false;
-  const headers = buildHeaders(userAgent, authHeader);
+  const headers = buildHeaders(userAgent, authHeader, customHeaders);
 
   for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
     try {
@@ -97,6 +110,7 @@ export async function crawlSite(
   includeRegexes: RegExp[] = [],
   excludeRegexes: RegExp[] = [],
   authHeader?: string,
+  customHeaders?: Record<string, string>,
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -119,7 +133,7 @@ export async function crawlSite(
 
     try {
       const start = Date.now();
-      const tracked = await fetchWithRedirectTracking(url, userAgent, authHeader);
+      const tracked = await fetchWithRedirectTracking(url, userAgent, authHeader, customHeaders);
       const resp = tracked.response;
       const loadTime = Date.now() - start;
 

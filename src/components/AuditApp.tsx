@@ -109,6 +109,7 @@ export default function AuditApp() {
   const [excludePatterns, setExcludePatterns] = useState('');
   const [basicAuthUser, setBasicAuthUser] = useState('');
   const [basicAuthPass, setBasicAuthPass] = useState('');
+  const [customHeadersText, setCustomHeadersText] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -253,6 +254,24 @@ export default function AuditApp() {
       return lines.length > 0 ? lines : undefined;
     };
 
+    // Parse "Header-Name: value" lines into a Record. Lines without
+    // a colon are silently dropped (the UI placeholder explains the
+    // expected format). Only lines with both a name and value count.
+    const parseHeaders = (s: string): Record<string, string> | undefined => {
+      const out: Record<string, string> = {};
+      for (const raw of s.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        const colonIdx = line.indexOf(':');
+        if (colonIdx <= 0) continue;
+        const name = line.slice(0, colonIdx).trim();
+        const value = line.slice(colonIdx + 1).trim();
+        if (!name || !value) continue;
+        out[name] = value;
+      }
+      return Object.keys(out).length > 0 ? out : undefined;
+    };
+
     const config: AuditConfig = {
       url: url.trim(),
       googleApiKey: googleKey.trim() || undefined,
@@ -266,6 +285,7 @@ export default function AuditApp() {
       basicAuth: basicAuthUser && basicAuthPass
         ? { username: basicAuthUser, password: basicAuthPass }
         : undefined,
+      customHeaders: parseHeaders(customHeadersText),
     };
 
     try {
@@ -475,6 +495,23 @@ export default function AuditApp() {
                 style={inputStyle}
               />
             </div>
+          </div>
+
+          {/* Custom headers */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>
+              {t('Eigene HTTP-Header', 'Custom HTTP headers')}{' '}
+              <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                ({t('eine pro Zeile, "Name: Wert"; sensible Werte werden im Report maskiert', 'one per line, "Name: value"; sensitive values are masked in the report')})
+              </span>
+            </label>
+            <textarea
+              value={customHeadersText}
+              onChange={e => setCustomHeadersText(e.target.value)}
+              placeholder={'Cookie: session=abc\nX-CF-Bypass: token\nAccept-Language: de-DE,de;q=0.9'}
+              rows={3}
+              style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+            />
           </div>
 
           {/* Crawler URL filters */}

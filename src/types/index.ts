@@ -46,6 +46,13 @@ export interface AuditConfig {
   // from AuditResult.config before round-trip to the client so they
   // never end up in localStorage / PDF / cached audits.
   basicAuth?: { username: string; password: string };
+  // Arbitrary HTTP headers added to every audit request. Useful for
+  // cookie-based auth, Cloudflare bypass tokens, locale overrides, etc.
+  // User-set headers OVERRIDE the built-in User-Agent / Authorization
+  // when the same name is given (explicit beats implicit). Sensitive
+  // values (Cookie, Authorization, X-API-Key, X-Auth-*) are masked
+  // before round-trip to the client.
+  customHeaders?: Record<string, string>;
 }
 
 export interface PageData {
