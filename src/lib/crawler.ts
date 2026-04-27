@@ -1,5 +1,6 @@
 import { parse } from 'node-html-parser';
 import type { PageData, CrawlStats } from '@/types';
+import { urlMatches } from './util/url-filter';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
@@ -90,7 +91,9 @@ export async function crawlSite(
   startUrl: string,
   maxPages: number = 0,
   onProgress?: (crawled: number, total: number, currentUrl: string) => void,
-  userAgent: string = DEFAULT_USER_AGENT
+  userAgent: string = DEFAULT_USER_AGENT,
+  includeRegexes: RegExp[] = [],
+  excludeRegexes: RegExp[] = [],
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -176,7 +179,13 @@ export async function crawlSite(
           if (fullUrl.hostname === baseDomain) {
             const normalized = normalizeUrl(href, tracked.finalUrl);
             if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
-              queue.push({ url: normalized, depth: depth + 1 });
+              // Discovered URL — apply user filter. The start URL itself
+              // bypasses this check (handled by being seeded directly into
+              // the queue before the loop), so users who set a narrow
+              // include list still get a working seed crawl.
+              if (urlMatches(normalized, includeRegexes, excludeRegexes)) {
+                queue.push({ url: normalized, depth: depth + 1 });
+              }
             }
           } else if (href.startsWith('http')) {
             externalLinkCount++;

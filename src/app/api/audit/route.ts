@@ -28,6 +28,7 @@ import {
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
 import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
+import { compileFilterPatterns, FilterPatternError } from '@/lib/util/url-filter';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -56,7 +57,9 @@ function encodeSSE(event: StreamEvent): Uint8Array {
 // ============================================================
 async function runAudit(
   config: AuditConfig,
-  send: (event: StreamEvent) => void
+  send: (event: StreamEvent) => void,
+  includeRegexes: RegExp[],
+  excludeRegexes: RegExp[],
 ): Promise<AuditResult | null> {
   const progress = (step: string, percent: number, detail?: string) =>
     send({ type: 'progress', step, percent, detail });
@@ -106,6 +109,8 @@ async function runAudit(
       progress('crawl_progress', clamped, currentUrl);
     },
     userAgent,
+    includeRegexes,
+    excludeRegexes,
   );
 
   if (rawPages.length === 0) {
@@ -321,6 +326,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
   }
 
+  // Validate include/exclude patterns BEFORE opening the stream so the
+  // UI can show a clear inline error instead of a mid-audit failure.
+  let includeRegexes: RegExp[];
+  let excludeRegexes: RegExp[];
+  try {
+    includeRegexes = compileFilterPatterns(config.include);
+    excludeRegexes = compileFilterPatterns(config.exclude);
+  } catch (err) {
+    if (err instanceof FilterPatternError) {
+      return NextResponse.json(
+        { error: `Invalid filter pattern "${err.pattern}": ${err.cause}`, pattern: err.pattern },
+        { status: 400 },
+      );
+    }
+    throw err;
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
@@ -335,7 +357,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const result = await runAudit(config, send);
+        const result = await runAudit(config, send, includeRegexes, excludeRegexes);
         if (result) {
           send({ type: 'result', payload: result });
         }

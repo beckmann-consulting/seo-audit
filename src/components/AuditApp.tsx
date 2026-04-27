@@ -105,6 +105,8 @@ export default function AuditApp() {
   const [modules, setModules] = useState<Module[]>(ALL_MODULES.map(m => m.id).filter(m => m !== 'offers'));
   const [userAgent, setUserAgent] = useState<UserAgentPreset>('default');
   const [customUserAgent, setCustomUserAgent] = useState('');
+  const [includePatterns, setIncludePatterns] = useState('');
+  const [excludePatterns, setExcludePatterns] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -244,6 +246,11 @@ export default function AuditApp() {
     setProgressText(t('Audit startet…', 'Starting audit…'));
     setProgressDetail('');
 
+    const splitLines = (s: string): string[] | undefined => {
+      const lines = s.split('\n').map(l => l.trim()).filter(Boolean);
+      return lines.length > 0 ? lines : undefined;
+    };
+
     const config: AuditConfig = {
       url: url.trim(),
       googleApiKey: googleKey.trim() || undefined,
@@ -252,6 +259,8 @@ export default function AuditApp() {
       maxPages: 0,
       userAgent,
       customUserAgent: userAgent === 'custom' ? customUserAgent.trim() || undefined : undefined,
+      include: splitLines(includePatterns),
+      exclude: splitLines(excludePatterns),
     };
 
     try {
@@ -434,6 +443,40 @@ export default function AuditApp() {
                 style={{ ...inputStyle, maxWidth: 400, marginTop: 6 }}
               />
             )}
+          </div>
+
+          {/* Crawler URL filters */}
+          <div style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>
+                {t('Include-Patterns', 'Include patterns')}{' '}
+                <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                  ({t('eine Regex pro Zeile, gegen volle URL', 'one regex per line, tested against full URL')})
+                </span>
+              </label>
+              <textarea
+                value={includePatterns}
+                onChange={e => setIncludePatterns(e.target.value)}
+                placeholder={'/blog/\n/products/'}
+                rows={3}
+                style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>
+                {t('Exclude-Patterns', 'Exclude patterns')}{' '}
+                <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                  ({t('Exclude gewinnt', 'exclude wins')})
+                </span>
+              </label>
+              <textarea
+                value={excludePatterns}
+                onChange={e => setExcludePatterns(e.target.value)}
+                placeholder={'/admin\n\\?utm_\n\\.pdf$'}
+                rows={3}
+                style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+              />
+            </div>
           </div>
 
           {/* Modules */}

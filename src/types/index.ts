@@ -35,6 +35,13 @@ export interface AuditConfig {
   quickMode?: boolean; // when true, PSI runs once (default: run twice and average for score stability)
   userAgent?: UserAgentPreset; // default: 'default'
   customUserAgent?: string; // only consulted when userAgent === 'custom'
+  // Crawler URL filtering. Each entry is a JS regex source string,
+  // tested against the full URL. Exclude wins over include; an empty
+  // include list means "no narrowing" (only excludes are applied).
+  // Validated at the route layer — bad patterns return a 400 before
+  // the SSE stream opens.
+  include?: string[];
+  exclude?: string[];
 }
 
 export interface PageData {
