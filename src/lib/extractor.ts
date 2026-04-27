@@ -304,6 +304,29 @@ export function extractPageSEO(page: PageData): PageSEOData {
     bodyMinhash = minhashSignature(buildShingles(normalised));
   }
 
+  // Text-to-HTML ratio: visible body text length divided by raw HTML
+  // length. Walking the DOM and skipping script/style/noscript children
+  // is necessary because node-html-parser's body.text concatenates
+  // script content as text — including it would mis-classify SPAs
+  // (huge inline JS, almost no real content) as "content-rich".
+  let visibleBodyRaw = '';
+  const collectVisible = (node: { nodeType: number; tagName?: string; rawText?: string; text?: string; childNodes?: { nodeType: number; tagName?: string; rawText?: string; text?: string; childNodes?: unknown[] }[] }): void => {
+    if (!node) return;
+    if (node.nodeType === 3) { // text node
+      visibleBodyRaw += node.rawText ?? node.text ?? '';
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName?.toLowerCase();
+    if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
+    for (const child of node.childNodes ?? []) {
+      collectVisible(child as Parameters<typeof collectVisible>[0]);
+    }
+  };
+  if (body) collectVisible(body as unknown as Parameters<typeof collectVisible>[0]);
+  const visibleBodyText = visibleBodyRaw.replace(/\s+/g, ' ').trim();
+  const textHtmlRatio = page.html.length > 0 ? visibleBodyText.length / page.html.length : 0;
+
   // Mobile usability: scan inline styles for fixed widths > 400px and small fonts < 12px
   let fixedWidthElements = 0;
   let smallFontElements = 0;
@@ -512,5 +535,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasRdfa: pageHasRdfa,
     bodyTextHash,
     bodyMinhash,
+    textHtmlRatio,
   };
 }

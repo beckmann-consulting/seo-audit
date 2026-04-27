@@ -218,6 +218,11 @@ export interface PageSEOData {
   // arrays for pages too thin to fingerprint (wordCount < 50).
   bodyTextHash: string;
   bodyMinhash: number[];
+  // Visible-text bytes / total HTML bytes. Low ratios (<10%) suggest
+  // either heavy boilerplate (a thin page wrapped in a thick template)
+  // or server-rendered output dominated by inline data — Google's
+  // "content vs noise" heuristics tend to discount such pages.
+  textHtmlRatio: number;
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
   redirectChain: string[]; // propagated from PageData

@@ -13,6 +13,14 @@ const NEAR_DUPLICATE_THRESHOLD = 0.85;
 // to exact-duplicate detection only.
 const NEAR_DUPLICATE_MAX_PAGES = 500;
 
+// Text-to-HTML ratio threshold. Below 10% means the page is mostly
+// markup/inline-data rather than content — usually a thin page wrapped
+// in a thick template. We gate the finding to pages with ≥ 100 words
+// because shorter pages would noisily trip both this and the existing
+// thin-content check, which would just be redundant noise.
+const TEXT_HTML_RATIO_THRESHOLD = 0.10;
+const TEXT_HTML_MIN_WORDS = 100;
+
 // ============================================================
 //  CONTENT FINDINGS
 // ============================================================
@@ -344,6 +352,45 @@ export function generateBodyDuplicateFindings(pages: PageSEOData[]): Finding[] {
       affectedUrl: nearClusters[0][0].url,
     });
   }
+
+  return findings;
+}
+
+
+// ============================================================
+//  TEXT-TO-HTML RATIO
+// ============================================================
+// Cheap content-vs-noise signal: when the visible body text is less
+// than 10% of the raw HTML, the page is almost certainly a thin
+// piece of content wrapped in a heavy template (or a SPA shell).
+// Pages with < 100 words are excluded — they're already flagged by
+// thin-content checks and their tiny denominators would produce
+// flaky ratios.
+export function generateTextHtmlRatioFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const lowRatio = pages.filter(p =>
+    p.wordCount >= TEXT_HTML_MIN_WORDS &&
+    p.textHtmlRatio > 0 &&
+    p.textHtmlRatio < TEXT_HTML_RATIO_THRESHOLD
+  );
+  if (lowRatio.length === 0) return findings;
+
+  const sample = lowRatio.slice(0, 5).map(p =>
+    `${p.url} (${(p.textHtmlRatio * 100).toFixed(1)}%)`
+  ).join(', ');
+
+  findings.push({
+    id: id(), priority: 'optional', module: 'content', effort: 'medium', impact: 'low',
+    title_de: `Niedrige Text-zu-HTML-Ratio (<${Math.round(TEXT_HTML_RATIO_THRESHOLD * 100)}%) auf ${lowRatio.length} Seite(n)`,
+    title_en: `Low text-to-HTML ratio (<${Math.round(TEXT_HTML_RATIO_THRESHOLD * 100)}%) on ${lowRatio.length} page(s)`,
+    description_de: `Sichtbarer Text macht weniger als ${Math.round(TEXT_HTML_RATIO_THRESHOLD * 100)}% der HTML-Bytes aus. Typische Ursachen: schwere Template-Frames um wenig Content, mit Inline-Daten/-Scripts überfrachtetes Markup, oder durch JS-Frameworks aufgeblasene SSR-Outputs. Google's "Content vs. Noise"-Heuristiken werten solche Seiten ab. Beispiele: ${sample}`,
+    description_en: `Visible text makes up less than ${Math.round(TEXT_HTML_RATIO_THRESHOLD * 100)}% of the HTML bytes. Typical causes: heavy template frames around thin content, markup bloated with inline data/scripts, or JS-framework SSR output with lots of overhead. Google's "content vs. noise" heuristics tend to discount such pages. Examples: ${sample}`,
+    recommendation_de: 'Markup-Overhead reduzieren: Inline-Scripts/Styles in externe Dateien auslagern, server-rendered Daten-Blobs nur dort einsetzen wo wirklich nötig, redundante Wrapper-Divs entfernen. Bei thin Content: tatsächlichen Inhalt ausbauen.',
+    recommendation_en: 'Reduce markup overhead: move inline scripts/styles to external files, keep server-rendered data blobs only where actually needed, drop redundant wrapper divs. For thin content: expand the actual content.',
+    affectedUrl: lowRatio[0].url,
+  });
 
   return findings;
 }

@@ -17,7 +17,7 @@ import {
   generateAnchorTextFindings, generateRobotsConflictFindings,
   generateOpenGraphFindings, generateSitemapQualityFindings,
   generateRichResultsFindings, generateImageDetailFindings,
-  generateBodyDuplicateFindings,
+  generateBodyDuplicateFindings, generateTextHtmlRatioFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateWwwConsistencyFindings, generateXRobotsFindings,
@@ -172,6 +172,7 @@ async function runAudit(
     allFindings.push(...generateContentFindings(pages));
     allFindings.push(...generateImageDetailFindings(pages));
     allFindings.push(...generateBodyDuplicateFindings(pages));
+    allFindings.push(...generateTextHtmlRatioFindings(pages));
   }
   if (config.modules.includes('tech')) {
     allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
