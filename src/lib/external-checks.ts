@@ -284,19 +284,21 @@ export async function checkSafeBrowsing(url: string, apiKey: string): Promise<Sa
 // Both the www and the bare host should redirect to the same canonical
 // variant. We fetch both with redirect: 'follow' and compare the final
 // URLs (trailing slash normalised).
-export async function checkWwwConsistency(url: string): Promise<WwwConsistencyInfo> {
+export async function checkWwwConsistency(url: string, userAgent?: string): Promise<WwwConsistencyInfo> {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;
     const isWww = host.startsWith('www.');
     const variantHost = isWww ? host.slice(4) : `www.${host}`;
     const variantUrl = `${parsed.protocol}//${variantHost}${parsed.pathname}${parsed.search}`;
+    const headers = userAgent ? { 'User-Agent': userAgent } : undefined;
 
     const fetchFinal = async (target: string): Promise<string | undefined> => {
       try {
         const resp = await fetch(target, {
           method: 'GET',
           redirect: 'follow',
+          headers,
           signal: AbortSignal.timeout(8000),
         });
         return resp.url || undefined;
@@ -344,13 +346,14 @@ export async function checkWwwConsistency(url: string): Promise<WwwConsistencyIn
 // ============================================================
 //  SECURITY HEADERS CHECK
 // ============================================================
-export async function checkSecurityHeaders(url: string, html?: string): Promise<SecurityHeadersInfo> {
+export async function checkSecurityHeaders(url: string, html?: string, userAgent?: string): Promise<SecurityHeadersInfo> {
   try {
     // Use GET (not HEAD) because some servers handle HEAD differently
     // and we want the exact headers a real browser would see.
     const resp = await fetch(url, {
       method: 'GET',
       redirect: 'follow',
+      headers: userAgent ? { 'User-Agent': userAgent } : undefined,
       signal: AbortSignal.timeout(10000),
     });
 
@@ -488,7 +491,7 @@ function botStatusFromGroups(groups: RobotsGroup[], botName: string): AIBotStatu
   return 'allowed';
 }
 
-export async function checkAIReadiness(baseUrl: string, robotsContent?: string): Promise<AIReadinessInfo> {
+export async function checkAIReadiness(baseUrl: string, robotsContent?: string, userAgent?: string): Promise<AIReadinessInfo> {
   try {
     const origin = new URL(baseUrl).origin;
 
@@ -508,18 +511,19 @@ export async function checkAIReadiness(baseUrl: string, robotsContent?: string):
     });
 
     // Check llms.txt and llms-full.txt
+    const headers = userAgent ? { 'User-Agent': userAgent } : undefined;
     let hasLlmsTxt = false;
     let hasLlmsFullTxt = false;
     let llmsTxtUrl: string | undefined;
     try {
-      const r = await fetch(`${origin}/llms.txt`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${origin}/llms.txt`, { headers, signal: AbortSignal.timeout(8000) });
       if (r.ok) {
         hasLlmsTxt = true;
         llmsTxtUrl = `${origin}/llms.txt`;
       }
     } catch {}
     try {
-      const r = await fetch(`${origin}/llms-full.txt`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${origin}/llms-full.txt`, { headers, signal: AbortSignal.timeout(8000) });
       if (r.ok) hasLlmsFullTxt = true;
     } catch {}
 
@@ -585,9 +589,12 @@ function parseSitemapIndexBlock(xml: string): string[] {
   return out;
 }
 
-async function fetchSitemapXml(url: string): Promise<string | undefined> {
+async function fetchSitemapXml(url: string, userAgent?: string): Promise<string | undefined> {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    const r = await fetch(url, {
+      headers: userAgent ? { 'User-Agent': userAgent } : undefined,
+      signal: AbortSignal.timeout(12000),
+    });
     if (!r.ok) return undefined;
     return await r.text();
   } catch {
@@ -595,9 +602,9 @@ async function fetchSitemapXml(url: string): Promise<string | undefined> {
   }
 }
 
-export async function fetchSitemap(sitemapUrl: string): Promise<SitemapInfo> {
+export async function fetchSitemap(sitemapUrl: string, userAgent?: string): Promise<SitemapInfo> {
   try {
-    const xml = await fetchSitemapXml(sitemapUrl);
+    const xml = await fetchSitemapXml(sitemapUrl, userAgent);
     if (!xml) {
       return { urls: [], sitemapUrl, isIndex: false, subSitemaps: [], error: 'Could not fetch sitemap' };
     }
@@ -608,7 +615,7 @@ export async function fetchSitemap(sitemapUrl: string): Promise<SitemapInfo> {
       const allUrls: SitemapUrlEntry[] = [];
       for (const sub of subs) {
         if (allUrls.length >= MAX_SITEMAP_URLS) break;
-        const subXml = await fetchSitemapXml(sub);
+        const subXml = await fetchSitemapXml(sub, userAgent);
         if (!subXml) continue;
         const entries = parseUrlSetBlock(subXml);
         for (const e of entries) {
@@ -633,13 +640,14 @@ export async function fetchSitemap(sitemapUrl: string): Promise<SitemapInfo> {
 // ============================================================
 //  ROBOTS.TXT & SITEMAP CHECK
 // ============================================================
-export async function checkRobotsAndSitemap(baseUrl: string): Promise<{
+export async function checkRobotsAndSitemap(baseUrl: string, userAgent?: string): Promise<{
   hasRobots: boolean;
   hasSitemap: boolean;
   robotsContent?: string;
   sitemapUrl?: string;
 }> {
   const origin = new URL(baseUrl).origin;
+  const headers = userAgent ? { 'User-Agent': userAgent } : undefined;
   let hasRobots = false;
   let hasSitemap = false;
   let robotsContent: string | undefined;
@@ -647,7 +655,7 @@ export async function checkRobotsAndSitemap(baseUrl: string): Promise<{
 
   // Check robots.txt
   try {
-    const r = await fetch(`${origin}/robots.txt`, { signal: AbortSignal.timeout(8000) });
+    const r = await fetch(`${origin}/robots.txt`, { headers, signal: AbortSignal.timeout(8000) });
     if (r.ok) {
       hasRobots = true;
       robotsContent = await r.text();
@@ -660,7 +668,7 @@ export async function checkRobotsAndSitemap(baseUrl: string): Promise<{
   // Check sitemap.xml directly
   if (!hasSitemap) {
     try {
-      const r = await fetch(`${origin}/sitemap.xml`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${origin}/sitemap.xml`, { headers, signal: AbortSignal.timeout(8000) });
       if (r.ok) {
         hasSitemap = true;
         if (!sitemapUrl) sitemapUrl = `${origin}/sitemap.xml`;
@@ -671,7 +679,7 @@ export async function checkRobotsAndSitemap(baseUrl: string): Promise<{
   // Also check sitemap_index.xml
   if (!hasSitemap) {
     try {
-      const r = await fetch(`${origin}/sitemap_index.xml`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${origin}/sitemap_index.xml`, { headers, signal: AbortSignal.timeout(8000) });
       if (r.ok) {
         hasSitemap = true;
         if (!sitemapUrl) sitemapUrl = `${origin}/sitemap_index.xml`;

@@ -1,9 +1,20 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang } from '@/types';
+import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAgentPreset } from '@/types';
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
+
+const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
+  { value: 'default', label: 'SEO Audit Pro (Default)' },
+  { value: 'googlebot-mobile', label: 'Googlebot Mobile' },
+  { value: 'googlebot-desktop', label: 'Googlebot Desktop' },
+  { value: 'bingbot', label: 'Bingbot' },
+  { value: 'gptbot', label: 'GPTBot (OpenAI)' },
+  { value: 'claudebot', label: 'ClaudeBot (Anthropic)' },
+  { value: 'perplexitybot', label: 'PerplexityBot' },
+  { value: 'custom', label: 'Custom…' },
+];
 
 // ============================================================
 //  LocalStorage cache — one AuditResult per hostname.
@@ -92,6 +103,8 @@ export default function AuditApp() {
   const [googleKey, setGoogleKey] = useState('');
   const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false);
   const [modules, setModules] = useState<Module[]>(ALL_MODULES.map(m => m.id).filter(m => m !== 'offers'));
+  const [userAgent, setUserAgent] = useState<UserAgentPreset>('default');
+  const [customUserAgent, setCustomUserAgent] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -237,6 +250,8 @@ export default function AuditApp() {
       modules,
       author: 'TW Beckmann Consultancy Services',
       maxPages: 0,
+      userAgent,
+      customUserAgent: userAgent === 'custom' ? customUserAgent.trim() || undefined : undefined,
     };
 
     try {
@@ -396,6 +411,30 @@ export default function AuditApp() {
               </p>
             </div>
           )}
+
+          {/* User-Agent */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>
+              {t('User-Agent', 'User-Agent')} <span style={{ color: '#9b9b98', fontWeight: 400 }}>({t('beeinflusst Antwort vom Server und robots.txt-Auswertung', 'affects server response and robots.txt evaluation')})</span>
+            </label>
+            <select
+              value={userAgent}
+              onChange={e => setUserAgent(e.target.value as UserAgentPreset)}
+              style={{ ...inputStyle, maxWidth: 400 }}
+            >
+              {USER_AGENT_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            {userAgent === 'custom' && (
+              <input
+                value={customUserAgent}
+                onChange={e => setCustomUserAgent(e.target.value)}
+                placeholder={t('Eigener User-Agent-String', 'Custom User-Agent string')}
+                style={{ ...inputStyle, maxWidth: 400, marginTop: 6 }}
+              />
+            )}
+          </div>
 
           {/* Modules */}
           <div>

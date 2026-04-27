@@ -1,11 +1,15 @@
 import { parse } from 'node-html-parser';
 import type { PageData, CrawlStats } from '@/types';
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en,de;q=0.9',
-};
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
+
+function buildHeaders(userAgent: string): HeadersInit {
+  return {
+    'User-Agent': userAgent,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en,de;q=0.9',
+  };
+}
 
 const MAX_REDIRECT_HOPS = 10;
 
@@ -20,15 +24,16 @@ interface FetchWithRedirectsResult {
 // Follows redirects manually so we can record the full chain, detect
 // loops, and spot protocol downgrades. Returns the last response
 // along with the ordered list of intermediate URLs.
-async function fetchWithRedirectTracking(startUrl: string): Promise<FetchWithRedirectsResult> {
+async function fetchWithRedirectTracking(startUrl: string, userAgent: string): Promise<FetchWithRedirectsResult> {
   const chain: string[] = [];
   let currentUrl = startUrl;
   let loopDetected = false;
+  const headers = buildHeaders(userAgent);
 
   for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
     try {
       const resp = await fetch(currentUrl, {
-        headers: HEADERS,
+        headers,
         redirect: 'manual',
         signal: AbortSignal.timeout(12000),
       });
@@ -84,7 +89,8 @@ function normalizeUrl(url: string, base: string): string | null {
 export async function crawlSite(
   startUrl: string,
   maxPages: number = 0,
-  onProgress?: (crawled: number, total: number, currentUrl: string) => void
+  onProgress?: (crawled: number, total: number, currentUrl: string) => void,
+  userAgent: string = DEFAULT_USER_AGENT
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -107,7 +113,7 @@ export async function crawlSite(
 
     try {
       const start = Date.now();
-      const tracked = await fetchWithRedirectTracking(url);
+      const tracked = await fetchWithRedirectTracking(url, userAgent);
       const resp = tracked.response;
       const loadTime = Date.now() - start;
 

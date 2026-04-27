@@ -27,6 +27,7 @@ import {
   calculateModuleScore, getTopFindings
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
+import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -65,6 +66,13 @@ async function runAudit(
   if (!url.startsWith('http')) url = 'https://' + url;
   const domain = new URL(url).hostname;
 
+  // Resolve UA once — every HTTP fetch in the audit pipeline uses
+  // this string. Audits run "as Googlebot" or "as a custom crawler"
+  // need consistent identification across crawler, security headers,
+  // sitemap fetches, llms.txt, etc.
+  const userAgent = resolveUserAgent(config);
+  const robotsBotToken = getRobotsToken(config);
+
   // ---- STEP 1: DNS (5%) ----
   progress('dns_check', 5);
   const dnsInfo = config.modules.includes('tech') ? await checkDNS(domain) : undefined;
@@ -75,12 +83,12 @@ async function runAudit(
 
   // ---- STEP 3: robots.txt (15%) ----
   progress('robots_fetch', 15);
-  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url);
+  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url, userAgent);
 
   // ---- STEP 4: sitemap.xml (20%) ----
   progress('sitemap_fetch', 20);
   const sitemapInfo = (hasSitemap && sitemapUrl && config.modules.includes('seo'))
-    ? await fetchSitemap(sitemapUrl)
+    ? await fetchSitemap(sitemapUrl, userAgent)
     : undefined;
 
   // ---- STEP 5: Crawl (25% → 70%) ----
@@ -96,7 +104,8 @@ async function runAudit(
       const clamped = Math.max(lastCrawlPercent, Math.min(70, raw));
       lastCrawlPercent = clamped;
       progress('crawl_progress', clamped, currentUrl);
-    }
+    },
+    userAgent,
   );
 
   if (rawPages.length === 0) {
@@ -132,18 +141,18 @@ async function runAudit(
   // ---- STEP 7: Security Headers (80%) ----
   progress('security_headers', 80);
   const securityHeaders = config.modules.includes('tech')
-    ? await checkSecurityHeaders(url, rawPages[0]?.html)
+    ? await checkSecurityHeaders(url, rawPages[0]?.html, userAgent)
     : undefined;
 
   // ---- STEP 7b: www / non-www consistency ----
   const wwwConsistency = config.modules.includes('tech')
-    ? await checkWwwConsistency(url)
+    ? await checkWwwConsistency(url, userAgent)
     : undefined;
 
   // ---- STEP 8: AI Crawler Readiness (85%) ----
   progress('ai_crawler_check', 85);
   const aiReadiness = config.modules.includes('seo')
-    ? await checkAIReadiness(url, robotsContent)
+    ? await checkAIReadiness(url, robotsContent, userAgent)
     : undefined;
 
   // ---- STEP 9: Findings generation (90%) ----
@@ -160,7 +169,7 @@ async function runAudit(
     allFindings.push(...generateCrawlStructureFindings(pages));
     allFindings.push(...generateSitemapCoverageFindings(pages, sitemapInfo));
     allFindings.push(...generateAnchorTextFindings(pages));
-    allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo));
+    allFindings.push(...generateRobotsConflictFindings(pages, robotsContent, sitemapInfo, robotsBotToken));
     allFindings.push(...generateOpenGraphFindings(pages));
     allFindings.push(...generateSitemapQualityFindings(sitemapInfo, url));
     allFindings.push(...generateRichResultsFindings(pages, pageSpeedData));

@@ -16,6 +16,16 @@ export type Module =
   | 'performance'
   | 'offers';
 
+export type UserAgentPreset =
+  | 'default'
+  | 'googlebot-mobile'
+  | 'googlebot-desktop'
+  | 'bingbot'
+  | 'gptbot'
+  | 'claudebot'
+  | 'perplexitybot'
+  | 'custom';
+
 export interface AuditConfig {
   url: string;
   googleApiKey?: string;
@@ -23,6 +33,8 @@ export interface AuditConfig {
   author: string;
   maxPages: number; // 0 = unlimited
   quickMode?: boolean; // when true, PSI runs once (default: run twice and average for score stability)
+  userAgent?: UserAgentPreset; // default: 'default'
+  customUserAgent?: string; // only consulted when userAgent === 'custom'
 }
 
 export interface PageData {

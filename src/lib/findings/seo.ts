@@ -1026,13 +1026,16 @@ export function generateOpenGraphFindings(pages: PageSEOData[]): Finding[] {
 // ============================================================
 //  ROBOTS.TXT CONFLICT FINDINGS (Check 4)
 // ============================================================
-// Matches the union of User-agent:* and User-agent:Googlebot rule
-// groups against crawled URLs using simple prefix matching (the
-// robots.txt wildcard spec would need regex; the overwhelming
-// majority of real-world rules are plain prefixes).
-function getApplicableDisallows(groups: RobotsGroup[]): string[] {
+// Matches the union of User-agent:* and the audit's active bot
+// rule groups against crawled URLs using simple prefix matching
+// (the robots.txt wildcard spec would need regex; the overwhelming
+// majority of real-world rules are plain prefixes). The bot token
+// defaults to 'googlebot' for backwards compatibility — the active
+// audit UA can override it via the new `botToken` parameter.
+function getApplicableDisallows(groups: RobotsGroup[], botToken: string = 'googlebot'): string[] {
+  const lowerToken = botToken.toLowerCase();
   const relevant = groups.filter(g =>
-    g.agents.some(a => a === '*' || a.toLowerCase() === 'googlebot')
+    g.agents.some(a => a === '*' || (lowerToken !== '' && a.toLowerCase() === lowerToken))
   );
   const disallows = relevant.flatMap(g => g.disallows).filter(d => d && d !== '');
   return [...new Set(disallows)];
@@ -1051,13 +1054,14 @@ const SENSITIVE_PATHS = ['/wp-admin', '/admin', '/login', '/api', '/.env', '/con
 export function generateRobotsConflictFindings(
   pages: PageSEOData[],
   robotsContent: string | undefined,
-  sitemap?: SitemapInfo
+  sitemap?: SitemapInfo,
+  botToken?: string
 ): Finding[] {
   const findings: Finding[] = [];
   if (!robotsContent) return findings;
 
   const groups = parseRobotsTxt(robotsContent);
-  const disallows = getApplicableDisallows(groups);
+  const disallows = getApplicableDisallows(groups, botToken);
   if (disallows.length === 0) {
     // Still check sensitive-path coverage — if robots.txt exists but
     // doesn't cover anything sensitive, that's worth noting.
