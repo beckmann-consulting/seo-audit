@@ -262,6 +262,11 @@ export interface PageSEOData {
   hasJsonLd: boolean;
   hasMicrodata: boolean;
   hasRdfa: boolean;
+  // JS-rendering provenance + diagnostics (only set in rendering=js mode).
+  renderMode?: 'static' | 'js';
+  staticWordCount?: number;        // word count of the un-rendered HTML
+  consoleErrors?: string[];        // browser console / page errors during render
+  failedRequests?: string[];       // sub-resources that failed to load
   // Body-content fingerprints for duplicate / near-duplicate detection.
   // bodyTextHash is FNV-1a hex over normalised body text — equality means
   // exact-duplicate content. bodyMinhash is a fixed-length MinHash

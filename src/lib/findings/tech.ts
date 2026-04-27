@@ -544,6 +544,114 @@ export function generateInsecureLinkFindings(pages: PageSEOData[]): Finding[] {
 
 
 // ============================================================
+//  JS-RENDERING FINDINGS (only when audit ran in rendering=js)
+// ============================================================
+// Two findings driven by the static-vs-rendered diff that JsRenderer
+// captures per page:
+//
+// - js-rendering-required (Critical / Important): the page is empty
+//   or near-empty without JavaScript. Bots that don't execute JS
+//   (Bingbot until 2024, most AI-retrieval crawlers, social-card
+//   fetchers like Facebook/Slack/LinkedIn) see almost nothing.
+//   Critical when even Googlebot would struggle (rendered content
+//   ≥ 100 words, static < 30); Important when content roughly
+//   doubles after JS (signal that Googlebot's two-pass renderer
+//   has to do real work for this page).
+//
+// - js-console-errors (Recommended): pages that emitted JavaScript
+//   errors during render. Errors mean either broken interactivity
+//   or — worse — broken hydration that ships incomplete content
+//   to the indexer.
+//
+// Both findings noop when no page has renderMode === 'js' (i.e. the
+// audit ran in static mode and we never collected the diagnostics).
+
+const JS_REQUIRED_CRITICAL_RENDERED_MIN = 100;
+const JS_REQUIRED_CRITICAL_STATIC_MAX = 30;
+const JS_REQUIRED_IMPORTANT_RATIO = 2;
+const JS_REQUIRED_IMPORTANT_RENDERED_MIN = 100;
+
+export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  const jsPages = pages.filter(p => p.renderMode === 'js' && p.staticWordCount !== undefined);
+  if (jsPages.length === 0) return findings;
+
+  // ------------------------------------------------------------
+  // js-rendering-required
+  // ------------------------------------------------------------
+  type Severity = 'critical' | 'important';
+  const flagged: { page: PageSEOData; severity: Severity }[] = [];
+  for (const p of jsPages) {
+    const staticW = p.staticWordCount ?? 0;
+    const renderedW = p.wordCount;
+    if (renderedW < JS_REQUIRED_IMPORTANT_RENDERED_MIN) continue;
+    if (staticW < JS_REQUIRED_CRITICAL_STATIC_MAX && renderedW >= JS_REQUIRED_CRITICAL_RENDERED_MIN) {
+      flagged.push({ page: p, severity: 'critical' });
+    } else if (renderedW >= JS_REQUIRED_IMPORTANT_RATIO * Math.max(staticW, 1)) {
+      flagged.push({ page: p, severity: 'important' });
+    }
+  }
+
+  if (flagged.length > 0) {
+    // Use the highest severity present in the cluster as the finding's
+    // priority; even one Critical-class page should escalate.
+    const priority: Severity = flagged.some(f => f.severity === 'critical') ? 'critical' : 'important';
+
+    const sample = flagged
+      .slice(0, 5)
+      .map(f => `${f.page.url} (Static ${f.page.staticWordCount} → Rendered ${f.page.wordCount} Wörter)`)
+      .join('; ');
+    const sampleEn = flagged
+      .slice(0, 5)
+      .map(f => `${f.page.url} (static ${f.page.staticWordCount} → rendered ${f.page.wordCount} words)`)
+      .join('; ');
+
+    findings.push({
+      id: id(), priority, module: 'tech', effort: 'high', impact: 'high',
+      title_de: `JavaScript-Rendering nötig für sichtbaren Inhalt: ${flagged.length} Seite(n)`,
+      title_en: `JavaScript rendering required for visible content: ${flagged.length} page(s)`,
+      description_de: `Diese Seiten sehen ohne JavaScript leer oder fast leer aus, liefern erst nach Hydration ihren Content. Googlebot rendert zwar JS (zweite Pass), aber die meisten AI-Retrieval-Bots (ChatGPT-User, PerplexityBot), Social-Preview-Crawler (Facebook, Slack, LinkedIn) und ältere Suchmaschinen sehen die statische Variante. Beispiele: ${sample}`,
+      description_en: `These pages look empty or near-empty without JavaScript and only ship their content after hydration. Googlebot does render JS (its second pass), but most AI-retrieval bots (ChatGPT-User, PerplexityBot), social-preview crawlers (Facebook, Slack, LinkedIn) and older search engines only see the static variant. Examples: ${sampleEn}`,
+      recommendation_de: 'Server-Side Rendering oder Static Generation einführen, sodass das initiale HTML bereits den Hauptinhalt enthält. Bei Next.js/Nuxt: getServerSideProps / generateStaticParams nutzen statt Client-only-Routes. Hydration ist erlaubt — nur darf der Inhalt nicht erst zur Hydration entstehen.',
+      recommendation_en: 'Move to Server-Side Rendering or Static Generation so the initial HTML already contains the main content. In Next.js/Nuxt: use getServerSideProps / generateStaticParams instead of client-only routes. Hydration is fine — what mustn\'t happen is content being created only at hydration time.',
+      affectedUrl: flagged[0].page.url,
+    });
+  }
+
+  // ------------------------------------------------------------
+  // js-console-errors
+  // ------------------------------------------------------------
+  const withErrors = jsPages.filter(p => (p.consoleErrors?.length ?? 0) > 0);
+  if (withErrors.length > 0) {
+    const totalErrors = withErrors.reduce((s, p) => s + (p.consoleErrors?.length ?? 0), 0);
+    const sample = withErrors.slice(0, 5).map(p => {
+      const first = p.consoleErrors?.[0] ?? '';
+      const truncated = first.length > 120 ? first.slice(0, 117) + '…' : first;
+      return `${p.url} (${p.consoleErrors!.length}× — z.B. "${truncated}")`;
+    }).join('; ');
+    const sampleEn = withErrors.slice(0, 5).map(p => {
+      const first = p.consoleErrors?.[0] ?? '';
+      const truncated = first.length > 120 ? first.slice(0, 117) + '…' : first;
+      return `${p.url} (${p.consoleErrors!.length}× — e.g. "${truncated}")`;
+    }).join('; ');
+
+    findings.push({
+      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: `JavaScript-Fehler beim Rendern auf ${withErrors.length} Seite(n) (insgesamt ${totalErrors})`,
+      title_en: `JavaScript errors during rendering on ${withErrors.length} page(s) (${totalErrors} total)`,
+      description_de: `Beim Headless-Browser-Render dieser Seiten wurden JavaScript-Fehler in Console oder als unhandled exceptions geworfen. Solche Fehler können bedeuten: kaputte Interaktivität (Buttons funktionieren nicht), kaputte Hydration (Indexer sieht inkonsistenten Content), oder kaputte Tracking-/Consent-Scripts. Beispiele: ${sample}`,
+      description_en: `When rendering these pages with the headless browser, JavaScript threw errors in the console or as unhandled exceptions. Such errors can mean: broken interactivity (buttons don't work), broken hydration (indexer sees inconsistent content), or broken tracking / consent scripts. Examples: ${sampleEn}`,
+      recommendation_de: 'Browser-DevTools-Console im normalen Browser öffnen und die genannten Seiten besuchen — die Fehler sollten reproduzieren. Stack-Traces im Code aufspüren, fehlerhafte Imports / null-Zugriffe / fehlende Polyfills beheben. Bei Drittanbieter-Scripts (Tracking, A/B-Test-Tools): mit dem Anbieter klären oder das Script gegebenenfalls entfernen.',
+      recommendation_en: 'Open browser DevTools console in a regular browser and visit the listed pages — the errors should reproduce. Trace stack traces in the code, fix broken imports / null accesses / missing polyfills. For third-party scripts (tracking, A/B-test tools): contact the vendor or remove the script if non-essential.',
+      affectedUrl: withErrors[0].url,
+    });
+  }
+
+  return findings;
+}
+
+
+// ============================================================
 //  WWW / NON-WWW CONSISTENCY FINDINGS (Block D1)
 // ============================================================
 export function generateWwwConsistencyFindings(info?: WwwConsistencyInfo): Finding[] {

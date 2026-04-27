@@ -558,5 +558,9 @@ export function extractPageSEO(page: PageData): PageSEOData {
     readabilityScore,
     readabilityLang,
     smallTouchTargetCount: countSmallTouchTargets(root),
+    renderMode: page.renderMode,
+    staticWordCount: page.staticWordCount,
+    consoleErrors: page.consoleErrors,
+    failedRequests: page.failedRequests,
   };
 }
