@@ -112,6 +112,7 @@ export default function AuditApp() {
   const [customHeadersText, setCustomHeadersText] = useState('');
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
+  const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -289,6 +290,7 @@ export default function AuditApp() {
         : undefined,
       customHeaders: parseHeaders(customHeadersText),
       imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
+      mobileDesktopParityCheck: mobileDesktopParity,
     };
 
     try {
@@ -526,6 +528,23 @@ export default function AuditApp() {
                 style={inputStyle}
               />
             </div>
+          </div>
+
+          {/* Mobile/Desktop content-parity opt-in */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={mobileDesktopParity}
+                onChange={e => setMobileDesktopParity(e.target.checked)}
+              />
+              <span style={{ fontSize: 13, fontWeight: 500 }}>
+                {t('Mobile/Desktop Content-Parität prüfen', 'Check Mobile/Desktop content parity')}
+              </span>
+              <span style={{ fontSize: 11, color: '#9b9b98' }}>
+                ({t('Top-10-Seiten je doppelt fetchen', 'fetches top-10 pages twice each')})
+              </span>
+            </label>
           </div>
 
           {/* Image-size HEAD probe */}

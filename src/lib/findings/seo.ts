@@ -1500,6 +1500,49 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
 
 
 // ============================================================
+//  MOBILE / DESKTOP CONTENT-PARITY FINDING
+// ============================================================
+// Mobile-first indexing: Google reads the mobile variant. A
+// significantly thinner mobile version drops the page's effective
+// ranking surface. The parity probe runs both Googlebot Mobile and
+// Desktop on a sample; we flag any page where the word counts
+// diverge by more than 20%.
+const PARITY_DIFF_THRESHOLD = 0.20;
+
+export function generateMobileDesktopParityFindings(
+  parity?: { url: string; mobileWords: number; desktopWords: number; diffRatio: number }[],
+): Finding[] {
+  const findings: Finding[] = [];
+  if (!parity || parity.length === 0) return findings;
+
+  const mismatched = parity
+    .filter(p => p.diffRatio > PARITY_DIFF_THRESHOLD)
+    .sort((a, b) => b.diffRatio - a.diffRatio);
+  if (mismatched.length === 0) return findings;
+
+  const sample = mismatched.slice(0, 5).map(p =>
+    `${p.url} (Mobile ${p.mobileWords} / Desktop ${p.desktopWords} Wörter, Δ${Math.round(p.diffRatio * 100)}%)`,
+  ).join('; ');
+  const sampleEn = mismatched.slice(0, 5).map(p =>
+    `${p.url} (mobile ${p.mobileWords} / desktop ${p.desktopWords} words, Δ${Math.round(p.diffRatio * 100)}%)`,
+  ).join('; ');
+
+  findings.push({
+    id: id(), priority: 'important', module: 'seo', effort: 'high', impact: 'high',
+    title_de: `Mobile/Desktop Content-Parität: ${mismatched.length} Seite(n) mit > ${Math.round(PARITY_DIFF_THRESHOLD * 100)}% Abweichung`,
+    title_en: `Mobile/Desktop content parity: ${mismatched.length} page(s) with > ${Math.round(PARITY_DIFF_THRESHOLD * 100)}% gap`,
+    description_de: `Die mobile Version dieser Seiten zeigt deutlich weniger sichtbaren Text als die Desktop-Version. Mobile-First Indexing bedeutet: Google rankt die mobile Variante, also fließt die kleinere Wortzahl ins Ranking ein — der "fehlende" Desktop-Content wird ignoriert. Beispiele: ${sample}`,
+    description_en: `The mobile version of these pages shows significantly less visible text than the desktop version. Mobile-first indexing means Google ranks the mobile variant, so the smaller word count is what counts — the "missing" desktop content is ignored for ranking. Examples: ${sampleEn}`,
+    recommendation_de: 'Sicherstellen, dass alle ranking-relevanten Inhalte auch im mobilen Markup direkt vorhanden sind — keine display:none-Sektionen, kein "Mehr anzeigen" das per JS Content lädt, keine Tabs die ausschließlich auf Desktop sichtbar sind. Lazy-Loading für Below-the-Fold-Content ist ok, solange er im initialen HTML steht.',
+    recommendation_en: 'Make sure every ranking-relevant block is present in the mobile markup directly — no display:none sections, no "Read more" that loads content via JS, no tabs that are only visible on desktop. Lazy-loading below-the-fold content is fine as long as it ships in the initial HTML.',
+    affectedUrl: mismatched[0].url,
+  });
+
+  return findings;
+}
+
+
+// ============================================================
 //  MIXED STRUCTURED-DATA FORMAT FINDING
 // ============================================================
 // Sites occasionally publish the same item in JSON-LD, Microdata AND

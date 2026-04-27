@@ -7,6 +7,7 @@ import {
   checkAIReadiness, fetchSitemap, checkWwwConsistency,
 } from '@/lib/external-checks';
 import { checkImageSizes } from '@/lib/external-image-sizes';
+import { checkMobileDesktopParity } from '@/lib/external-mobile-desktop-parity';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
@@ -25,7 +26,7 @@ import {
   generateTouchTargetFindings,
   generateWwwConsistencyFindings, generateXRobotsFindings,
   generatePixelWidthFindings, generateInsecureLinkFindings,
-  generateMixedStructuredDataFindings,
+  generateMixedStructuredDataFindings, generateMobileDesktopParityFindings,
   calculateModuleScore, getTopFindings
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
@@ -177,6 +178,12 @@ async function runAudit(
     ? await checkImageSizes(pages, imageProbeLimit, userAgent, authHeader, customHeaders)
     : undefined;
 
+  // ---- STEP 8c: Mobile/Desktop parity (opt-in, doubles fetch cost) ----
+  const paritySampleSize = config.mobileDesktopParitySampleSize ?? 10;
+  const mobileDesktopParity = config.mobileDesktopParityCheck
+    ? await checkMobileDesktopParity(pages, paritySampleSize, authHeader, customHeaders)
+    : undefined;
+
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
@@ -199,6 +206,7 @@ async function runAudit(
     allFindings.push(...generateXRobotsFindings(pages));
     allFindings.push(...generatePixelWidthFindings(pages));
     allFindings.push(...generateMixedStructuredDataFindings(pages));
+    allFindings.push(...generateMobileDesktopParityFindings(mobileDesktopParity));
   }
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
@@ -321,6 +329,7 @@ async function runAudit(
     wwwConsistency,
     pages,
     imageSizes,
+    mobileDesktopParity,
     topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,

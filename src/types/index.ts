@@ -58,6 +58,11 @@ export interface AuditConfig {
   // (when undefined) is 20 — enough to catch typical hero/listing
   // image weight without making the audit drag.
   imageHeadCheckLimit?: number;
+  // Opt-in mobile-vs-desktop content-parity probe. Doubles fetch
+  // count for the sampled pages — turn on when you suspect lazy-
+  // loaded content or hidden-by-default mobile sections.
+  mobileDesktopParityCheck?: boolean;
+  mobileDesktopParitySampleSize?: number; // default 10
 }
 
 export interface PageData {
@@ -365,6 +370,9 @@ export interface AuditResult {
   // HEAD-probed image sizes; undefined when the probe was disabled
   // (imageHeadCheckLimit === 0) or when no images were probeable.
   imageSizes?: { url: string; sizeBytes: number; contentType?: string }[];
+  // Mobile vs Desktop word-count parity for the sampled pages.
+  // Undefined when the probe was disabled or no comparable data.
+  mobileDesktopParity?: { url: string; mobileWords: number; desktopWords: number; diffRatio: number }[];
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;
