@@ -223,6 +223,11 @@ export interface PageSEOData {
   // or server-rendered output dominated by inline data — Google's
   // "content vs noise" heuristics tend to discount such pages.
   textHtmlRatio: number;
+  // Flesch Reading Ease (EN) / Flesch-Amstad (DE) score, 0-100.
+  // Higher = easier to read. Undefined when the page is too thin
+  // (< 200 visible words) for the metric to be meaningful.
+  readabilityScore?: number;
+  readabilityLang?: 'de' | 'en';
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
   redirectChain: string[]; // propagated from PageData

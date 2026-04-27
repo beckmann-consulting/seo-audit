@@ -1,5 +1,6 @@
 import type { Finding, PageSEOData } from '@/types';
 import { signatureJaccard, UnionFind } from '../util/text-similarity';
+import { readabilityThreshold } from '../util/readability';
 import { id } from './utils';
 
 // Threshold for the MinHash-based near-duplicate detection. 0.85 was
@@ -390,6 +391,45 @@ export function generateTextHtmlRatioFindings(pages: PageSEOData[]): Finding[] {
     recommendation_de: 'Markup-Overhead reduzieren: Inline-Scripts/Styles in externe Dateien auslagern, server-rendered Daten-Blobs nur dort einsetzen wo wirklich nötig, redundante Wrapper-Divs entfernen. Bei thin Content: tatsächlichen Inhalt ausbauen.',
     recommendation_en: 'Reduce markup overhead: move inline scripts/styles to external files, keep server-rendered data blobs only where actually needed, drop redundant wrapper divs. For thin content: expand the actual content.',
     affectedUrl: lowRatio[0].url,
+  });
+
+  return findings;
+}
+
+
+// ============================================================
+//  READABILITY (Flesch Reading Ease / Flesch-Amstad)
+// ============================================================
+// Pages whose Flesch score lands in the "difficult" / "schwer" band
+// or worse get flagged. Threshold differs by language because the
+// formulas are calibrated differently: 50 for English (Reading Ease)
+// and 30 for German (Amstad). Score + per-page threshold are computed
+// in the extractor; here we just bucket and aggregate.
+export function generateReadabilityFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  const hardToRead = pages.filter(p => {
+    if (p.readabilityScore === undefined || !p.readabilityLang) return false;
+    return p.readabilityScore < readabilityThreshold(p.readabilityLang);
+  });
+  if (hardToRead.length === 0) return findings;
+
+  const sample = hardToRead.slice(0, 5).map(p =>
+    `${p.url} (${p.readabilityScore}, ${p.readabilityLang!.toUpperCase()})`
+  ).join(', ');
+
+  // Mention both threshold lines so the reader doesn't have to recall
+  // which language uses which cut-off.
+  findings.push({
+    id: id(), priority: 'optional', module: 'content', effort: 'high', impact: 'medium',
+    title_de: `Schwer lesbarer Inhalt auf ${hardToRead.length} Seite(n)`,
+    title_en: `Hard-to-read content on ${hardToRead.length} page(s)`,
+    description_de: `Der Flesch-Lesbarkeits-Score liegt unter dem Grenzwert (DE: 30 Flesch-Amstad, EN: 50 Reading Ease) — der Text liest sich auf Hochschul-/Fachpublikum-Niveau. Nicht zwangsläufig falsch (Fachartikel, Whitepaper, juristische Texte), aber für ein breites Publikum ein Hindernis. Beispiele: ${sample}`,
+    description_en: `Flesch readability falls below the threshold (DE: 30 Flesch-Amstad, EN: 50 Reading Ease) — the text reads at college/specialist level. Not always wrong (specialist articles, whitepapers, legal texts), but a barrier for broad audiences. Examples: ${sample}`,
+    recommendation_de: 'Sätze kürzen (Ziel: ≤ 20 Wörter pro Satz im Schnitt), lange Wörter durch kürzere Synonyme ersetzen wo passend, aktive statt passive Konstruktionen, Fachbegriffe beim ersten Vorkommen kurz erklären.',
+    recommendation_en: 'Shorten sentences (target: average ≤ 20 words per sentence), replace long words with shorter synonyms where it fits, prefer active over passive voice, briefly explain jargon on first use.',
+    affectedUrl: hardToRead[0].url,
   });
 
   return findings;

@@ -6,11 +6,19 @@ import { extractMicrodata, extractRdfa, hasMicrodata, hasRdfa } from './structur
 import {
   normalizeBodyText, fnv1aHex, buildShingles, minhashSignature,
 } from './util/text-similarity';
+import {
+  fleschReadingEase, pickReadabilityLang,
+} from './util/readability';
 
 // Pages with fewer words than this skip duplicate fingerprinting —
 // shingling needs ≥ k words to produce anything, and very thin pages
 // are flagged separately by content-length checks anyway.
 const MIN_WORDS_FOR_FINGERPRINT = 50;
+
+// Flesch scoring is only meaningful on prose-length samples. Below
+// this we'd be measuring noise (a single 50-word paragraph can score
+// anywhere from 20 to 90 just based on which words appear).
+const MIN_WORDS_FOR_READABILITY = 200;
 
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
@@ -304,6 +312,16 @@ export function extractPageSEO(page: PageData): PageSEOData {
     bodyMinhash = minhashSignature(buildShingles(normalised));
   }
 
+  // Readability: Flesch Reading Ease (EN) / Flesch-Amstad (DE).
+  // Computed from the visible body text once we know we have enough
+  // of it. Language is inferred from <html lang>; default English.
+  let readabilityScore: number | undefined;
+  let readabilityLang: 'de' | 'en' | undefined;
+  if (wordCount >= MIN_WORDS_FOR_READABILITY) {
+    readabilityLang = pickReadabilityLang(lang);
+    readabilityScore = fleschReadingEase(bodyText, readabilityLang);
+  }
+
   // Text-to-HTML ratio: visible body text length divided by raw HTML
   // length. Walking the DOM and skipping script/style/noscript children
   // is necessary because node-html-parser's body.text concatenates
@@ -536,5 +554,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     bodyTextHash,
     bodyMinhash,
     textHtmlRatio,
+    readabilityScore,
+    readabilityLang,
   };
 }
