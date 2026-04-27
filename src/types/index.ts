@@ -211,6 +211,13 @@ export interface PageSEOData {
   hasJsonLd: boolean;
   hasMicrodata: boolean;
   hasRdfa: boolean;
+  // Body-content fingerprints for duplicate / near-duplicate detection.
+  // bodyTextHash is FNV-1a hex over normalised body text — equality means
+  // exact-duplicate content. bodyMinhash is a fixed-length MinHash
+  // signature for fast near-duplicate clustering. Both are empty strings /
+  // arrays for pages too thin to fingerprint (wordCount < 50).
+  bodyTextHash: string;
+  bodyMinhash: number[];
   depth: number; // propagated from PageData
   inlinkCount?: number; // set after cross-page analysis
   redirectChain: string[]; // propagated from PageData

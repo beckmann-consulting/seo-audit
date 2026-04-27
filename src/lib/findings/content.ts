@@ -1,5 +1,17 @@
 import type { Finding, PageSEOData } from '@/types';
+import { signatureJaccard, UnionFind } from '../util/text-similarity';
 import { id } from './utils';
+
+// Threshold for the MinHash-based near-duplicate detection. 0.85 was
+// chosen because at K=64 the standard error is ~0.05, so true J=0.80
+// pairs almost never trigger and true J=0.90 pairs almost always do.
+const NEAR_DUPLICATE_THRESHOLD = 0.85;
+
+// Hard cap on the pairwise-comparison work. Past this size the O(n²)
+// loop dominates audit time; the prompt explicitly OK'd skipping
+// optimisation here, so for very large crawls we degrade gracefully
+// to exact-duplicate detection only.
+const NEAR_DUPLICATE_MAX_PAGES = 500;
 
 // ============================================================
 //  CONTENT FINDINGS
@@ -210,6 +222,126 @@ export function generateImageDetailFindings(pages: PageSEOData[]): Finding[] {
       description_en: 'Large images without srcset are served at full desktop resolution on mobile — unnecessary download, slow LCP.',
       recommendation_de: 'srcset und sizes-Attribute ergänzen, oder auf <picture> umstellen. Moderne Image-Services (Cloudinary, imgix, Next/image) übernehmen das automatisch.',
       recommendation_en: 'Add srcset and sizes attributes, or switch to <picture>. Modern image services (Cloudinary, imgix, Next/image) handle this automatically.',
+    });
+  }
+
+  return findings;
+}
+
+
+// ============================================================
+//  BODY-CONTENT DUPLICATE / NEAR-DUPLICATE FINDINGS
+// ============================================================
+// Two flavours, both with cluster output (not pairs):
+// - exact-duplicate-content (Important): every page in the cluster
+//   shares one bodyTextHash — i.e. the normalised body text is byte-
+//   identical across all of them.
+// - near-duplicate-content (Recommended): clusters where the pages
+//   are linked by ≥ 0.85 Jaccard similarity (MinHash-estimated) but
+//   contain at least two distinct hashes — typical "almost-the-same"
+//   templates / cannibalising listings.
+//
+// Algorithm:
+//   1. Bucket pages by bodyTextHash (drops the all-pairs cost for
+//      identical-content groups; one representative per bucket suffices
+//      for near-dup analysis).
+//   2. Pairwise Jaccard between bucket reps. Edges of similarity ≥ 0.85
+//      union the buckets in a UnionFind.
+//   3. Each merged group becomes a cluster of pages (re-expand from
+//      buckets). Classify by hash diversity:
+//        size ≥ 2 + one distinct hash  → exact cluster
+//        size ≥ 2 + multiple hashes    → near cluster
+//   4. Emit one Important finding aggregating all exact clusters and
+//      one Recommended finding aggregating all near clusters.
+export function generateBodyDuplicateFindings(pages: PageSEOData[]): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length < 2) return findings;
+
+  // Only pages that produced a fingerprint (≥ 50 words). Thin pages
+  // are flagged separately and their sparse shingle sets would
+  // produce noisy similarity values.
+  const candidates = pages.filter(p => p.bodyTextHash && p.bodyMinhash.length > 0);
+  if (candidates.length < 2) return findings;
+
+  // --- Hash bucketing: collapses identical-content groups into one rep ---
+  const hashBuckets = new Map<string, PageSEOData[]>();
+  for (const p of candidates) {
+    const list = hashBuckets.get(p.bodyTextHash) ?? [];
+    list.push(p);
+    hashBuckets.set(p.bodyTextHash, list);
+  }
+  const buckets = [...hashBuckets.values()];
+  const reps = buckets.map(list => list[0]);
+
+  // --- Pairwise near-dup edges between representatives ---
+  const dsu = new UnionFind(reps.length);
+  if (reps.length <= NEAR_DUPLICATE_MAX_PAGES) {
+    for (let i = 0; i < reps.length; i++) {
+      for (let j = i + 1; j < reps.length; j++) {
+        const sim = signatureJaccard(reps[i].bodyMinhash, reps[j].bodyMinhash);
+        if (sim >= NEAR_DUPLICATE_THRESHOLD) {
+          dsu.union(i, j);
+        }
+      }
+    }
+  }
+  // (When reps.length exceeds the cap, no near edges are added — exact
+  //  buckets are still surfaced because hash bucketing happened before.)
+
+  // --- Expand rep-clusters into full page-clusters and classify ---
+  const exactClusters: PageSEOData[][] = [];
+  const nearClusters: PageSEOData[][] = [];
+  for (const group of dsu.groups()) {
+    const cluster: PageSEOData[] = [];
+    const distinctHashes = new Set<string>();
+    for (const idx of group) {
+      const bucket = buckets[idx];
+      cluster.push(...bucket);
+      distinctHashes.add(reps[idx].bodyTextHash);
+    }
+    if (cluster.length < 2) continue;
+    if (distinctHashes.size === 1) exactClusters.push(cluster);
+    else nearClusters.push(cluster);
+  }
+
+  const renderClusterSample = (clusters: PageSEOData[][], moreLabel: string): string =>
+    clusters.slice(0, 3).map(cluster => {
+      const urls = cluster.slice(0, 3).map(p => p.url).join(', ');
+      const more = cluster.length > 3 ? ` (+${cluster.length - 3} ${moreLabel})` : '';
+      return `[${urls}${more}]`;
+    }).join(' | ');
+
+  if (exactClusters.length > 0) {
+    const totalPages = exactClusters.reduce((s, c) => s + c.length, 0);
+    const sampleDe = renderClusterSample(exactClusters, 'weitere');
+    const sampleEn = renderClusterSample(exactClusters, 'more');
+
+    findings.push({
+      id: id(), priority: 'important', module: 'content', effort: 'medium', impact: 'high',
+      title_de: `Exakte Inhalts-Duplikate: ${exactClusters.length} Cluster mit ${totalPages} Seiten`,
+      title_en: `Exact content duplicates: ${exactClusters.length} cluster(s), ${totalPages} pages`,
+      description_de: `Mehrere URLs liefern denselben Body-Text aus. Google indexiert nur eine Variante und kann die "kanonische" willkürlich wählen — die Ranking-Signale verteilen sich. Cluster: ${sampleDe}`,
+      description_en: `Multiple URLs serve the same body text. Google will only index one variant and may pick the canonical arbitrarily — ranking signals are diluted. Clusters: ${sampleEn}`,
+      recommendation_de: 'Pro Cluster eine bevorzugte URL festlegen und die anderen per 301 darauf weiterleiten ODER Canonical-Tag auf die bevorzugte URL setzen. Häufige Ursachen: Trailing-Slash-Varianten, Tracking-Parameter, Großbuchstaben-Varianten, Tag-/Kategorie-Listings die identische Posts ausspielen.',
+      recommendation_en: 'For each cluster, pick one preferred URL and 301-redirect the others to it OR set a canonical tag pointing at the preferred URL. Common causes: trailing slash variants, tracking parameters, uppercase variants, tag/category listings showing the same posts.',
+      affectedUrl: exactClusters[0][0].url,
+    });
+  }
+
+  if (nearClusters.length > 0) {
+    const totalPages = nearClusters.reduce((s, c) => s + c.length, 0);
+    const sampleDe = renderClusterSample(nearClusters, 'weitere');
+    const sampleEn = renderClusterSample(nearClusters, 'more');
+
+    findings.push({
+      id: id(), priority: 'recommended', module: 'content', effort: 'high', impact: 'medium',
+      title_de: `Sehr ähnliche Inhalte: ${nearClusters.length} Cluster mit ${totalPages} Seiten`,
+      title_en: `Near-duplicate content: ${nearClusters.length} cluster(s), ${totalPages} pages`,
+      description_de: `Body-Texte überlappen zu ≥ 85% (Jaccard auf 8-Wort-Shingles, MinHash-geschätzt). Typische Ursachen: Boilerplate-lastige Templates, automatisch generierte Listing-Seiten, leichte Variationen derselben Geschichte. Google clustert solche Seiten oft zu einer "Cannibalization"-Gruppe und wählt die schwächste als Repräsentanten. Cluster: ${sampleDe}`,
+      description_en: `Body texts overlap by ≥ 85% (Jaccard on 8-word shingles, MinHash-estimated). Typical causes: boilerplate-heavy templates, auto-generated listing pages, slight variations of the same story. Google often clusters such pages into a "cannibalization" group and picks the weakest as representative. Clusters: ${sampleEn}`,
+      recommendation_de: 'Pro Cluster entscheiden: zu einer kanonischen Version konsolidieren (Konkurrenten via Canonical/301 darauf zeigen lassen), Inhalte differenzieren (mehr eigenständigen Text), oder als bewusst paginierte/gefilterte Listen mit noindex versehen.',
+      recommendation_en: 'Per cluster decide: consolidate into one canonical version (have competitors point at it via canonical/301), differentiate content (more unique text), or noindex deliberately paginated/filtered listings.',
+      affectedUrl: nearClusters[0][0].url,
     });
   }
 

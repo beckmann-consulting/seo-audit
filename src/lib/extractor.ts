@@ -3,6 +3,14 @@ import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 import { parseXRobotsTag, xRobotsImpliesNoindex } from './util/x-robots';
 import { measurePixelWidth } from './util/pixel-width';
 import { extractMicrodata, extractRdfa, hasMicrodata, hasRdfa } from './structured-data';
+import {
+  normalizeBodyText, fnv1aHex, buildShingles, minhashSignature,
+} from './util/text-similarity';
+
+// Pages with fewer words than this skip duplicate fingerprinting —
+// shingling needs ≥ k words to produce anything, and very thin pages
+// are flagged separately by content-length checks anyway.
+const MIN_WORDS_FOR_FINGERPRINT = 50;
 
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
@@ -285,6 +293,17 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const wordCount = bodyText.split(' ').filter(w => w.length > 2).length;
   const bodyTextSample = bodyText.slice(0, 2000);
 
+  // Body fingerprints for duplicate detection. We compute these here
+  // (where the full body text is in scope) and only retain the hash +
+  // signature on PageSEOData, not the source text.
+  let bodyTextHash = '';
+  let bodyMinhash: number[] = [];
+  if (wordCount >= MIN_WORDS_FOR_FINGERPRINT) {
+    const normalised = normalizeBodyText(bodyText);
+    bodyTextHash = fnv1aHex(normalised);
+    bodyMinhash = minhashSignature(buildShingles(normalised));
+  }
+
   // Mobile usability: scan inline styles for fixed widths > 400px and small fonts < 12px
   let fixedWidthElements = 0;
   let smallFontElements = 0;
@@ -491,5 +510,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasJsonLd,
     hasMicrodata: pageHasMicrodata,
     hasRdfa: pageHasRdfa,
+    bodyTextHash,
+    bodyMinhash,
   };
 }
