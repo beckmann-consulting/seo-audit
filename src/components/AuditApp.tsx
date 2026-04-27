@@ -110,6 +110,7 @@ export default function AuditApp() {
   const [basicAuthUser, setBasicAuthUser] = useState('');
   const [basicAuthPass, setBasicAuthPass] = useState('');
   const [customHeadersText, setCustomHeadersText] = useState('');
+  const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
@@ -362,10 +363,24 @@ export default function AuditApp() {
     if (!result) return;
     const { serialiseJsonExport, exportFilename } = await import('@/lib/audit-export');
     const blob = new Blob([serialiseJsonExport(result)], { type: 'application/json' });
+    triggerDownload(blob, exportFilename(result));
+  }
+
+  async function downloadCsv() {
+    if (!result) return;
+    const { buildCsvExport, csvFilename } = await import('@/lib/audit-csv');
+    const csv = buildCsvExport(result, csvTable, lang);
+    // text/csv;charset=utf-8 + the BOM in the payload makes Excel
+    // pick up the encoding without the "Text Import Wizard" prompt.
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    triggerDownload(blob, csvFilename(result, csvTable));
+  }
+
+  function triggerDownload(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = exportFilename(result);
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1088,7 +1103,21 @@ export default function AuditApp() {
           )}
 
           {/* Exports */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e0ddd8', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e0ddd8', flexWrap: 'wrap', alignItems: 'center' }}>
+            <select
+              value={csvTable}
+              onChange={e => setCsvTable(e.target.value as typeof csvTable)}
+              style={{ ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: 12 }}
+              title={t('Tabelle für CSV-Export wählen', 'Pick CSV export table')}
+            >
+              <option value="findings">{t('Findings', 'Findings')}</option>
+              <option value="pages">{t('Seiten', 'Pages')}</option>
+              <option value="broken-links">{t('Defekte Links', 'Broken links')}</option>
+              <option value="error-pages">{t('Fehlerseiten', 'Error pages')}</option>
+              <option value="sitemap-urls">{t('Sitemap-URLs', 'Sitemap URLs')}</option>
+              <option value="redirects">{t('Weiterleitungen', 'Redirects')}</option>
+            </select>
+            <button onClick={downloadCsv} style={btnStyle}>📊 CSV</button>
             <button onClick={downloadJson} style={btnStyle} title={t('Vollständiger Audit-Datensatz als JSON', 'Full audit dataset as JSON')}>
               {'{ } JSON'}
             </button>
