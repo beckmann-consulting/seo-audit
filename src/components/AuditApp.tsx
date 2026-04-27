@@ -358,6 +358,20 @@ export default function AuditApp() {
     setModules(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
   }
 
+  async function downloadJson() {
+    if (!result) return;
+    const { serialiseJsonExport, exportFilename } = await import('@/lib/audit-export');
+    const blob = new Blob([serialiseJsonExport(result)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFilename(result);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   async function downloadPDF(pdfLang: Lang) {
     if (!result) return;
     const { generatePDF } = await import('@/lib/pdf-generator');
@@ -1073,8 +1087,11 @@ export default function AuditApp() {
             </div>
           )}
 
-          {/* PDF export */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e0ddd8' }}>
+          {/* Exports */}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e0ddd8', flexWrap: 'wrap' }}>
+            <button onClick={downloadJson} style={btnStyle} title={t('Vollständiger Audit-Datensatz als JSON', 'Full audit dataset as JSON')}>
+              {'{ } JSON'}
+            </button>
             <button onClick={() => downloadPDF('de')} style={btnStyle}>📄 PDF Deutsch</button>
             <button onClick={() => downloadPDF('en')} style={btnStyle}>📄 PDF English</button>
           </div>
