@@ -6,6 +6,19 @@
 // the entire Google Discovery client (~30 MB tree-shake-resistant)
 // and we only need two endpoints. Direct fetch keeps the bundle
 // small and the failure modes obvious.
+//
+// TODO(rate-limit): GSC's published quotas are 1,200 QPM per
+// property and 30,000 QPD per project. Each audit issues 4 calls
+// (1× listSites + 3× searchAnalytics) so realistic concurrency on
+// twb-server doesn't come close to the limits — but if we ever
+// add scheduled-audit fan-out (Phase J), we should:
+//   1. Honour the Retry-After header on 429 responses
+//   2. Add exponential-backoff retry for 429 / 503 (max 3 attempts)
+//   3. Surface per-project quota usage to the operator
+// For now: errors are propagated as-is via GscApiError. The
+// fetchGscData orchestrator already maps them to userError vs
+// operator-error and the route then turns api-errors into a
+// graceful gscResult.state = 'api-error'.
 
 const SC_BASE = 'https://searchconsole.googleapis.com/webmasters/v3';
 

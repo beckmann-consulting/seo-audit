@@ -38,6 +38,8 @@ import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
 import { StaticRenderer } from '@/lib/renderer';
 import type { JsRenderer, Renderer } from '@/lib/renderer';
 import { captureScreenshotsForAudit } from '@/lib/screenshots';
+import { resolveGscResult } from '@/lib/external-gsc/route-helper';
+import type { GscResult } from '@/types';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -201,6 +203,17 @@ async function runAudit(
     ? await captureScreenshotsForAudit(renderer as JsRenderer, pages)
     : undefined;
 
+  // ---- STEP 8e: Google Search Console ----
+  // Always populates a gscResult — even a "disabled" entry — so the
+  // UI can render the right banner without ambiguity. Three failure
+  // states (no token, property-not-found, api-error) all produce
+  // a successful audit; only the headline tab gets a different hint.
+  progress('gsc_fetch', 88);
+  const gscResult: GscResult = await resolveGscResult({
+    domain,
+    refreshToken: process.env.GSC_REFRESH_TOKEN,
+  });
+
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
@@ -353,6 +366,7 @@ async function runAudit(
     imageSizes,
     mobileDesktopParity,
     screenshots,
+    gscResult,
     topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,

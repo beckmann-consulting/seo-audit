@@ -22,44 +22,33 @@ import {
   GscApiError,
   listSites,
   querySearchAnalytics,
-  type SearchAnalyticsRow,
 } from './client';
-import {
-  resolveGscProperty,
-  type GscPropertyVariant,
-  type ResolvedProperty,
-} from './property-resolver';
+import { resolveGscProperty } from './property-resolver';
+import type { GscData, GscTotals } from '@/types';
 
 export type { GscAuth } from './auth';
 export { describeVariant } from './property-resolver';
-export type { GscPropertyVariant, ResolvedProperty } from './property-resolver';
 
-export interface GscTotals {
-  clicks: number;
-  impressions: number;
-  ctr: number;
-  position: number;
-}
-
-export interface GscData {
-  resolved: ResolvedProperty;
-  startDate: string;
-  endDate: string;
-  totals: GscTotals;
-  topQueries: SearchAnalyticsRow[];   // dimensions: ['query'], top by clicks
-  topPages: SearchAnalyticsRow[];     // dimensions: ['page'],  top by impressions
-}
-
+// Internal Result-shape used by fetchGscData — the route maps this
+// to the user-facing GscResult discriminated union in @/types.
 export type GscFetchResult =
   | { ok: true; data: GscData }
-  | { ok: false; error: string; userError: boolean };
+  | { ok: false; error: string; userError: boolean; sitesAvailable?: number };
 
-const QUERY_ROW_LIMIT = 50;
-const PAGE_ROW_LIMIT = 200;
+// Symmetric row limits for queries + pages — easier on the eyes
+// in the UI tables and 100 covers the vast majority of audits.
+const QUERY_ROW_LIMIT = 100;
+const PAGE_ROW_LIMIT = 100;
 
 // 28-day window matches the GSC UI default and gives stable
 // percentile numbers even for low-traffic sites.
 const LOOKBACK_DAYS = 28;
+
+// 2-day backoff from today: GSC's documented data-lag is "up to
+// 4 days" but typical 2 days. With dataState='final' below, we
+// only see fully-settled data — no fresh-data leak. 2 days keeps
+// the window as current as practical.
+const DATA_LAG_DAYS = 2;
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -67,10 +56,7 @@ function isoDate(d: Date): string {
 
 function dateRange(): { startDate: string; endDate: string } {
   const end = new Date();
-  // GSC data is delayed ~3 days; back off so we don't query a
-  // partial-data window. Without this, the latest 1-2 days return
-  // zero impressions and skew the totals.
-  end.setUTCDate(end.getUTCDate() - 3);
+  end.setUTCDate(end.getUTCDate() - DATA_LAG_DAYS);
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - LOOKBACK_DAYS + 1);
   return { startDate: isoDate(start), endDate: isoDate(end) };
@@ -103,6 +89,7 @@ export async function fetchGscData(domain: string, auth: GscAuth): Promise<GscFe
       ok: false,
       error: `Domain "${domain}" is not in your Search Console account. Add the property in https://search.google.com/search-console and re-run.`,
       userError: true,
+      sitesAvailable: sites.length,
     };
   }
 
@@ -112,19 +99,28 @@ export async function fetchGscData(domain: string, auth: GscAuth): Promise<GscFe
   // top pages. The GSC API has no per-key rate limit beyond ~1200 QPM
   // per project; three concurrent calls are fine.
   try {
+    // dataState: 'final' + searchType: 'web' set explicitly on every
+    // call — the API defaults today are 'final' / 'web' but we
+    // document intent and protect against future default changes.
     const [totalsRows, queryRows, pageRows] = await Promise.all([
       querySearchAnalytics(accessToken, resolved.siteUrl, {
         startDate, endDate,
+        dataState: 'final',
+        searchType: 'web',
       }),
       querySearchAnalytics(accessToken, resolved.siteUrl, {
         startDate, endDate,
         dimensions: ['query'],
         rowLimit: QUERY_ROW_LIMIT,
+        dataState: 'final',
+        searchType: 'web',
       }),
       querySearchAnalytics(accessToken, resolved.siteUrl, {
         startDate, endDate,
         dimensions: ['page'],
         rowLimit: PAGE_ROW_LIMIT,
+        dataState: 'final',
+        searchType: 'web',
       }),
     ]);
 

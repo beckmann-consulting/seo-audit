@@ -375,6 +375,62 @@ export interface PageSEOData {
   xRobotsBotSpecific: { bot: string; directives: string[] }[]; // bot-prefixed rules (e.g. 'googlebot: noindex')
 }
 
+// ============================================================
+//  Google Search Console (Phase G1)
+// ============================================================
+// The route always populates AuditResult.gscResult — even when GSC
+// is disabled — so the UI can render the right banner without
+// having to distinguish "GSC was never tried" from "GSC tried and
+// produced no data". Four states cover every code path:
+//
+//   disabled            — GSC_REFRESH_TOKEN not set in env. Audit
+//                         ran without GSC by design.
+//   property-not-found  — token set, but the audit's domain has no
+//                         matching property in the user's GSC list.
+//                         Surfaced as info, not error.
+//   api-error           — token + property OK, but the GSC API
+//                         returned 5xx / network error. Audit still
+//                         completes; UI shows a warning.
+//   ok                  — happy path. data carries the GscData payload.
+//
+// All four states result in a successful (200, status='ok') audit.
+export interface GscTotals {
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface GscRow {
+  keys?: string[];
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export type GscPropertyVariant = 'domain' | 'https' | 'http' | 'https-www' | 'http-www';
+
+export interface GscResolvedProperty {
+  siteUrl: string;
+  variant: GscPropertyVariant;
+}
+
+export interface GscData {
+  resolved: GscResolvedProperty;
+  startDate: string;
+  endDate: string;
+  totals: GscTotals;
+  topQueries: GscRow[];
+  topPages: GscRow[];
+}
+
+export type GscResult =
+  | { state: 'disabled' }
+  | { state: 'property-not-found'; domain: string; sitesAvailable: number }
+  | { state: 'api-error'; message: string }
+  | { state: 'ok'; data: GscData };
+
 export interface WwwConsistencyInfo {
   canonicalUrl: string;
   variantUrl: string;
@@ -412,6 +468,9 @@ export interface AuditResult {
   // JS-mode screenshots (base64-encoded PNGs). Undefined when the
   // capture was disabled or static mode was used.
   screenshots?: { url: string; mobileBase64?: string; desktopBase64?: string }[];
+  // Search Console state — always present once G1b ships; one of
+  // disabled / property-not-found / api-error / ok. See GscResult.
+  gscResult?: GscResult;
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;
