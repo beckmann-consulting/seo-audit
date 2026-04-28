@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAgentPreset } from '@/types';
+import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAgentPreset, StreamEvent } from '@/types';
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
 
@@ -126,6 +126,10 @@ export default function AuditApp() {
   const [progressDetail, setProgressDetail] = useState('');
   const [result, setResult] = useState<AuditResult | null>(null);
   const [error, setError] = useState('');
+  // Mid-stream warnings (non-fatal). Type-derived from StreamEvent
+  // via Extract so adding new SSE-warning fields doesn't require a
+  // second declaration here.
+  const [warnings, setWarnings] = useState<Extract<StreamEvent, { type: 'warning' }>[]>([]);
   const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'prompt'>('findings');
   const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   const [showConfig, setShowConfig] = useState(true);
@@ -164,10 +168,8 @@ export default function AuditApp() {
     complete: { de: 'Fertig!', en: 'Done!' },
   };
 
-  type StreamEvent =
-    | { type: 'progress'; step: string; percent: number; detail?: string }
-    | { type: 'result'; payload: AuditResult }
-    | { type: 'error'; message: string };
+  // StreamEvent comes from @/types — single source of truth shared
+  // with the route handler.
 
   function applyStreamEvent(ev: StreamEvent) {
     if (ev.type === 'progress') {
@@ -176,6 +178,11 @@ export default function AuditApp() {
       if (label) setProgressText(isDE ? label.de : label.en);
       else setProgressText(ev.step);
       setProgressDetail(ev.detail || '');
+    } else if (ev.type === 'warning') {
+      // Non-fatal mid-stream notice (e.g. GSC API blip). Collected
+      // into typed state so G1d's Search Console tab can render
+      // them; until then they live in state without UI rendering.
+      setWarnings(w => [...w, ev]);
     } else if (ev.type === 'result') {
       setResult(ev.payload);
       setActiveTab('findings');
@@ -254,6 +261,7 @@ export default function AuditApp() {
     setLoading(true);
     setError('');
     setResult(null);
+    setWarnings([]); // ephemeral per audit run — do not persist across audits
     setShowConfig(false);
     setProgress(2);
     setProgressText(t('Audit startet…', 'Starting audit…'));

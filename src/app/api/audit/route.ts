@@ -38,8 +38,8 @@ import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
 import { StaticRenderer } from '@/lib/renderer';
 import type { JsRenderer, Renderer } from '@/lib/renderer';
 import { captureScreenshotsForAudit } from '@/lib/screenshots';
-import { resolveGscResult } from '@/lib/external-gsc/route-helper';
-import type { GscResult } from '@/types';
+import { resolveGscResult, emitGscWarning } from '@/lib/external-gsc/route-helper';
+import type { GscResult, StreamEvent } from '@/types';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -55,10 +55,8 @@ const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   offers: { de: 'Angebote', en: 'Offers' },
 };
 
-type StreamEvent =
-  | { type: 'progress'; step: string; percent: number; detail?: string }
-  | { type: 'result'; payload: AuditResult }
-  | { type: 'error'; message: string };
+// StreamEvent is centralised in @/types so client and server can't
+// drift. See the import at the top.
 
 function encodeSSE(event: StreamEvent): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
@@ -213,6 +211,10 @@ async function runAudit(
     domain,
     refreshToken: process.env.GSC_REFRESH_TOKEN,
   });
+  // Live warning during the SSE stream when GSC's API hiccupped
+  // (state='api-error'). The other three states are intentional
+  // outcomes that the final result banner already covers.
+  emitGscWarning(gscResult, send);
 
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);

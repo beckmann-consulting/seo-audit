@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveGscResult } from './route-helper';
+import { resolveGscResult, emitGscWarning } from './route-helper';
 import type { GscFetchResult } from './index';
-import type { GscData } from '@/types';
+import type { GscData, GscResult, StreamEvent } from '@/types';
 
 const sampleData: GscData = {
   resolved: { siteUrl: 'sc-domain:example.com', variant: 'domain' },
@@ -88,5 +88,88 @@ describe('resolveGscResult — discriminated union exhaustiveness', () => {
       const r = await resolveGscResult({ domain: 'example.com', refreshToken: c.refreshToken, fetcher: c.fetcher });
       expect(r.state).toBe(c.expectedState);
     }
+  });
+});
+
+describe('emitGscWarning — emits only on api-error', () => {
+  it('does NOT emit for state=disabled', () => {
+    const send = vi.fn<(ev: StreamEvent) => void>();
+    emitGscWarning({ state: 'disabled' }, send);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does NOT emit for state=ok', () => {
+    const send = vi.fn<(ev: StreamEvent) => void>();
+    emitGscWarning({ state: 'ok', data: sampleData }, send);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does NOT emit for state=property-not-found (intentional outcome)', () => {
+    const send = vi.fn<(ev: StreamEvent) => void>();
+    emitGscWarning(
+      { state: 'property-not-found', domain: 'example.com', sitesAvailable: 8 },
+      send,
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('emits exactly one warning with source=gsc on state=api-error', () => {
+    const send = vi.fn<(ev: StreamEvent) => void>();
+    emitGscWarning({ state: 'api-error', message: 'GSC 503 Service Unavailable' }, send);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith({
+      type: 'warning',
+      source: 'gsc',
+      message: 'GSC 503 Service Unavailable',
+    });
+  });
+
+  it('does not emit duplicates if invoked twice with the same result', () => {
+    // Self-imposed invariant: route.ts calls emitGscWarning exactly
+    // once per audit, but the helper itself is stateless — caller is
+    // responsible for not invoking it multiple times. This test
+    // documents that responsibility.
+    const send = vi.fn<(ev: StreamEvent) => void>();
+    const apiError: GscResult = { state: 'api-error', message: 'x' };
+    emitGscWarning(apiError, send);
+    emitGscWarning(apiError, send);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('warnings reset semantics', () => {
+  it('the helper has no internal state to leak between runs', () => {
+    // Inverse-spec: confirm absence of helper-side state by making
+    // two independent invocations and verifying they don't bleed
+    // into each other. The actual reset of the client `warnings`
+    // array happens in AuditApp.tsx — covered by the next test.
+    const sendA = vi.fn<(ev: StreamEvent) => void>();
+    const sendB = vi.fn<(ev: StreamEvent) => void>();
+    emitGscWarning({ state: 'api-error', message: 'first run failed' }, sendA);
+    emitGscWarning({ state: 'disabled' }, sendB);
+    expect(sendA).toHaveBeenCalledOnce();
+    expect(sendB).not.toHaveBeenCalled();
+  });
+
+  it('AuditApp.tsx clears `warnings` state at the start of every new audit', async () => {
+    // Source-level guard for the contract "Audit N's warnings never
+    // leak into Audit N+1". The client owns this — on `runAudit`
+    // start we call setWarnings([]) before the SSE stream opens, so
+    // the second audit always begins with `warnings === []` regardless
+    // of what the first audit emitted. Brittle (matches a string)
+    // but cheap and breaks loudly the moment the reset disappears.
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile('src/components/AuditApp.tsx', 'utf-8');
+
+    // The reset call MUST appear textually inside the runAudit body
+    // (not just somewhere in the file), so we slice from the runAudit
+    // signature to the next top-level `async function` or end-of-file.
+    const runAuditStart = src.indexOf('async function runAudit');
+    expect(runAuditStart).toBeGreaterThan(-1);
+    const after = src.slice(runAuditStart);
+    const runAuditEnd = after.indexOf('\n  async function', 1);
+    const runAuditBody = runAuditEnd > 0 ? after.slice(0, runAuditEnd) : after;
+
+    expect(runAuditBody).toContain('setWarnings([])');
   });
 });

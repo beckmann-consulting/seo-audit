@@ -496,3 +496,17 @@ export interface AuditProgress {
   percent: number;
   detail?: string;
 }
+
+// SSE event union sent from /api/audit to the client. Single source
+// of truth — both route.ts and AuditApp.tsx import it from here so
+// the schema can't drift between server and client.
+//
+// `warning` is non-fatal: emitted mid-stream when an external API
+// fails in a way the user should know about, but the audit itself
+// completes. The optional `source` lets the client filter or label
+// (currently 'gsc'; axe / Browserless / etc. can join later).
+export type StreamEvent =
+  | { type: 'progress'; step: string; percent: number; detail?: string }
+  | { type: 'warning'; source?: string; message: string }
+  | { type: 'result'; payload: AuditResult }
+  | { type: 'error'; message: string };
