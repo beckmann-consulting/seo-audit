@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "oauth:gsc": "node scripts/oauth-bootstrap.mjs gsc",
+    "oauth:ga4": "node scripts/oauth-bootstrap.mjs ga4"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.11.2",

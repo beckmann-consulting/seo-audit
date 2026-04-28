@@ -67,6 +67,10 @@ The app currently consumes **one** process env var. A minimal
 | `PORT`                | optional | Next.js                                                        | Defaults to 3000 if unset. Override only if port 3000 is taken.                                              | `3000`                           |
 | `BROWSERLESS_TOKEN`   | optional | `src/app/api/audit/route.ts` (only when audit config sets `rendering=js`) | Auth token for the local Browserless container. Only needed if you run the JS-rendering Docker container in `infra/browserless/`. Same value must be in `infra/browserless/.env`. | `c0f3e1…` (`openssl rand -hex 32`) |
 | `BROWSERLESS_ENDPOINT` | optional | `src/app/api/audit/route.ts` | Override the WebSocket endpoint the Node service connects to. Defaults to `ws://localhost:9223` (the address the bundled docker-compose binds to). | `ws://localhost:9223`              |
+| `GOOGLE_OAUTH_CLIENT_ID` | optional | `scripts/oauth-bootstrap.mjs` (and G1/G2 runtime once implemented) | OAuth Client ID from Google Cloud Console. Required only for Phase G (GSC, GA4). See §2a for setup. | `12345…apps.googleusercontent.com` |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | optional | `scripts/oauth-bootstrap.mjs` (and G1/G2 runtime once implemented) | OAuth Client Secret. Pair with `GOOGLE_OAUTH_CLIENT_ID`. | `GOCSPX-…` |
+| `GSC_REFRESH_TOKEN`   | optional | G1 (Search Console). Generated once via `npm run oauth:gsc` — see §2a. | Refresh token for the Google account that owns the GSC properties to be audited. Without it, GSC findings are skipped. | `1//0e…` (long string)             |
+| `GA4_REFRESH_TOKEN`   | optional | G2 (Analytics 4). Generated once via `npm run oauth:ga4` — see §2a. | Refresh token for the Google account with GA4 access. Without it, GA4 cross-reference is skipped. | `1//0e…`                            |
 
 **Nicht im Code verwendet** (im Spec erwähnt, aber aktuell keine Referenz):
 `PERPLEXITY_API_KEY`, `CLAUDE_API_KEY`, `OPENAI_API_KEY`. Keine LLM-
@@ -88,7 +92,87 @@ PORT=3000
 Rechte: `chmod 600 .env.production` und `chown deploy:deploy`
 (entsprechend dem Deploy-User).
 
-### 2a. Optional: Browserless Container für JS-Rendering
+### 2a. Google Search Console + Analytics 4 OAuth (für G1 / G2)
+
+Phase G nutzt Option A aus dem G-Plan: **Single-Account, Refresh-Token in
+`.env.production`**. Multi-User-OAuth-Flows kommen erst mit dem
+Workspace-Modell (Phase H2). Die folgenden Schritte sind einmalig pro
+Service (GSC, GA4) und Konto.
+
+#### Schritt 1 — Google Cloud Console
+
+Dasselbe Projekt nutzen, das schon `GOOGLE_API_KEY` für PSI / Safe
+Browsing hat (https://console.cloud.google.com).
+
+1. **APIs aktivieren** unter "APIs & Services" → "Enabled APIs":
+   - `Google Search Console API` (für G1)
+   - `Google Analytics Data API` (für G2)
+2. **OAuth Consent Screen** konfigurieren (falls noch nicht):
+   - Application type: **External**
+   - User type: External, Testing-Phase reicht (Test-Users-Liste muss
+     deine eigene Google-E-Mail enthalten — sonst beim Bootstrap später
+     "App not verified")
+   - Scopes: leer lassen — werden vom Bootstrap-Script angefordert
+3. **OAuth 2.0 Client ID** unter "Credentials":
+   - Application type: **Web application**
+   - Name: `seo-audit-pro`
+   - Authorized JavaScript origins: leer
+   - Authorized redirect URIs:
+     - `http://127.0.0.1:8765/oauth/callback` ← **exakt so, inkl. Port und Pfad**
+   - "Create" — Client ID + Secret im Folgedialog notieren
+4. **Beide Werte in `.env.production`** (oder `.env.local` für Dev):
+   ```env
+   GOOGLE_OAUTH_CLIENT_ID=xxxxxxxxxxxxxxxx.apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-...
+   ```
+
+#### Schritt 2 — Refresh-Token holen
+
+Lokal vom Repo-Verzeichnis (nicht auf twb-server, falls dein lokales Konto
+auf die Properties Zugriff hat — sonst SSH und auf twb-server laufen
+lassen, mit X-Forwarding-Browser oder Copy-Paste-URL):
+
+```bash
+npm run oauth:gsc    # für Google Search Console
+npm run oauth:ga4    # für Google Analytics 4
+```
+
+Was passiert:
+
+1. Skript druckt eine Google-Login-URL.
+2. URL im Browser öffnen → Login mit dem Konto, das auf die GSC-Property
+   bzw. GA4-Property Zugriff hat.
+3. Read-only-Scopes bestätigen (`webmasters.readonly` bzw.
+   `analytics.readonly`).
+4. Google leitet zurück auf `localhost:8765`. Das Skript fängt den Code
+   ab, tauscht ihn gegen Tokens, druckt eine Zeile:
+   ```
+   GSC_REFRESH_TOKEN=1//0e...
+   ```
+5. Diese Zeile in `.env.production` einfügen.
+6. Service neu starten: `sudo systemctl restart seo-audit`.
+
+#### Scopes (zur Referenz)
+
+| Service | Scope |
+|---|---|
+| GSC | `https://www.googleapis.com/auth/webmasters.readonly` |
+| GA4 | `https://www.googleapis.com/auth/analytics.readonly` |
+
+Beide nur read-only, kein Schreibzugriff auf irgendwelche Google-Daten.
+
+#### Wann muss ich das wiederholen?
+
+- Du hast den Token aus `.env.production` gelöscht → bootstrap erneut
+- Zugriff in https://myaccount.google.com/permissions revoked → bootstrap erneut
+- Google-Projekt 6 Monate ungenutzt → Token läuft automatisch ab; bootstrap erneut
+- Scopes erweitert → bootstrap erneut
+
+Sonst nicht. Refresh-Tokens haben kein Ablaufdatum.
+
+---
+
+### 2b. Optional: Browserless Container für JS-Rendering
 
 Wenn der Audit JS-rendering anbieten soll (SPAs, Hydration-Diff,
 console-error-Detection), muss der Browserless-Container neben dem
