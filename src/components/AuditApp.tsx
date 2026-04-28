@@ -4,6 +4,10 @@ import { useState, useEffect, useRef } from 'react';
 import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAgentPreset, StreamEvent } from '@/types';
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
+import { formatDate } from '@/lib/util/format';
+import { StatusBanner } from './StatusBanner';
+import { GscRowsTable } from './GscRowsTable';
+import { getVisibleGscWarnings } from './gsc-warnings';
 
 const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
   { value: 'default', label: 'SEO Audit Pro (Default)' },
@@ -130,7 +134,7 @@ export default function AuditApp() {
   // via Extract so adding new SSE-warning fields doesn't require a
   // second declaration here.
   const [warnings, setWarnings] = useState<Extract<StreamEvent, { type: 'warning' }>[]>([]);
-  const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'prompt'>('findings');
+  const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'gsc' | 'prompt'>('findings');
   const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   const [showConfig, setShowConfig] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -839,20 +843,37 @@ export default function AuditApp() {
           </div>
 
           {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: '1rem', borderBottom: '1px solid #e0ddd8' }}>
-            {(['findings', 'pages', 'tech', 'prompt'] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                padding: '8px 14px', fontSize: 13, border: 'none', background: 'none', cursor: 'pointer',
-                borderBottom: activeTab === tab ? '2px solid #1a1a18' : '2px solid transparent',
-                fontWeight: activeTab === tab ? 600 : 400, color: activeTab === tab ? '#1a1a18' : '#6b6b68',
-              }}>
-                {tab === 'findings' && t(`Findings (${result.findings.length})`, `Findings (${result.findings.length})`)}
-                {tab === 'pages' && t(`Seiten (${result.pages.length})`, `Pages (${result.pages.length})`)}
-                {tab === 'tech' && t('SSL & DNS', 'SSL & DNS')}
-                {tab === 'prompt' && t('Claude-Prompt', 'Claude Prompt')}
-              </button>
-            ))}
-          </div>
+          {(() => {
+            // Search Console issue count drives the tab badge. Counts
+            // ephemeral SSE warnings (api-error blip during this audit)
+            // PLUS persisted state from gscResult — so a re-opened
+            // cached audit with state=api-error still flags as "(1)"
+            // even after the original warning has aged out.
+            const gscWarningCount = warnings.filter(w => w.source === 'gsc').length;
+            const gscStateIndicator =
+              result.gscResult?.state === 'api-error' || result.gscResult?.state === 'property-not-found' ? 1 : 0;
+            const gscIssueCount = gscWarningCount + gscStateIndicator;
+            const gscLabel = gscIssueCount > 0
+              ? `Search Console (${gscIssueCount})`
+              : 'Search Console';
+            return (
+              <div style={{ display: 'flex', gap: 4, marginBottom: '1rem', borderBottom: '1px solid #e0ddd8' }}>
+                {(['findings', 'pages', 'tech', 'gsc', 'prompt'] as const).map(tab => (
+                  <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                    padding: '8px 14px', fontSize: 13, border: 'none', background: 'none', cursor: 'pointer',
+                    borderBottom: activeTab === tab ? '2px solid #1a1a18' : '2px solid transparent',
+                    fontWeight: activeTab === tab ? 600 : 400, color: activeTab === tab ? '#1a1a18' : '#6b6b68',
+                  }}>
+                    {tab === 'findings' && t(`Findings (${result.findings.length})`, `Findings (${result.findings.length})`)}
+                    {tab === 'pages' && t(`Seiten (${result.pages.length})`, `Pages (${result.pages.length})`)}
+                    {tab === 'tech' && t('SSL & DNS', 'SSL & DNS')}
+                    {tab === 'gsc' && gscLabel}
+                    {tab === 'prompt' && t('Claude-Prompt', 'Claude Prompt')}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Findings tab */}
           {activeTab === 'findings' && (
@@ -1166,6 +1187,159 @@ export default function AuditApp() {
               </div>
             </div>
           )}
+
+          {/* Search Console tab — always rendered, banner per gscResult.state. */}
+          {activeTab === 'gsc' && <>
+            {(() => {
+            const r = result.gscResult;
+            if (!r || r.state === 'disabled') {
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <StatusBanner
+                    variant="info"
+                    title={t('Google Search Console nicht aktiviert', 'Google Search Console not enabled')}
+                  >
+                    {t(
+                      'Setze GSC_REFRESH_TOKEN in deiner Umgebung, um Indexabdeckung und Top-Queries dieses Audits zu sehen.',
+                      'Set GSC_REFRESH_TOKEN in your environment to see indexing coverage and top queries for this audit.',
+                    )}
+                  </StatusBanner>
+                </div>
+              );
+            }
+            if (r.state === 'property-not-found') {
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <StatusBanner
+                    variant="info"
+                    title={t(
+                      `Domain ${r.domain} ist nicht in deinem Search-Console-Konto verfügbar`,
+                      `Domain ${r.domain} is not available in your Search Console account`,
+                    )}
+                  >
+                    {t(
+                      `${r.sitesAvailable} andere Properties gefunden. Füge die Domain in https://search.google.com/search-console hinzu und führe den Audit erneut aus.`,
+                      `${r.sitesAvailable} other properties found. Add the domain in https://search.google.com/search-console and re-run the audit.`,
+                    )}
+                  </StatusBanner>
+                </div>
+              );
+            }
+            if (r.state === 'api-error') {
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <StatusBanner
+                    variant="error"
+                    title={t('Search Console API-Fehler', 'Search Console API error')}
+                  >
+                    {r.message}
+                    <div style={{ marginTop: 6 }}>
+                      {t(
+                        'Bitte ein neues Audit starten, um aktuelle Daten zu laden.',
+                        'Please start a new audit to fetch current data.',
+                      )}
+                    </div>
+                  </StatusBanner>
+                </div>
+              );
+            }
+            // r.state === 'ok' — banner + queries + pages tables.
+            const variantLabel = r.data.resolved.variant === 'domain'
+              ? t('Domain-Property', 'Domain property')
+              : `${t('URL-Property', 'URL property')}: ${r.data.resolved.siteUrl}`;
+            return (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <StatusBanner
+                  variant="ok"
+                  title={t('Search Console verbunden', 'Search Console connected')}
+                >
+                  {variantLabel}
+                  {t(
+                    `, Daten vom ${formatDate(r.data.startDate)} bis ${formatDate(r.data.endDate)}`,
+                    `, data from ${formatDate(r.data.startDate)} to ${formatDate(r.data.endDate)}`,
+                  )}
+                </StatusBanner>
+
+                {/* Top queries */}
+                <div style={{ marginTop: '1.5rem' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: '#1a1a18' }}>
+                    {t('Top-Suchanfragen', 'Top queries')}
+                  </h3>
+                  <GscRowsTable
+                    rows={r.data.topQueries}
+                    totals={r.data.totals}
+                    keyHeader={t('Suchanfrage', 'Query')}
+                    renderKey={(k: string) => k}
+                    isDE={isDE}
+                  />
+                </div>
+
+                {/* Top pages */}
+                <div style={{ marginTop: '1.5rem' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: '#1a1a18' }}>
+                    {t('Top-Seiten', 'Top pages')}
+                  </h3>
+                  <GscRowsTable
+                    rows={r.data.topPages}
+                    totals={r.data.totals}
+                    keyHeader={t('Seite', 'Page')}
+                    renderKey={(url: string) => {
+                      // Display path only (full URL on hover + new-tab on click)
+                      // — full URLs wrap awkwardly on mobile widths.
+                      let display = url;
+                      try {
+                        const u = new URL(url);
+                        display = u.pathname + u.search;
+                        if (display === '') display = '/';
+                      } catch {
+                        /* fallthrough — keep raw */
+                      }
+                      return (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={url}
+                          style={{ color: '#185fa5', textDecoration: 'none' }}
+                        >
+                          {display}
+                        </a>
+                      );
+                    }}
+                    isDE={isDE}
+                  />
+                </div>
+              </div>
+            );
+            })()}
+
+            {/* Warnings stack — ephemeral mid-stream notices from the
+                GSC pipeline. Filtered by source so future Browserless
+                / axe-core / Bing warnings don't leak into this tab.
+                Hidden when state === 'api-error' to avoid duplicating
+                the persistent error banner (see getVisibleGscWarnings
+                for the design rationale). Dismissible: user can clear
+                each banner once read; setWarnings([]) in runAudit()
+                clears them all on the next audit. */}
+            {(() => {
+              const visible = getVisibleGscWarnings(warnings, result.gscResult);
+              if (visible.length === 0) return null;
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  {visible.map((w, i) => (
+                    <StatusBanner
+                      key={i}
+                      variant="warning"
+                      title={t('Search Console — Warnung beim Abruf', 'Search Console — fetch warning')}
+                      onDismiss={() => setWarnings(arr => arr.filter(other => other !== w))}
+                    >
+                      {w.message}
+                    </StatusBanner>
+                  ))}
+                </div>
+              );
+            })()}
+          </>}
 
           {/* Claude Prompt tab */}
           {activeTab === 'prompt' && (
