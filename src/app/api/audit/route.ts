@@ -21,7 +21,7 @@ import {
   generateRichResultsFindings, generateImageDetailFindings,
   generateBodyDuplicateFindings, generateTextHtmlRatioFindings,
   generateReadabilityFindings, generateOversizedImageFindings,
-  generateAccessibilityFindings,
+  generateAccessibilityFindings, generateGscFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
   generateTouchTargetFindings,
@@ -239,6 +239,7 @@ async function runAudit(
     allFindings.push(...generatePixelWidthFindings(pages));
     allFindings.push(...generateMixedStructuredDataFindings(pages));
     allFindings.push(...generateMobileDesktopParityFindings(mobileDesktopParity));
+    allFindings.push(...generateGscFindings(pages, gscResult, sitemapInfo));
   }
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
