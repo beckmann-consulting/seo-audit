@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:isolated": "env -u GSC_REFRESH_TOKEN -u GA4_REFRESH_TOKEN -u BING_WMT_API_KEY -u DATAFORSEO_API_KEY next dev",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",

@@ -11,6 +11,16 @@ npm run dev
 # → http://localhost:3000
 ```
 
+### `npm run dev:isolated` — env-isolated dev server
+
+Use when you want to toggle external-API tokens (`GSC_REFRESH_TOKEN`,
+`GA4_REFRESH_TOKEN`, `BING_WMT_API_KEY`, `DATAFORSEO_API_KEY`) by
+editing `.env.local` and have the change actually take effect. Plain
+`npm run dev` inherits the parent shell's environment, so a token that
+was once `export`-ed in your shell silently shadows the file even after
+you comment it out. `dev:isolated` strips those four vars before
+launching Next, so the file is the only source of truth.
+
 ## Was geprüft wird
 
 ### Automatisch (kein API Key nötig)
