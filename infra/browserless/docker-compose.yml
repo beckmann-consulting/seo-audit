@@ -38,7 +38,7 @@ services:
         limits:
           memory: 2g
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health?token=${BROWSERLESS_TOKEN}"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/pressure?token=${BROWSERLESS_TOKEN}"]
       interval: 30s
       timeout: 5s
       retries: 3
