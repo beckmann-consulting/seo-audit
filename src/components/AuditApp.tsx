@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/util/format';
 import { StatusBanner } from './StatusBanner';
 import { GscRowsTable } from './GscRowsTable';
 import { getVisibleGscWarnings } from './gsc-warnings';
+import { checkPatterns, type PatternError } from './audit-form-validation';
 
 const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
   { value: 'default', label: 'SEO Audit Pro (Default)' },
@@ -144,10 +145,11 @@ export default function AuditApp() {
   // not faking a hydration boundary. Persisted across sessions —
   // power-user setting, not audit-specific.
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  // Inline regex error for include/exclude patterns. Set during the
-  // pre-flight validation in runAudit; cleared when the user types in
-  // the offending textarea.
-  const [patternError, setPatternError] = useState<{ which: 'include' | 'exclude'; pattern: string } | null>(null);
+  // Inline regex error for include/exclude patterns. Live-validated:
+  // every keystroke in either textarea re-runs checkPatterns over both
+  // values, so the inline message + red border reflect the current
+  // truth without waiting for a re-submit.
+  const [patternError, setPatternError] = useState<PatternError | null>(null);
   // progressInterval previously held a fake setInterval; progress now
   // comes from an SSE-style stream so the ref is no longer needed.
 
@@ -302,23 +304,15 @@ export default function AuditApp() {
     if (!url.trim()) return;
 
     // Pre-flight regex validation for the crawler include/exclude
-    // patterns. If a pattern is invalid we expand the disclosure and
-    // scroll to the offending row instead of letting the audit kick
-    // off and fail server-side with a 400 — the latter would be hidden
-    // behind a closed disclosure if the user collapsed it earlier.
-    const validatePatterns = (raw: string): string | null => {
-      for (const line of raw.split('\n').map(l => l.trim()).filter(Boolean)) {
-        try { new RegExp(line); } catch { return line; }
-      }
-      return null;
-    };
-    const badInclude = validatePatterns(includePatterns);
-    const badExclude = badInclude ? null : validatePatterns(excludePatterns);
-    if (badInclude || badExclude) {
-      const which = badInclude ? 'include' : 'exclude';
-      const bad = (badInclude ?? badExclude) as string;
-      setPatternError({ which, pattern: bad });
-      setError(t(`Ungültiges Regex-Pattern: "${bad}"`, `Invalid regex pattern: "${bad}"`));
+    // patterns. Live validation in onChange already keeps patternError
+    // up to date — this is the submit-time guard that auto-expands the
+    // disclosure and scrolls to the offending row instead of letting
+    // the audit kick off and fail server-side with a 400. setError is
+    // intentionally NOT set: the inline message is the surfaced error,
+    // top-level setError is reserved for non-form failures.
+    const submitTimeError = checkPatterns(includePatterns, excludePatterns);
+    if (submitTimeError) {
+      setPatternError(submitTimeError);
       setAdvancedOpen(true);
       // requestAnimationFrame ensures the disclosure body has been
       // rendered before we scroll — the ref is null until then.
@@ -783,7 +777,15 @@ export default function AuditApp() {
                           </label>
                           <textarea
                             value={includePatterns}
-                            onChange={e => { setIncludePatterns(e.target.value); setPatternError(null); }}
+                            onChange={e => {
+                              const value = e.target.value;
+                              setIncludePatterns(value);
+                              // Live re-validate against the current value of
+                              // both textareas — fixing include must also
+                              // surface a pre-existing exclude error, and
+                              // vice versa.
+                              setPatternError(checkPatterns(value, excludePatterns));
+                            }}
                             placeholder={'/blog/\n/products/'}
                             rows={3}
                             style={{
@@ -801,7 +803,11 @@ export default function AuditApp() {
                           </label>
                           <textarea
                             value={excludePatterns}
-                            onChange={e => { setExcludePatterns(e.target.value); setPatternError(null); }}
+                            onChange={e => {
+                              const value = e.target.value;
+                              setExcludePatterns(value);
+                              setPatternError(checkPatterns(includePatterns, value));
+                            }}
                             placeholder={'/admin\n\\?utm_\n\\.pdf$'}
                             rows={3}
                             style={{
