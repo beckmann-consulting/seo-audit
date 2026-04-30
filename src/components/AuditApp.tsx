@@ -139,12 +139,6 @@ export default function AuditApp() {
   const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   const [showConfig, setShowConfig] = useState(true);
   const [copied, setCopied] = useState(false);
-  // Disclosure state for the "Erweiterte Optionen" section. SSR-safe
-  // initial value is false; the post-mount effect rehydrates from
-  // localStorage. One-frame flicker on mount is acceptable trade for
-  // not faking a hydration boundary. Persisted across sessions —
-  // power-user setting, not audit-specific.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   // Inline regex error for include/exclude patterns. Live-validated:
   // every keystroke in either textarea re-runs checkPatterns over both
   // values, so the inline message + red border reflect the current
@@ -158,40 +152,15 @@ export default function AuditApp() {
   const [diff, setDiff] = useState<AuditDiff | null>(null);
   const [diffError, setDiffError] = useState('');
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  // Scroll target for the auto-expand-on-invalid-regex flow.
+  // Scroll target for the scroll-to-error flow when an invalid regex
+  // pattern blocks audit submission.
   const includeExcludeRef = useRef<HTMLDivElement | null>(null);
-  // Refs for the disclosure focus-management on close — when the
-  // panel hides, browsers drop focus to body; we put it back on the
-  // toggle so keyboard users don't get stranded.
-  const advancedToggleRef = useRef<HTMLButtonElement | null>(null);
-  const advancedPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
       if (d.hasGoogleKey) setHasEnvGoogleKey(true);
     }).catch(() => {});
   }, []);
-
-  // Rehydrate the disclosure state from localStorage on mount. Plain
-  // try/catch covers QuotaExceeded, disabled storage, and the SSR
-  // hop where window is undefined.
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem('seo_audit_form_advanced_open') === 'true') {
-        setAdvancedOpen(true);
-      }
-    } catch {}
-  }, []);
-
-  // Persist toggle changes (and auto-expand events from validation)
-  // back to localStorage. Auto-expand persists too — if a user is
-  // routinely tripping pattern validation, leaving advanced open by
-  // default next session is the right outcome.
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('seo_audit_form_advanced_open', String(advancedOpen));
-    } catch {}
-  }, [advancedOpen]);
 
   const isDE = lang === 'de';
   const t = (de: string, en: string) => isDE ? de : en;
@@ -305,17 +274,14 @@ export default function AuditApp() {
 
     // Pre-flight regex validation for the crawler include/exclude
     // patterns. Live validation in onChange already keeps patternError
-    // up to date — this is the submit-time guard that auto-expands the
-    // disclosure and scrolls to the offending row instead of letting
-    // the audit kick off and fail server-side with a 400. setError is
-    // intentionally NOT set: the inline message is the surfaced error,
-    // top-level setError is reserved for non-form failures.
+    // up to date — this is the submit-time guard that scrolls to the
+    // offending row instead of letting the audit kick off and fail
+    // server-side with a 400. setError is intentionally NOT set: the
+    // inline message is the surfaced error, top-level setError is
+    // reserved for non-form failures.
     const submitTimeError = checkPatterns(includePatterns, excludePatterns);
     if (submitTimeError) {
       setPatternError(submitTimeError);
-      setAdvancedOpen(true);
-      // requestAnimationFrame ensures the disclosure body has been
-      // rendered before we scroll — the ref is null until then.
       requestAnimationFrame(() => {
         includeExcludeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
@@ -491,13 +457,13 @@ export default function AuditApp() {
   }) : [];
 
   return (
-    <div style={{ maxWidth: 920, margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: 14, color: 'var(--text)' }}>
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1rem 1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: 14, color: 'var(--text)' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>SEO Audit Pro</h1>
-          <p style={{ color: 'var(--text-muted)', margin: '3px 0 0', fontSize: 13 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>SEO Audit Pro</h1>
+          <p style={{ color: 'var(--text-muted)', margin: '2px 0 0', fontSize: 12 }}>
             {t('Vollständiger, reproduzierbarer SEO-Audit mit PDF-Export', 'Complete, reproducible SEO audit with PDF export')}
           </p>
         </div>
@@ -513,374 +479,292 @@ export default function AuditApp() {
         </div>
       </div>
 
-      {/* Config panel */}
+      {/* Config panel — three-card layout (P8) */}
       {showConfig && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
 
-          {/* URL */}
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={labelStyle}>{t('Website URL', 'Website URL')}</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="url"
-                name="audit_target_url"
-                id="audit-target-url"
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && runAudit()}
-                placeholder="https://example.com"
-                style={inputStyle}
-                autoComplete="off"
-                inputMode="url"
-                spellCheck={false}
-                autoCorrect="off"
-                data-kpxc-ignore="true"
-              />
-              <button onClick={runAudit} disabled={loading || !url.trim()} style={primaryBtnStyle}>
-                {loading ? t('Läuft…', 'Running…') : t('Audit starten', 'Start audit')}
-              </button>
+          {/* Row 1 — Audit-Setup (URL + Audit button + API-key status) */}
+          <div style={p8CardStyle}>
+            <CardHeader title={t('Audit-Setup', 'Audit setup')} subtitle={t('was wird gemessen', 'what gets audited')} />
+            <div style={p8FieldGroup}>
+              <div>
+                <label style={labelStyle} htmlFor="audit-target-url">{t('Website URL', 'Website URL')}</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="url"
+                    name="audit_target_url"
+                    id="audit-target-url"
+                    value={url}
+                    onChange={e => setUrl(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && runAudit()}
+                    placeholder="https://example.com"
+                    style={inputStyle}
+                    autoComplete="off"
+                    inputMode="url"
+                    spellCheck={false}
+                    autoCorrect="off"
+                    data-kpxc-ignore="true"
+                  />
+                  <button onClick={runAudit} disabled={loading || !url.trim()} style={primaryBtnStyle}>
+                    {loading ? t('Läuft…', 'Running…') : t('Audit starten', 'Start audit')}
+                  </button>
+                </div>
+              </div>
+
+              {hasEnvGoogleKey ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--pass-bg)', borderRadius: 8, border: '1px solid var(--pass-border)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--pass)' }}>✓</span>
+                  <span style={{ fontSize: 11, color: 'var(--pass)', fontWeight: 500 }}>
+                    {t('Google API Key aktiv (PageSpeed + Safe Browsing aktiviert)', 'Google API Key active (PageSpeed + Safe Browsing enabled)')}
+                  </span>
+                </div>
+              ) : (
+                <div>
+                  <label style={labelStyle}>
+                    Google API Key <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({t('optional — für PageSpeed & Safe Browsing', 'optional — for PageSpeed & Safe Browsing')})</span>
+                  </label>
+                  <input
+                    value={googleKey}
+                    onChange={e => setGoogleKey(e.target.value)}
+                    placeholder="AIza..."
+                    type="password"
+                    style={{ ...inputStyle, maxWidth: 400 }}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Google API Key */}
-          {hasEnvGoogleKey ? (
-            <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--pass-bg)', borderRadius: 8, border: '1px solid var(--pass-border)' }}>
-              <span style={{ fontSize: 13, color: 'var(--pass)' }}>✓</span>
-              <span style={{ fontSize: 12, color: 'var(--pass)', fontWeight: 500 }}>
-                {t('Google API Key aktiv (PageSpeed + Safe Browsing aktiviert)', 'Google API Key active (PageSpeed + Safe Browsing enabled)')}
-              </span>
-            </div>
-          ) : (
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={labelStyle}>
-                Google API Key <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({t('optional — für PageSpeed & Safe Browsing', 'optional — for PageSpeed & Safe Browsing')})</span>
-              </label>
-              <input
-                value={googleKey}
-                onChange={e => setGoogleKey(e.target.value)}
-                placeholder="AIza..."
-                type="password"
-                style={{ ...inputStyle, maxWidth: 400 }}
-              />
-              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-faint)' }}>
-                {t('Oder in .env.local eintragen: GOOGLE_API_KEY=AIza...', 'Or add to .env.local: GOOGLE_API_KEY=AIza...')}
-              </p>
-            </div>
-          )}
+          {/* Row 2 — Crawler + Auth/Filter side by side (stacks on <980px) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: '0.75rem' }}>
 
-          {/* Disclosure: "Erweiterte Optionen" */}
-          {(() => {
-            // Count how many advanced settings differ from their
-            // defaults. Each row in the disclosure contributes 0 or 1
-            // — the value lives next to the disclosure label so the
-            // user can see at a glance that customised settings are
-            // hidden behind the closed panel.
-            const defaultModuleSet: Set<Module> = new Set(
-              ALL_MODULES.map(m => m.id).filter(m => m !== 'offers' && m !== 'accessibility'),
-            );
-            const modulesAreDefault =
-              modules.length === defaultModuleSet.size &&
-              modules.every(m => defaultModuleSet.has(m));
-            const adjustments = [
-              rendering !== 'auto',
-              userAgent !== 'default',
-              mobileDesktopParity,
-              imageProbeLimit !== 20,
-              !!(basicAuthUser.trim() || basicAuthPass.trim()),
-              customHeadersText.trim() !== '',
-              includePatterns.trim() !== '' || excludePatterns.trim() !== '',
-              includeScreenshots,
-              !modulesAreDefault,
-            ].filter(Boolean).length;
+            {/* Crawler card */}
+            <div style={p8CardStyle}>
+              <CardHeader title={t('Crawler', 'Crawler')} subtitle={t('wie wird gecrawlt', 'how the crawl runs')} />
+              <div style={p8FieldGroup}>
 
-            // Subtle group dividers — applied to the first row of each
-            // group transition (positions 5 and 8). Visual cue for the
-            // 1-4 / 5-7 / 8-9 grouping without adding section headers.
-            const groupDivider: React.CSSProperties = {
-              borderTop: '1px solid var(--border-mid)',
-              marginTop: '1.5rem',
-              paddingTop: '1.5rem',
-            };
+                <div>
+                  <label style={labelStyle}>
+                    {t('Rendering-Modus', 'Rendering mode')}
+                  </label>
+                  <select
+                    value={rendering}
+                    onChange={e => setRendering(e.target.value as 'static' | 'js' | 'auto')}
+                    style={inputStyle}
+                  >
+                    <option value="auto">{t('Auto (Static + JS bei SPA-Erkennung — Default)', 'Auto (static + JS on SPA detection — default)')}</option>
+                    <option value="static">{t('Static (HTTP fetch)', 'Static (HTTP fetch)')}</option>
+                    <option value="js">{t('JavaScript (Browserless / Chromium für jede Seite)', 'JavaScript (Browserless / Chromium for every page)')}</option>
+                  </select>
+                </div>
 
-            // Toggle handler with focus management: on close, if focus
-            // is inside the panel, restore it to the toggle button so
-            // keyboard users don't land on body when the panel hides.
-            const toggleAdvanced = () => {
-              if (advancedOpen) {
-                const focusInPanel = !!advancedPanelRef.current?.contains(document.activeElement);
-                setAdvancedOpen(false);
-                if (focusInPanel) {
-                  requestAnimationFrame(() => advancedToggleRef.current?.focus());
-                }
-              } else {
-                setAdvancedOpen(true);
-              }
-            };
-
-            return (
-              <div style={{ marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  ref={advancedToggleRef}
-                  onClick={toggleAdvanced}
-                  aria-expanded={advancedOpen}
-                  aria-controls="advanced-options-panel"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    background: 'none', border: 'none', padding: '8px 0',
-                    cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text)',
-                  }}
-                >
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    {advancedOpen ? '▾' : '▸'}
-                  </span>
-                  {t('Erweiterte Optionen', 'Advanced options')}
-                  {adjustments > 0 && (
-                    <span style={{
-                      fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 20,
-                      background: 'var(--info-bg-banner)', color: 'var(--info)',
-                    }}>
-                      {t(`${adjustments} angepasst`, `${adjustments} customised`)}
-                    </span>
+                <div>
+                  <label style={labelStyle}>
+                    {t('User-Agent', 'User-Agent')}
+                  </label>
+                  <select
+                    value={userAgent}
+                    onChange={e => setUserAgent(e.target.value as UserAgentPreset)}
+                    style={inputStyle}
+                  >
+                    {USER_AGENT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  {userAgent === 'custom' && (
+                    <input
+                      value={customUserAgent}
+                      onChange={e => setCustomUserAgent(e.target.value)}
+                      placeholder={t('Eigener User-Agent-String', 'Custom User-Agent string')}
+                      style={{ ...inputStyle, marginTop: 6 }}
+                    />
                   )}
-                </button>
+                </div>
 
-                <div
-                  id="advanced-options-panel"
-                  ref={advancedPanelRef}
-                  hidden={!advancedOpen}
-                  style={{ marginTop: '0.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-soft)' }}
-                >
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={mobileDesktopParity}
+                    onChange={e => setMobileDesktopParity(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>
+                    {t('Mobile/Desktop Content-Parität prüfen', 'Check Mobile/Desktop content parity')}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    ({t('Top-10-Seiten je doppelt', 'top 10 pages twice')})
+                  </span>
+                </label>
 
-                    {/* 1. Rendering mode */}
-                    <div style={{ marginBottom: '1rem' }}>
+                <div>
+                  <label style={labelStyle}>
+                    {t('Bild-Probe-Limit', 'Image probe limit')}{' '}
+                    <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                      ({t('HEAD-Requests für Datei-Größe; 0 deaktiviert', 'HEAD requests for file size; 0 disables')})
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={imageProbeLimit}
+                    onChange={e => setImageProbeLimit(parseInt(e.target.value, 10) || 0)}
+                    style={{ ...inputStyle, maxWidth: 120 }}
+                  />
+                </div>
+
+                <label style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  cursor: rendering === 'js' ? 'pointer' : 'not-allowed',
+                  opacity: rendering === 'js' ? 1 : 0.5,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={includeScreenshots}
+                    disabled={rendering !== 'js'}
+                    onChange={e => setIncludeScreenshots(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>
+                    {t('Screenshots (Mobile + Desktop) im PDF', 'Screenshots (mobile + desktop) in PDF')}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    {rendering === 'js'
+                      ? `(${t('Top-4-Seiten', 'top 4 pages')})`
+                      : `(${t('nur in JS-Mode', 'JS mode only')})`}
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Auth & Filter card */}
+            <div style={p8CardStyle}>
+              <CardHeader title={t('Auth & Filter', 'Auth & filter')} subtitle={t('Zugang & URL-Auswahl', 'access & URL selection')} />
+              <div style={p8FieldGroup}>
+
+                <div>
+                  <label style={labelStyle}>
+                    {t('HTTP Basic Auth', 'HTTP Basic Auth')}{' '}
+                    <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                      ({t('Staging-Sites; nicht im Report gespeichert', 'staging sites; not stored in report')})
+                    </span>
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <input
+                      value={basicAuthUser}
+                      onChange={e => setBasicAuthUser(e.target.value)}
+                      placeholder={t('Benutzername', 'Username')}
+                      autoComplete="off"
+                      style={inputStyle}
+                    />
+                    <input
+                      value={basicAuthPass}
+                      onChange={e => setBasicAuthPass(e.target.value)}
+                      placeholder={t('Passwort', 'Password')}
+                      type="password"
+                      autoComplete="off"
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>
+                    {t('Eigene HTTP-Header', 'Custom HTTP headers')}{' '}
+                    <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                      ({t('eine pro Zeile, "Name: Wert"', 'one per line, "Name: value"')})
+                    </span>
+                  </label>
+                  <textarea
+                    value={customHeadersText}
+                    onChange={e => setCustomHeadersText(e.target.value)}
+                    placeholder={'Cookie: session=abc\nX-CF-Bypass: token'}
+                    rows={2}
+                    style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11, height: 'auto', padding: '6px 10px' }}
+                  />
+                </div>
+
+                <div ref={includeExcludeRef}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
                       <label style={labelStyle}>
-                        {t('Rendering-Modus', 'Rendering mode')}{' '}
+                        {t('Include-Patterns', 'Include patterns')}{' '}
                         <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                          ({t('JS-Mode rendert über Headless-Chromium — langsamer, aber sieht SPAs', 'JS mode renders via headless Chromium — slower, but sees SPAs')})
-                        </span>
-                      </label>
-                      <select
-                        value={rendering}
-                        onChange={e => setRendering(e.target.value as 'static' | 'js' | 'auto')}
-                        style={{ ...inputStyle, maxWidth: 400 }}
-                      >
-                        <option value="auto">{t('Auto (Static + JS bei SPA-Erkennung — Default)', 'Auto (static + JS on SPA detection — default)')}</option>
-                        <option value="static">{t('Static (HTTP fetch)', 'Static (HTTP fetch)')}</option>
-                        <option value="js">{t('JavaScript (Browserless / Chromium für jede Seite)', 'JavaScript (Browserless / Chromium for every page)')}</option>
-                      </select>
-                    </div>
-
-                    {/* 2. User-Agent */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={labelStyle}>
-                        {t('User-Agent', 'User-Agent')} <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({t('beeinflusst Antwort vom Server und robots.txt-Auswertung', 'affects server response and robots.txt evaluation')})</span>
-                      </label>
-                      <select
-                        value={userAgent}
-                        onChange={e => setUserAgent(e.target.value as UserAgentPreset)}
-                        style={{ ...inputStyle, maxWidth: 400 }}
-                      >
-                        {USER_AGENT_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                      {userAgent === 'custom' && (
-                        <input
-                          value={customUserAgent}
-                          onChange={e => setCustomUserAgent(e.target.value)}
-                          placeholder={t('Eigener User-Agent-String', 'Custom User-Agent string')}
-                          style={{ ...inputStyle, maxWidth: 400, marginTop: 6 }}
-                        />
-                      )}
-                    </div>
-
-                    {/* 3. Mobile/Desktop content-parity opt-in */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={mobileDesktopParity}
-                          onChange={e => setMobileDesktopParity(e.target.checked)}
-                        />
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>
-                          {t('Mobile/Desktop Content-Parität prüfen', 'Check Mobile/Desktop content parity')}
-                        </span>
-                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                          ({t('Top-10-Seiten je doppelt fetchen', 'fetches top-10 pages twice each')})
-                        </span>
-                      </label>
-                    </div>
-
-                    {/* 4. Image-size HEAD probe */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={labelStyle}>
-                        {t('Bild-Probe-Limit', 'Image probe limit')}{' '}
-                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                          ({t('HEAD-Requests für Datei-Größe; 0 deaktiviert; ~5s pro Bild', 'HEAD requests for file size; 0 disables; ~5s per image')})
-                        </span>
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={imageProbeLimit}
-                        onChange={e => setImageProbeLimit(parseInt(e.target.value, 10) || 0)}
-                        style={{ ...inputStyle, maxWidth: 120 }}
-                      />
-                    </div>
-
-                    {/* 5. HTTP Basic Auth — start of Auth/Filter group */}
-                    <div style={{ ...groupDivider, marginBottom: '1rem' }}>
-                      <label style={labelStyle}>
-                        {t('HTTP Basic Auth', 'HTTP Basic Auth')}{' '}
-                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                          ({t('für passwortgeschützte Staging-Sites — Credentials werden nicht im Report gespeichert', 'for password-protected staging sites — credentials are not stored in the report')})
-                        </span>
-                      </label>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <input
-                          value={basicAuthUser}
-                          onChange={e => setBasicAuthUser(e.target.value)}
-                          placeholder={t('Benutzername', 'Username')}
-                          autoComplete="off"
-                          style={inputStyle}
-                        />
-                        <input
-                          value={basicAuthPass}
-                          onChange={e => setBasicAuthPass(e.target.value)}
-                          placeholder={t('Passwort', 'Password')}
-                          type="password"
-                          autoComplete="off"
-                          style={inputStyle}
-                        />
-                      </div>
-                    </div>
-
-                    {/* 6. Custom headers */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={labelStyle}>
-                        {t('Eigene HTTP-Header', 'Custom HTTP headers')}{' '}
-                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                          ({t('eine pro Zeile, "Name: Wert"; sensible Werte werden im Report maskiert', 'one per line, "Name: value"; sensitive values are masked in the report')})
+                          ({t('eine Regex/Zeile', 'one regex/line')})
                         </span>
                       </label>
                       <textarea
-                        value={customHeadersText}
-                        onChange={e => setCustomHeadersText(e.target.value)}
-                        placeholder={'Cookie: session=abc\nX-CF-Bypass: token\nAccept-Language: de-DE,de;q=0.9'}
-                        rows={3}
-                        style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+                        value={includePatterns}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setIncludePatterns(value);
+                          setPatternError(checkPatterns(value, excludePatterns));
+                        }}
+                        placeholder={'/blog/\n/products/'}
+                        rows={2}
+                        style={{
+                          ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                          height: 'auto', padding: '6px 10px',
+                          borderColor: patternError?.which === 'include' ? 'var(--fail)' : undefined,
+                        }}
                       />
                     </div>
-
-                    {/* 7. Crawler URL filters (Include + Exclude) */}
-                    <div ref={includeExcludeRef} style={{ marginBottom: '1rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <div>
-                          <label style={labelStyle}>
-                            {t('Include-Patterns', 'Include patterns')}{' '}
-                            <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                              ({t('eine Regex pro Zeile, gegen volle URL', 'one regex per line, tested against full URL')})
-                            </span>
-                          </label>
-                          <textarea
-                            value={includePatterns}
-                            onChange={e => {
-                              const value = e.target.value;
-                              setIncludePatterns(value);
-                              // Live re-validate against the current value of
-                              // both textareas — fixing include must also
-                              // surface a pre-existing exclude error, and
-                              // vice versa.
-                              setPatternError(checkPatterns(value, excludePatterns));
-                            }}
-                            placeholder={'/blog/\n/products/'}
-                            rows={3}
-                            style={{
-                              ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
-                              borderColor: patternError?.which === 'include' ? 'var(--fail)' : undefined,
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>
-                            {t('Exclude-Patterns', 'Exclude patterns')}{' '}
-                            <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
-                              ({t('Exclude gewinnt', 'exclude wins')})
-                            </span>
-                          </label>
-                          <textarea
-                            value={excludePatterns}
-                            onChange={e => {
-                              const value = e.target.value;
-                              setExcludePatterns(value);
-                              setPatternError(checkPatterns(includePatterns, value));
-                            }}
-                            placeholder={'/admin\n\\?utm_\n\\.pdf$'}
-                            rows={3}
-                            style={{
-                              ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
-                              borderColor: patternError?.which === 'exclude' ? 'var(--fail)' : undefined,
-                            }}
-                          />
-                        </div>
-                      </div>
-                      {patternError && (
-                        <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--fail)' }}>
-                          {t(`Ungültiges Regex-Pattern: "${patternError.pattern}"`, `Invalid regex pattern: "${patternError.pattern}"`)}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 8. Screenshots — own row, disabled when static-mode; start of Output-Scope group */}
-                    <div style={{ ...groupDivider, marginBottom: '1rem' }}>
-                      <label style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 8,
-                        cursor: rendering === 'js' ? 'pointer' : 'not-allowed',
-                        opacity: rendering === 'js' ? 1 : 0.5,
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={includeScreenshots}
-                          disabled={rendering !== 'js'}
-                          onChange={e => setIncludeScreenshots(e.target.checked)}
-                        />
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>
-                          {t('Screenshots (Mobile + Desktop) im PDF anhängen', 'Attach Mobile + Desktop screenshots to PDF')}
-                        </span>
-                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                          {rendering === 'js'
-                            ? `(${t('Top-4-Seiten, je 2 Viewports', 'top 4 pages × 2 viewports')})`
-                            : `(${t('nur in JS-Mode verfügbar', 'JS mode only')})`}
+                    <div>
+                      <label style={labelStyle}>
+                        {t('Exclude-Patterns', 'Exclude patterns')}{' '}
+                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                          ({t('Exclude gewinnt', 'exclude wins')})
                         </span>
                       </label>
+                      <textarea
+                        value={excludePatterns}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setExcludePatterns(value);
+                          setPatternError(checkPatterns(includePatterns, value));
+                        }}
+                        placeholder={'/admin\n\\?utm_'}
+                        rows={2}
+                        style={{
+                          ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                          height: 'auto', padding: '6px 10px',
+                          borderColor: patternError?.which === 'exclude' ? 'var(--fail)' : undefined,
+                        }}
+                      />
                     </div>
-
-                    {/* 9. Modules */}
-                    <div>
-                      <label style={labelStyle}>{t('Module', 'Modules')}</label>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
-                        {ALL_MODULES.map(m => (
-                          <label key={m.id} style={{
-                            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
-                            border: `1px solid ${modules.includes(m.id) ? 'var(--text)' : 'var(--border)'}`,
-                            borderRadius: 8, cursor: 'pointer',
-                            background: modules.includes(m.id) ? 'var(--bg)' : 'var(--surface)',
-                          }}>
-                            <input type="checkbox" checked={modules.includes(m.id)} onChange={() => toggleModule(m.id)} style={{ marginTop: 2 }} />
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13 }}>{isDE ? m.label_de : m.label_en}</div>
-                              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{isDE ? m.desc_de : m.desc_en}</div>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
+                  </div>
+                  {patternError && (
+                    <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--fail)' }}>
+                      {t(`Ungültiges Regex-Pattern: "${patternError.pattern}"`, `Invalid regex pattern: "${patternError.pattern}"`)}
                     </div>
+                  )}
                 </div>
               </div>
-            );
-          })()}
+            </div>
+          </div>
+
+          {/* Row 3 — Modules (4×2 on desktop, 2×4 on <980px via grid breakpoint) */}
+          <div style={p8CardStyle}>
+            <CardHeader title={t('Module', 'Modules')} subtitle={t('welche Audit-Kategorien laufen', 'which audit categories run')} />
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+              gap: 8,
+            }}>
+              {ALL_MODULES.map(m => (
+                <label key={m.id} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
+                  border: `1px solid ${modules.includes(m.id) ? 'var(--text)' : 'var(--border)'}`,
+                  borderRadius: 8, cursor: 'pointer',
+                  background: modules.includes(m.id) ? 'var(--bg)' : 'var(--surface)',
+                }}>
+                  <input type="checkbox" checked={modules.includes(m.id)} onChange={() => toggleModule(m.id)} style={{ marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{isDE ? m.label_de : m.label_en}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{isDE ? m.desc_de : m.desc_en}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1748,3 +1632,29 @@ const techCardTitle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   padding: '7px 10px', border: '1px solid var(--border)', verticalAlign: 'top',
 };
+
+// P8 — three-card layout. Each card uses the same surface + border
+// recipe; field rows inside use a 12px gap instead of marginBottom.
+const p8CardStyle: React.CSSProperties = {
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 12,
+  padding: '0.85rem 1rem',
+};
+
+const p8FieldGroup: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+};
+
+function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{title}</span>
+      {subtitle && (
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>— {subtitle}</span>
+      )}
+    </div>
+  );
+}
