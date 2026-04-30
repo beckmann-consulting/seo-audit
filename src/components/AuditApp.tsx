@@ -522,12 +522,18 @@ export default function AuditApp() {
             <label style={labelStyle}>{t('Website URL', 'Website URL')}</label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
+                type="url"
+                name="audit_target_url"
+                id="audit-target-url"
                 value={url}
                 onChange={e => setUrl(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && runAudit()}
                 placeholder="https://example.com"
                 style={inputStyle}
                 autoComplete="off"
+                inputMode="url"
+                spellCheck={false}
+                autoCorrect="off"
                 data-kpxc-ignore="true"
               />
               <button onClick={runAudit} disabled={loading || !url.trim()} style={primaryBtnStyle}>
