@@ -1,0 +1,25 @@
+# systemd unit for the seo-audit-pro Next.js app on twb-server.
+# Deploy:
+#   1. Clone or pull this repo to /home/tobias/apps/seo-audit/.
+#   2. `pnpm install --frozen-lockfile && pnpm build` (or npm equivalents).
+#   3. Place .env.production next to package.json (see DEPLOYMENT.md §2).
+#   4. Copy this file to /etc/systemd/system/seo-audit.service.
+#   5. systemctl daemon-reload && systemctl enable --now seo-audit.service.
+# See infra/seo-audit/README.md for the full setup notes.
+
+[Unit]
+Description=SEO Audit Pro — Next.js App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tobias
+WorkingDirectory=/home/tobias/apps/seo-audit
+EnvironmentFile=/home/tobias/apps/seo-audit/.env.production
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

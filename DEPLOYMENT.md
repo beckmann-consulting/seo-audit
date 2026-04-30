@@ -1,13 +1,16 @@
 # SEO Audit Pro — Deployment Guide
 
 Production deployment of the SEO Audit tool at
-**https://beckmanndigital.com/seo-audit** on a fresh Ubuntu 22.04 / 24.04
-server. The target layout is:
+**https://seo-audit.beckmanndigital.com** on a Debian 13 server (twb-server,
+Hetzner CPX32). The target layout is:
 
-- Next.js app running on `127.0.0.1:3000` under PM2
-- Nginx terminating TLS on `beckmanndigital.com` and reverse-proxying
-  `/seo-audit/*` into the Node process
-- Let's Encrypt handling the certificate
+- Next.js app running on `127.0.0.1:3001` under systemd
+  (`seo-audit.service`, source: `infra/seo-audit/`)
+- Caddy v2 terminating TLS on the `seo-audit.beckmanndigital.com`
+  subdomain and reverse-proxying to the Node process. Caddy handles ACME
+  / Let's Encrypt automatically.
+- Optional: Browserless container for JS-rendering (separate systemd
+  unit, source: `infra/browserless/`)
 
 ---
 
@@ -20,9 +23,9 @@ server. The target layout is:
 | Node.js   | **24.x LTS** (see `.nvmrc`) | `curl -fsSL https://deb.nodesource.com/setup_24.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
 | npm       | ≥10.x (comes with Node 24) | — |
 | git       | any current        | `sudo apt-get install -y git`                             |
-| nginx     | 1.22+              | `sudo apt-get install -y nginx`                           |
-| pm2       | latest             | `sudo npm install -g pm2`                                 |
-| certbot   | latest             | `sudo apt-get install -y certbot python3-certbot-nginx`   |
+| caddy     | 2.11+              | `sudo apt-get install -y caddy` (or follow https://caddyserver.com/docs/install for the latest .deb) |
+| systemd   | (built-in)         | Process manager. Unit files live under `infra/seo-audit/` and `infra/browserless/`. |
+| docker + docker-compose-plugin | latest | Optional — only needed for the JS-rendering Browserless container. `sudo apt-get install -y docker.io docker-compose-plugin` |
 | build-essential | —             | `sudo apt-get install -y build-essential` (node-html-parser needs no native build, but safe to have) |
 
 ### Hardware — minimum sizing
@@ -45,11 +48,12 @@ plenty for a single team. Scale up when concurrent audits > 2.
 | Port | Direction | Purpose                              |
 |-----:|-----------|--------------------------------------|
 |   22 | inbound   | SSH                                  |
-|   80 | inbound   | HTTP (Certbot HTTP-01, then redirect)|
-|  443 | inbound   | HTTPS (nginx)                        |
-| 3000 | loopback only | Next.js — MUST NOT be exposed externally |
-|  53  | outbound  | DNS (SPF/DKIM/DMARC checks)          |
-| 443  | outbound  | All external APIs + site crawls      |
+|   80 | inbound   | HTTP (ACME-01 challenge, then redirect to 443) |
+|  443 | inbound   | HTTPS (Caddy)                        |
+| 3001 | loopback only | Next.js — MUST NOT be exposed externally |
+| 9223 | loopback only | Browserless container (only when JS-rendering is in use) |
+|   53 | outbound  | DNS (SPF/DKIM/DMARC checks)          |
+|  443 | outbound  | All external APIs + site crawls      |
 
 ---
 
@@ -64,7 +68,7 @@ The app currently consumes **one** process env var. A minimal
 | `LEAD_WEBHOOK_URL`    | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | URL des PHP-Lead-Mailers auf beckmanndigital.com. Ohne diese Variable werden Widget-Leads nur geloggt, keine Mail verschickt. Siehe §5.4. | `https://beckmanndigital.com/seo-lead.php` |
 | `LEAD_WEBHOOK_SECRET` | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | Shared Secret für den Lead-Mailer — muss identisch mit `$SHARED_SECRET` in `seo-lead.php` sein. Generieren mit `openssl rand -hex 32`. | `3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd` |
 | `NODE_ENV`            | required | Next.js internals                                              | Must be `production` when running via `next start`                                                           | `production`                     |
-| `PORT`                | optional | Next.js                                                        | Defaults to 3000 if unset. Override only if port 3000 is taken.                                              | `3000`                           |
+| `PORT`                | required | Next.js                                                        | Production port — Caddy proxies to this. Set to `3001` (port 3000 is reserved for the umami container on twb-server). | `3001`                           |
 | `BROWSERLESS_TOKEN`   | optional | `src/app/api/audit/route.ts` (only when audit config sets `rendering=js`) | Auth token for the local Browserless container. Only needed if you run the JS-rendering Docker container in `infra/browserless/`. Same value must be in `infra/browserless/.env`. | `c0f3e1…` (`openssl rand -hex 32`) |
 | `BROWSERLESS_ENDPOINT` | optional | `src/app/api/audit/route.ts` | Override the WebSocket endpoint the Node service connects to. Defaults to `ws://localhost:9223` (the address the bundled docker-compose binds to). | `ws://localhost:9223`              |
 | `GOOGLE_OAUTH_CLIENT_ID` | optional | `scripts/oauth-bootstrap.mjs` (and G1/G2 runtime once implemented) | OAuth Client ID from Google Cloud Console. Required only for Phase G (GSC, GA4). See §2a for setup. | `12345…apps.googleusercontent.com` |
@@ -79,18 +83,17 @@ Copy-Paste-Flow in der UI.
 
 ### `.env.production` Beispiel
 
-Lege die Datei auf dem Server unter `/var/www/seo-audit/.env.production` an:
+Lege die Datei auf dem Server unter `/home/tobias/apps/seo-audit/.env.production` an:
 
 ```env
 GOOGLE_API_KEY=AIzaSy…EchterKeyHier
 LEAD_WEBHOOK_URL=https://beckmanndigital.com/seo-lead.php
 LEAD_WEBHOOK_SECRET=3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd
 NODE_ENV=production
-PORT=3000
+PORT=3001
 ```
 
-Rechte: `chmod 600 .env.production` und `chown deploy:deploy`
-(entsprechend dem Deploy-User).
+Rechte: `chmod 600 .env.production` und `chown tobias:tobias`.
 
 ### 2a. Google Search Console + Analytics 4 OAuth (für G1 / G2)
 
@@ -184,7 +187,7 @@ Default-Pipeline — Static-Audits brauchen ihn nicht.
 TOKEN=$(openssl rand -hex 32)
 echo "BROWSERLESS_TOKEN=$TOKEN" >> infra/browserless/.env
 # In .env.production der Audit-App auch eintragen:
-echo "BROWSERLESS_TOKEN=$TOKEN" >> /var/www/seo-audit/.env.production
+echo "BROWSERLESS_TOKEN=$TOKEN" >> /home/tobias/apps/seo-audit/.env.production
 
 # 2. Container starten
 cd infra/browserless
@@ -241,22 +244,15 @@ So sind die beiden Service-Lifecycles voneinander entkoppelt.
 
 ## 3. Build & Start
 
-### 3.1 Deploy-User + Verzeichnis
+Volldetaillierte Anleitung lebt in [`infra/seo-audit/README.md`](infra/seo-audit/README.md).
+Kurzfassung hier:
+
+### 3.1 Verzeichnis + Repo
 
 ```bash
-# Als root:
-sudo adduser --system --group --shell /bin/bash --home /home/deploy deploy
-sudo mkdir -p /var/www
-sudo chown deploy:deploy /var/www
-
-# In die deploy-User-Shell wechseln:
-sudo -iu deploy
-```
-
-### 3.2 Repository klonen
-
-```bash
-cd /var/www
+sudo mkdir -p /home/tobias/apps
+sudo chown tobias:tobias /home/tobias/apps
+cd /home/tobias/apps
 git clone git@github.com:beckmann-consulting/seo-audit.git
 cd seo-audit
 ```
@@ -264,245 +260,141 @@ cd seo-audit
 Falls SSH-Key-Setup nicht vorhanden: `git clone https://github.com/beckmann-consulting/seo-audit.git`
 und später Deploy-Token verwenden.
 
-### 3.3 Dependencies + Build
+### 3.2 Dependencies + Build
 
 ```bash
 npm ci           # reproduzierbarer Install aus package-lock.json
 npm run build    # next build
 ```
 
-### 3.4 `next.config.js` Anpassungen für Production
+`next.config.js` ist bereits portabel (`outputFileTracingRoot: path.join(__dirname)`)
+und nutzt Root-Path — kein `basePath`-Hack nötig. Die App läuft unter der
+Subdomain `seo-audit.beckmanndigital.com` (siehe §4).
 
-Die lokale Config enthält einen harten Pfad:
-```js
-outputFileTracingRoot: '/home/tobias/projects/seo-audit',
-```
+### 3.3 `.env.production`
 
-**Für Production** muss das angepasst werden. Am einfachsten den Pfad
-entfernen (Next.js leitet ihn dann aus `cwd` ab):
+Siehe §2 für die Variablenliste und das Beispiel. `chmod 600` + `chown tobias:tobias`
+nicht vergessen.
 
-```js
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {},
-  serverExternalPackages: [],
-  // outputFileTracingRoot weglassen — Next.js nutzt cwd des Prozesses
-  basePath: '/seo-audit',
-  async rewrites() {
-    return [];
-  },
-};
-module.exports = nextConfig;
-```
-
-Der neue `basePath: '/seo-audit'` sorgt dafür, dass alle Routes automatisch
-unter `/seo-audit/*` ausgeliefert werden (`/seo-audit/api/audit`,
-`/seo-audit/widget`, `/seo-audit/_next/static/…`). Nach Änderung nochmal
-`npm run build`.
-
-### 3.5 PM2 Ecosystem-Konfig
-
-Lege auf dem Server `/var/www/seo-audit/ecosystem.config.js` an:
-
-```js
-module.exports = {
-  apps: [{
-    name: 'seo-audit',
-    cwd: '/var/www/seo-audit',
-    script: 'node_modules/next/dist/bin/next',
-    args: 'start -p 3000',
-    instances: 1,                    // siehe §8: Rate-Limit ist in-memory
-    exec_mode: 'fork',
-    autorestart: true,
-    max_memory_restart: '1G',
-    kill_timeout: 10000,             // SSE-Streams Zeit zum Aufräumen geben
-    env: {
-      NODE_ENV: 'production',
-      PORT: 3000,
-    },
-    env_file: '.env.production',     // liest GOOGLE_API_KEY
-    error_file: '/var/log/seo-audit/error.log',
-    out_file: '/var/log/seo-audit/out.log',
-    time: true,
-  }],
-};
-```
-
-Log-Verzeichnis anlegen:
-```bash
-sudo mkdir -p /var/log/seo-audit
-sudo chown deploy:deploy /var/log/seo-audit
-```
-
-### 3.6 Start
+### 3.4 systemd-Unit installieren + starten
 
 ```bash
-cd /var/www/seo-audit
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup systemd -u deploy --hp /home/deploy
-# Den pm2-generierten sudo-Befehl ausführen, dann:
-sudo systemctl enable pm2-deploy
+sudo cp infra/seo-audit/seo-audit.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now seo-audit.service
 ```
 
 Prüfen:
 ```bash
-pm2 status
-curl -fsS http://127.0.0.1:3000/seo-audit/api/config
+systemctl status seo-audit.service
+curl -fsS http://127.0.0.1:3001/api/config
 # → { hasGoogleKey: true }
 ```
 
----
-
-## 4. Nginx Konfiguration
-
-Die App wird als **Unterpfad** `/seo-audit/` in die bestehende
-`beckmanndigital.com`-Site integriert. Das hier ist das relevante Fragment
-— nicht ein neuer `server {}`-Block, sondern Zusatz im bestehenden.
-
-### 4.1 `/etc/nginx/sites-available/beckmanndigital.com`
-
-```nginx
-# --- Rate zone für Widget-API (Backup zum In-Memory-Limit im Code) ---
-limit_req_zone $binary_remote_addr zone=seo_widget:10m rate=10r/m;
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name beckmanndigital.com www.beckmanndigital.com;
-
-    ssl_certificate     /etc/letsencrypt/live/beckmanndigital.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/beckmanndigital.com/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
-    # --- Bestehende beckmanndigital.com Konfiguration bleibt hier ---
-    # root /var/www/html; ...
-
-    # =====================================================================
-    # SEO Audit Tool
-    # =====================================================================
-
-    # ----- SSE-Endpoint: Buffering AUS, langer Timeout -----
-    # Ohne diese Settings schluckt nginx die einzelnen `data: …\n\n`-Events
-    # und released sie erst am Stream-Ende → die Progress-Bar im Browser
-    # bleibt bei 2% hängen bis das ganze Audit fertig ist.
-    location = /seo-audit/api/audit {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_http_version      1.1;
-        proxy_set_header        Host $host;
-        proxy_set_header        X-Real-IP $remote_addr;
-        proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header        X-Forwarded-Proto $scheme;
-
-        proxy_buffering         off;
-        proxy_cache             off;
-        proxy_request_buffering off;
-        chunked_transfer_encoding on;
-        proxy_read_timeout      300s;
-        proxy_send_timeout      300s;
-        add_header              X-Accel-Buffering no always;
-    }
-
-    # ----- Widget-API: CORS (Backup zum Route-Handler) + Rate-Limit -----
-    location /seo-audit/api/widget/ {
-        limit_req               zone=seo_widget burst=5 nodelay;
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_http_version      1.1;
-        proxy_set_header        Host $host;
-        proxy_set_header        X-Real-IP $remote_addr;
-        proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header        X-Forwarded-Proto $scheme;
-        proxy_read_timeout      120s;
-
-        # Widget-API antwortet selbst mit CORS-Headern; diese hier sind Backup
-        add_header Access-Control-Allow-Origin  "https://beckmanndigital.com" always;
-        add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
-        add_header Access-Control-Allow-Headers "Content-Type" always;
-    }
-
-    # ----- Statische Next-Assets: 1 Jahr immutable -----
-    location ~* ^/seo-audit/_next/static/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_set_header        Host $host;
-        expires                 1y;
-        add_header              Cache-Control "public, max-age=31536000, immutable" always;
-    }
-
-    # ----- widget.js: 1 Stunde Cache (nicht immutable, darf aktualisiert werden) -----
-    location = /seo-audit/widget.js {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_set_header        Host $host;
-        expires                 1h;
-        add_header              Cache-Control "public, max-age=3600" always;
-    }
-
-    # ----- Fallback: alles andere unter /seo-audit/ -----
-    location /seo-audit/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_http_version      1.1;
-        proxy_set_header        Host $host;
-        proxy_set_header        X-Real-IP $remote_addr;
-        proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header        X-Forwarded-Proto $scheme;
-        proxy_read_timeout      60s;
-    }
-
-    # Gzip — nginx hat bessere Ratios auf Text als Next's built-in
-    gzip            on;
-    gzip_vary       on;
-    gzip_min_length 1024;
-    gzip_proxied    any;
-    gzip_types      text/plain text/css text/xml text/javascript
-                    application/javascript application/json application/xml
-                    application/rss+xml image/svg+xml;
-
-    # Optional: Brotli falls nginx-Modul installiert ist
-    # brotli on;
-    # brotli_types application/javascript application/json text/css text/html text/xml;
-}
-
-server {
-    listen 80;
-    listen [::]:80;
-    server_name beckmanndigital.com www.beckmanndigital.com;
-    return 301 https://$host$request_uri;
-}
-```
-
-### 4.2 Certbot
-
+Live-Logs:
 ```bash
-# Einmalig — ersetzt / erweitert den 443-Block automatisch
-sudo certbot --nginx -d beckmanndigital.com -d www.beckmanndigital.com
-
-# Auto-Renewal ist via systemd-Timer bereits aktiv; prüfen:
-sudo systemctl status certbot.timer
-sudo certbot renew --dry-run
-```
-
-### 4.3 Aktivieren + Reload
-
-```bash
-sudo ln -s /etc/nginx/sites-available/beckmanndigital.com \
-           /etc/nginx/sites-enabled/beckmanndigital.com
-sudo nginx -t
-sudo systemctl reload nginx
+journalctl -u seo-audit.service -f
 ```
 
 ---
 
-## 5. beckmanndigital.com Integration
+## 4. Caddy Konfiguration
+
+Die App lebt unter der **eigenen Subdomain** `seo-audit.beckmanndigital.com`,
+nicht mehr als Subpfad. Caddy ist der Edge-Webserver auf twb-server,
+managed TLS via ACME automatisch (kein Certbot, kein eigener Renewal-Timer).
+
+### 4.1 DNS-Voraussetzung
+
+Im DNS für `beckmanndigital.com` einen A-Record (und optional AAAA) für
+die Subdomain anlegen, der auf die twb-server-IP zeigt:
+
+```
+seo-audit.beckmanndigital.com.   IN   A   <twb-server-ipv4>
+```
+
+Caddy lädt das Let's-Encrypt-Zertifikat beim ersten Request automatisch
+nach.
+
+### 4.2 `/etc/caddy/Caddyfile`
+
+Die seo-audit-Site ist ein Block im globalen Caddyfile. Komplette
+Subdomain steht hier; öffentliche Pfade (Widget + Statics + Logo) werden
+explizit gematched, alles andere ist hinter Basic Auth.
+
+```caddy
+seo-audit.beckmanndigital.com {
+    @public {
+        path /widget /widget/* /widget.js /api/widget/* /_next/static/* /_next/image* /TWB_Logo_Transparent.png /favicon.ico
+    }
+
+    handle @public {
+        reverse_proxy localhost:3001
+    }
+
+    handle {
+        basic_auth {
+            Admin $2a$14$EXAMPLE_HASH_REPLACE_WITH_YOURS
+        }
+        reverse_proxy localhost:3001
+    }
+}
+```
+
+Der `@public`-Matcher trifft genau die Pfade, die anonyme User über das
+Widget-Embed auf beckmanndigital.com erreichen. Alles andere — die
+interne Audit-UI, der prompt-Tab, der Diff-Audit, die admin-tauglichen
+APIs — landet im default-`handle`-Block und ist durch Basic Auth
+geschützt.
+
+**Bcrypt-Hash erzeugen** für Basic Auth:
+
+```bash
+caddy hash-password
+# Eingabe-Prompt: das gewünschte Klartext-Passwort tippen.
+# Output: $2a$14$<hash> — Zeile in den `basic_auth`-Block einsetzen.
+```
+
+Der reale Hash auf twb-server ist NICHT der Beispiel-Hash oben; bitte
+einen eigenen erzeugen. Nach Änderung am Caddyfile:
+
+```bash
+sudo caddy fmt --overwrite /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+### 4.3 SSE-Streaming durch Caddy
+
+Caddy puffert SSE standardmäßig **nicht** (anders als nginx). Die
+`POST /api/audit`-Progress-Events kommen out-of-the-box live durch — kein
+`proxy_buffering off`-Hack nötig wie früher bei nginx. Falls ein
+Caddy-Update das Verhalten ändert, würde sich §8.1 entsprechend
+melden.
+
+### 4.4 Widget-API + Rate-Limiting
+
+Das Widget-Rate-Limit läuft im Anwendungs-Code (`src/app/api/widget/audit/route.ts`,
+`Map<ip, timestamps[]>`). Ein zusätzlicher Caddy-Layer existiert aktuell
+nicht — bei Bedarf könnte man `caddy-rate-limit` als Plugin einbinden,
+aber die In-Memory-Strategie reicht für ein Single-Instance-Deployment.
+Siehe §8.2 zu den Konsequenzen.
+
+---
+
+## 5. Integration in beckmanndigital.com
 
 ### 5.1 DNS
 
-Keine neuen DNS-Einträge nötig. `beckmanndigital.com` muss bereits per
-A/AAAA-Record auf diesen Server zeigen — der SEO-Audit läuft unter
-demselben Hostname als Unterpfad `/seo-audit`.
+Zwei DNS-Einträge:
+
+- `beckmanndigital.com` (A/AAAA → twb-server) — die Hauptseite, deployed
+  aus einem anderen Repo (`twb-consultancy`).
+- `seo-audit.beckmanndigital.com` (A/AAAA → twb-server) — diese App.
+  Caddy holt das Zertifikat automatisch nach dem ersten Request.
 
 Schnell-Check:
 ```bash
-dig +short beckmanndigital.com
+dig +short seo-audit.beckmanndigital.com
 # sollte die Server-IP zurückgeben
 ```
 
@@ -516,20 +408,20 @@ Snippets einfügen (Details: siehe `WIDGET_EMBED.md`):
 <div id="seo-audit-widget" data-lang="de"></div>
 
 <!-- Einmalig, am Seitenende oder im <head> -->
-<script src="https://beckmanndigital.com/seo-audit/widget.js" async></script>
+<script src="https://seo-audit.beckmanndigital.com/widget.js" async></script>
 ```
 
-Funktioniert **automatisch**, weil `widget.js` seine iframe-URL auf
-`https://beckmanndigital.com/seo-audit/widget` hardcoded hat — was genau
-dem basePath-Deployment entspricht.
+Das Widget-Skript injiziert ein iframe mit Source
+`https://seo-audit.beckmanndigital.com/widget`. Beide URLs (das Skript
+selbst und die iframe-Source) sind via `@public`-Matcher im Caddyfile
+ohne Basic Auth erreichbar — siehe §4.2.
 
-### 5.3 Next.js `basePath`
+### 5.3 Widget-Lead-Mailer (`seo-lead.php`)
 
-Siehe §3.4 — `basePath: '/seo-audit'` in `next.config.js` ist **zwingend**.
-Ohne die Einstellung generiert Next interne Links als `/api/audit` statt
-`/seo-audit/api/audit`, und nginx proxyt sie ins Leere.
-
-### 5.4 Widget-Lead-Mailer (`seo-lead.php`)
+<!-- TODO E1.6: Konkrete Pfade + Existenz-Behauptungen unten wurden in
+     E1.5 nicht gegen die twb-consultancy-Realität verifiziert. Falls
+     der Lead-Flow nicht mehr funktioniert oder die seo-lead.php an
+     einen anderen Ort gewandert ist, hier nachziehen. -->
 
 Die Widget-Lead-Zuleitung läuft über eine PHP-Datei, **die nicht in diesem
 Repo liegt**. Hintergrund:
@@ -550,11 +442,11 @@ Repo liegt**. Hintergrund:
 **Architektur des Lead-Flows:**
 
 ```
-Widget-Formular (Browser)
-  → POST /seo-audit/api/widget/audit        (Next.js, dieses Repo)
-        → forwardLead()                     (route.ts, Server-Seite)
-              → POST /seo-lead.php          (PHP auf Docroot, twb-consultancy-Repo)
-                    → mail()                → digital@twb-consultancy.services
+Widget-Formular (Browser, eingebettet auf beckmanndigital.com)
+  → POST seo-audit.beckmanndigital.com/api/widget/audit  (Next.js, dieses Repo)
+        → forwardLead()                                  (route.ts, Server-Seite)
+              → POST beckmanndigital.com/seo-lead.php    (PHP auf Docroot, twb-consultancy-Repo)
+                    → mail()                             → digital@twb-consultancy.services
 ```
 
 **Einrichtung am Server:**
@@ -593,7 +485,7 @@ Fehlerfeedback, du musst die Logs beobachten.
 - **Quota**: ~25 000 PSI-Requests/Tag pro Projekt (frei). Ohne Key:
   400/Tag als anonyme Anfrage → daher dringend empfohlen
 - **Eintragen**: in `.env.production` als `GOOGLE_API_KEY=…`, dann
-  `pm2 restart seo-audit`
+  `sudo systemctl restart seo-audit.service`
 
 ### 6.2 Qualys SSL Labs API — _kein Key nötig_
 
@@ -614,58 +506,69 @@ Falls später ein LLM-Key dazukommt: eintragen als
 
 ## 7. Monitoring & Wartung
 
-### 7.1 PM2
+### 7.1 systemd
 
 ```bash
-pm2 status                       # Laufender Zustand
-pm2 logs seo-audit --lines 200   # Live-Logs tail
-pm2 logs seo-audit --err         # nur Fehler
-pm2 monit                        # interaktiver Top-Style Monitor
-pm2 restart seo-audit            # Neustart ohne Downtime (kurzer 503)
-pm2 reload seo-audit             # Graceful-Reload bei cluster-Mode (hier fork)
-pm2 show seo-audit               # Details + File-Pfade
+systemctl status seo-audit.service                # Laufender Zustand
+journalctl -u seo-audit.service -n 200            # letzte 200 Log-Zeilen
+journalctl -u seo-audit.service -f                # Live-Tail
+journalctl -u seo-audit.service -p err            # nur Errors
+journalctl -u seo-audit.service --since "1 hour ago"
+sudo systemctl restart seo-audit.service          # Neustart (kurzer 502)
+sudo systemctl reload-or-restart seo-audit.service
 ```
+
+Bei aktivem Browserless-Container analog mit `browserless.service` (siehe
+[`infra/browserless/README.md`](infra/browserless/README.md)).
 
 ### 7.2 Log-Dateien
 
-| Datei                                | Quelle                        |
-|--------------------------------------|-------------------------------|
-| `/var/log/seo-audit/out.log`         | `console.log` des Audits      |
-| `/var/log/seo-audit/error.log`       | `console.error` + Uncaught    |
-| `/var/log/nginx/access.log`          | HTTP-Zugriffe (systemweit)    |
-| `/var/log/nginx/error.log`           | nginx-Fehler / 502s           |
+systemd hält stdout / stderr im Journal (kein File-Logging mehr).
 
-Widget-Leads erscheinen in `out.log` mit Präfix `[widget-lead]`.
+| Quelle                          | Befehl / Pfad                        |
+|---------------------------------|--------------------------------------|
+| App-Logs (stdout + stderr)      | `journalctl -u seo-audit.service`    |
+| Browserless-Logs                | `docker logs browserless` oder `journalctl -u browserless.service` |
+| Caddy-Access-Log (systemweit)   | `journalctl -u caddy`                |
+| Caddy-Error-Log                 | `journalctl -u caddy -p err`         |
+
+Widget-Leads erscheinen im App-Journal mit Präfix `[widget-lead]`:
+
+```bash
+journalctl -u seo-audit.service | grep '\[widget-lead\]'
+```
 
 ### 7.3 Rolling Deploy
 
-Kein separates Zero-Downtime-Setup nötig (single-instance + pm2). Der
+Kein Zero-Downtime-Setup (single-instance, in-memory rate-limit). Der
 Standard-Flow:
 
 ```bash
-sudo -iu deploy
-cd /var/www/seo-audit
+cd /home/tobias/apps/seo-audit
 git pull --ff-only origin main
-npm ci                           # nur wenn package-lock sich änderte
-npm run build                    # neue .next-Artefakte
-pm2 restart seo-audit --update-env   # ~2-3 Sekunden 502 möglich
+npm ci                                            # nur wenn package-lock sich änderte
+npm run build                                     # neue .next-Artefakte
+sudo systemctl restart seo-audit.service          # ~2-3 Sekunden 502 möglich
 ```
 
-Für echte Zero-Downtime: zwei Instanzen auf 3000/3001 + nginx upstream
-mit Round-Robin. **Achtung**: das bricht das In-Memory-Rate-Limit der
-Widget-API (siehe §8) — User könnten durch Pech von Instanz zu Instanz
-springen und den Limit umgehen.
+Für echte Zero-Downtime wäre Multi-Instance + Caddy-Load-Balancing
+nötig. **Achtung**: das bricht das In-Memory-Rate-Limit der Widget-API
+(siehe §8.2) — User könnten durch Pech von Instanz zu Instanz springen
+und den Limit umgehen. Vor einem Multi-Instance-Setup also zuerst auf
+Redis/Valkey-basiertes Rate-Limiting umstellen.
 
 ### 7.4 Backup
 
 Was gesichert werden muss:
 
-| Pfad                                    | Häufigkeit         |
-|-----------------------------------------|--------------------|
-| `/var/www/seo-audit/.env.production`    | Bei jeder Änderung |
-| `/var/www/seo-audit/ecosystem.config.js`| Bei jeder Änderung |
-| `/etc/nginx/sites-available/beckmanndigital.com` | Bei jeder Änderung |
-| `/etc/letsencrypt/`                     | Wöchentlich        |
+| Pfad                                              | Häufigkeit         |
+|---------------------------------------------------|--------------------|
+| `/home/tobias/apps/seo-audit/.env.production`     | Bei jeder Änderung |
+| `/etc/systemd/system/seo-audit.service`           | Bei jeder Änderung (Repo-Source: `infra/seo-audit/`) |
+| `/etc/systemd/system/browserless.service`         | Bei jeder Änderung (Repo-Source: `infra/browserless/`) — falls deployed |
+| `/home/tobias/apps/seo-audit-browserless/.env`    | Bei jeder Änderung — falls Browserless deployed |
+| `/etc/caddy/Caddyfile`                            | Bei jeder Änderung |
+| `/var/lib/caddy/`                                 | Wöchentlich (enthält ACME-Zertifikate, regenerierbar) |
 
 Der Source-Code selbst lebt in Git — kein Backup nötig. Repository auf
 `scm.linefinity.com:t.beckmann/seo-audit.git` + Spiegel auf
@@ -678,29 +581,27 @@ Deployment ist im Wesentlichen replizierbar aus Git + .env.production.
 
 ## 8. Bekannte Produktions-Gotchas
 
-### 8.1 SSE + nginx Buffering
+### 8.1 SSE-Streaming durch Caddy
 
-Der Hauptaudit-Endpunkt (`POST /seo-audit/api/audit`) streamt Progress-
-Events via Server-Sent Events. nginx puffert diese standardmäßig und
-released sie am Stream-Ende → die Progress-Bar zeigt **bis zum Audit-Ende
-2%** an und springt dann auf 100%.
+Der Hauptaudit-Endpunkt (`POST /api/audit`) streamt Progress-Events via
+Server-Sent Events. **Caddy puffert SSE standardmäßig nicht** — die
+`data: …\n\n`-Events kommen out-of-the-box live durch.
 
-**Fix**: Die `location = /seo-audit/api/audit`-Block aus §4 mit
-`proxy_buffering off`, `proxy_cache off`, `X-Accel-Buffering: no`
-verhindert das. **Nicht weglassen.**
+Falls ein Caddy-Update das Verhalten ändert (oder bei Migration auf einen
+anderen Reverse-Proxy): mit `flush_interval -1` im `reverse_proxy`-Block
+explizit Streaming erzwingen.
 
 ### 8.2 In-Memory Rate-Limit (Widget)
 
 `src/app/api/widget/audit/route.ts` nutzt `Map<ip, timestamps[]>` für das
 3-Audits-pro-Stunde-Limit. **Konsequenzen**:
 
-- **Server-Restart = Limit resettet.** Wenn pm2 neu startet oder ein
-  Deploy läuft, kann dieselbe IP sofort wieder 3 Audits triggern.
-- **Multi-Instance = Limit pro Instanz.** Bei Cluster-Mode oder
-  horizontalem Scaling muss auf Redis/Valkey umgestellt werden.
-- Die nginx-Limit-Zone aus §4.1 (`limit_req_zone` 10 req/min burst 5)
-  ist ein Fallback und hält Burst-Attacken ab, auch wenn der App-Limit
-  ausgehebelt wird.
+- **Server-Restart = Limit resettet.** Bei `systemctl restart` oder
+  Deploy kann dieselbe IP sofort wieder 3 Audits triggern.
+- **Multi-Instance = Limit pro Instanz.** Falls horizontal skaliert
+  wird, muss vorher auf Redis/Valkey umgestellt werden.
+- Caddy hat aktuell **keinen** zusätzlichen Rate-Limiter — bei Bedarf
+  könnte `caddy-rate-limit` als Plugin eingebunden werden.
 
 ### 8.3 localStorage im Widget und in der Haupt-UI
 
@@ -740,21 +641,21 @@ Der Audit wird dann hart abgebrochen. Empfehlung: `config.maxPages`
 im Client-Payload auf ein vernünftiges Limit setzen (Default: `0` =
 unlimited). Wir empfehlen 200 für Produktions-Audits.
 
-### 8.7 `outputFileTracingRoot` in `next.config.js`
+### 8.7 widget.js Caching auf Embedder-Seite
 
-Die eingecheckte Config hat `outputFileTracingRoot: '/home/tobias/projects/seo-audit'`
-— das ist ein **lokaler Dev-Pfad** und muss für Production entfernt oder
-angepasst werden (siehe §3.4). Ohne Anpassung warnt `next build` mit
-"detected workspace root mismatch" und macht möglicherweise File-Tracing
-auf einen nicht-existenten Pfad.
+`public/widget.js` ist Teil des Git-Repos und wird von Caddy
+ausgeliefert. Caddy setzt aktuell keinen expliziten Cache-Control-Header
+für die Datei — Browser-Default ist meist heuristisches Caching, das
+Updates im Bereich Stunden bis Tage verzögern kann.
 
-### 8.8 Public directory + widget.js Caching
+Bei kritischen Bugs in `widget.js`:
 
-`public/widget.js` ist Teil des Git-Repos. Nach jeder Änderung an der
-Datei: `Cache-Control: max-age=3600` aus §4 bedeutet dass Fremd-Websites
-bis zu 1 Stunde lang die alte Version einbetten. Bei kritischen Bugs
-den Cache-Header kurzzeitig auf `max-age=60` setzen oder Versionen via
-Query-String pushen (`widget.js?v=2`).
+- Versionierten Query-String pushen: `<script src="https://seo-audit.beckmanndigital.com/widget.js?v=2">`.
+- Oder im Caddyfile per `header /widget.js Cache-Control "public, max-age=60"`
+  einen kurzen TTL setzen.
+
+Das vorherige nginx-Setup hatte `Cache-Control: public, max-age=3600`
+für die widget.js-Route gesetzt; bei Bedarf in Caddy nachziehen.
 
 ---
 
@@ -766,33 +667,35 @@ Weiterreichen des neuen Stands.
 ### 9.1 API Health
 
 ```bash
-# Lokal auf dem Server (geht am nginx vorbei)
-curl -fsS http://127.0.0.1:3000/seo-audit/api/config | jq .
+# Lokal auf dem Server (geht an Caddy vorbei)
+curl -fsS http://127.0.0.1:3001/api/config | jq .
 # → {"hasGoogleKey":true}
 
-# Über nginx + HTTPS
-curl -fsS https://beckmanndigital.com/seo-audit/api/config | jq .
+# Über Caddy + HTTPS — die /api/config-Route ist nicht im @public-Matcher,
+# also greift Basic Auth. Mit -u oder gleich gegen den Loopback testen.
+curl -fsS -u Admin:<PASSWORD> https://seo-audit.beckmanndigital.com/api/config | jq .
 # → gleiche Response
 ```
 
-### 9.2 Widget erreichbar
+### 9.2 Widget erreichbar (öffentlich, kein Basic Auth)
 
 ```bash
 curl -fsS -o /dev/null -w '%{http_code}\n' \
-  https://beckmanndigital.com/seo-audit/widget
+  https://seo-audit.beckmanndigital.com/widget
 # → 200
 
 curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' \
-  https://beckmanndigital.com/seo-audit/widget.js
+  https://seo-audit.beckmanndigital.com/widget.js
 # → 200 application/javascript (oder text/javascript)
 ```
 
 ### 9.3 SSE-Stream funktioniert
 
-Dieser Test ist kritisch — ohne SSE bleibt die Progress-Bar hängen:
+Dieser Test ist kritisch — ohne SSE bleibt die Progress-Bar hängen.
+`/api/audit` ist nicht im @public-Matcher; mit Basic Auth testen:
 
 ```bash
-curl -N -sS -X POST https://beckmanndigital.com/seo-audit/api/audit \
+curl -N -sS -u Admin:<PASSWORD> -X POST https://seo-audit.beckmanndigital.com/api/audit \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com","modules":["seo","tech"],"author":"test","maxPages":1,"quickMode":true}' \
   | head -30
@@ -800,43 +703,43 @@ curl -N -sS -X POST https://beckmanndigital.com/seo-audit/api/audit \
 
 Erwartete Ausgabe: **mehrere `data: {...}\n\n`-Zeilen über einige
 Sekunden verteilt** (nicht erst alle am Ende auf einmal). Wenn alles
-erst am Schluss kommt → nginx-Buffering ist aktiv, §8.1 Fix anwenden.
+erst am Schluss kommt → Caddy-Reverse-Proxy puffert (sollte er nicht;
+siehe §8.1).
 
 ### 9.4 PDF-Export funktioniert
 
 PDF wird client-seitig gerendert (jsPDF im Browser), daher im Browser
 testen:
 
-1. https://beckmanndigital.com/seo-audit aufrufen
+1. https://seo-audit.beckmanndigital.com aufrufen, Basic Auth einloggen
 2. Einen Audit von `https://example.com` laufen lassen
 3. Bei "PDF Deutsch" klicken → Download startet, PDF enthält Cover-Seite
    mit orangem Titel + TWB-Logo
 
-Wenn das Logo im PDF fehlt, ist die Widget-Static-Route zu `/TWB_Logo_Transparent.png`
-nicht erreichbar — der basePath muss dann auch im pdf-generator-Code
-berücksichtigt werden. Aktuell lädt er `/TWB_Logo_Transparent.png`
-absolut vom Origin, was mit basePath `/seo-audit` zu 404 führen kann —
-siehe PDF-Generator-`loadLogoDataUrl()` ggf. auf `/seo-audit/TWB_Logo_Transparent.png`
-patchen.
+Wenn das Logo fehlt: `pdf-generator.ts:loadLogoDataUrl()` lädt
+`/TWB_Logo_Transparent.png` absolut vom Origin. Der Pfad ist im
+@public-Matcher des Caddyfile freigeschaltet, sollte also direkt
+funktionieren. Falls 404: prüfen, ob die Datei in `public/` ist und der
+Build neu gelaufen ist.
 
-### 9.5 Widget-API + Rate-Limit
+### 9.5 Widget-API + Rate-Limit (öffentlich, kein Basic Auth)
 
 ```bash
 # Gültiger Audit-Request
-curl -fsS -X POST https://beckmanndigital.com/seo-audit/api/widget/audit \
+curl -fsS -X POST https://seo-audit.beckmanndigital.com/api/widget/audit \
   -H 'Content-Type: application/json' \
   -H 'Origin: https://beckmanndigital.com' \
   -d '{"url":"https://example.com","lang":"de"}' \
   | jq .score
 
 # Nach 4 Requests aus derselben IP sollte 429 kommen
-# (In-Memory-Limit + nginx-burst deckelt zusätzlich)
+# (In-Memory-Limit aus dem App-Code; siehe §8.2)
 ```
 
 ### 9.6 Logs prüfen
 
 ```bash
-pm2 logs seo-audit --lines 50 --nostream
+journalctl -u seo-audit.service -n 50 --no-pager
 # Nach erfolgreichem Audit: keine `[widget-audit] failed:` Einträge
 ```
 
@@ -844,15 +747,17 @@ pm2 logs seo-audit --lines 50 --nostream
 
 ## Ready-Checklist (TL;DR)
 
-- [ ] Node 24 / nginx / pm2 / certbot installiert
-- [ ] Deploy-User `deploy` angelegt, Repo unter `/var/www/seo-audit` geklont
+- [ ] Node 24 / Caddy / docker (optional) installiert
+- [ ] Repo unter `/home/tobias/apps/seo-audit` geklont (User `tobias`)
 - [ ] `npm ci && npm run build` durchgelaufen
-- [ ] `next.config.js`: `outputFileTracingRoot` entfernt, `basePath: '/seo-audit'` gesetzt, erneut gebaut
-- [ ] `.env.production` mit `GOOGLE_API_KEY` gesetzt, `chmod 600`
-- [ ] `ecosystem.config.js` angelegt, `pm2 start` erfolgreich, `pm2 save` + `pm2 startup` ausgeführt
-- [ ] `/etc/nginx/sites-available/beckmanndigital.com` erweitert um `/seo-audit/*` location-Blöcke inkl. SSE-Settings
-- [ ] Certbot-Zertifikat aktiv, Auto-Renewal-Timer läuft
-- [ ] `curl /seo-audit/api/config` antwortet `{hasGoogleKey:true}`
+- [ ] `.env.production` mit `GOOGLE_API_KEY` und `PORT=3001` gesetzt, `chmod 600`
+- [ ] `infra/seo-audit/seo-audit.service` nach `/etc/systemd/system/` kopiert, `daemon-reload`, `enable --now`
+- [ ] `systemctl status seo-audit.service` zeigt `active (running)` auf Port 3001
+- [ ] DNS für `seo-audit.beckmanndigital.com` zeigt auf den Server
+- [ ] Caddyfile-Block für `seo-audit.beckmanndigital.com` aktiv, Basic-Auth-Hash gesetzt, `systemctl reload caddy`
+- [ ] Caddy-Zertifikat automatisch ausgestellt (im Browser ✓ statt ⚠)
+- [ ] `curl http://127.0.0.1:3001/api/config` antwortet `{hasGoogleKey:true}`
 - [ ] SSE-Stream-Test (§9.3) zeigt **progressiv** ausgelieferte Events
 - [ ] Widget-Embed auf einer beckmanndigital.com-Testseite erscheint und lädt
 - [ ] PDF-Export funktioniert im Browser-Flow
+- [ ] Optional bei JS-Rendering-Bedarf: Browserless (`infra/browserless/`) deployed und `browserless.service` aktiv

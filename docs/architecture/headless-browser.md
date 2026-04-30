@@ -117,7 +117,7 @@ Caddy-Proxy zwischen ihnen.
 ```mermaid
 flowchart TD
     Client[Browser / API-Caller] -->|HTTPS| Caddy
-    Caddy -->|"127.0.0.1:3000"| Next[Next.js seo-audit App]
+    Caddy -->|"127.0.0.1:3001"| Next[Next.js seo-audit App]
     Next -->|"in-process"| Sel{Renderer-Auswahl<br/>config.rendering}
     Sel -->|static| Static[StaticRenderer<br/>Node fetch + node-html-parser]
     Sel -->|js| Js[JsRenderer]
