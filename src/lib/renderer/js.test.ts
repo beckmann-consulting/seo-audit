@@ -19,7 +19,7 @@ function createStubPage(opts: {
   finalUrl: string;
   status: number;
   headers?: Record<string, string>;
-  responses?: { url: string; status: number }[];
+  responses?: { url: string; status: number; resourceType?: string }[];
   consoleMessages?: { type: 'error' | 'log'; text: string }[];
   pageErrors?: string[];
   failedRequests?: { url: string; errorText: string }[];
@@ -29,7 +29,15 @@ function createStubPage(opts: {
   const events: PageEvent[] = [];
   const fireEvents = () => {
     for (const r of opts.responses ?? []) {
-      const respStub = { url: () => r.url, status: () => r.status, headers: () => ({}) };
+      const respStub = {
+        url: () => r.url,
+        status: () => r.status,
+        headers: () => ({}),
+        // E4.5: requestX().resourceType() is read in the httpErrors
+        // collection branch. Default 'other' mirrors Playwright's
+        // fallback when the request has no specific type.
+        request: () => ({ resourceType: () => r.resourceType ?? 'other' }),
+      };
       events.filter(e => e.event === 'response').forEach(e => e.handler(respStub));
     }
     for (const e of opts.consoleMessages ?? []) {
@@ -240,6 +248,86 @@ describe('JsRenderer', () => {
       'https://example.com/',
       'https://example.com/middle',
     ]);
+    await r.close();
+  });
+
+  it('collects 4xx/5xx sub-resource responses into httpErrors with url + status + resourceType', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const page = createStubPage({
+      html: '<html></html>',
+      finalUrl: 'https://example.com/',
+      status: 200,
+      responses: [
+        // Main page response (excluded — already represented by RenderResult.status).
+        { url: 'https://example.com/', status: 200, resourceType: 'document' },
+        // 4xx CSS — should land in httpErrors.
+        { url: 'https://example.com/missing.css', status: 404, resourceType: 'stylesheet' },
+        // 5xx XHR — should land in httpErrors.
+        { url: 'https://api.example.com/data', status: 503, resourceType: 'xhr' },
+        // 200 image — excluded.
+        { url: 'https://example.com/logo.png', status: 200, resourceType: 'image' },
+        // 3xx — excluded (lives in redirectChain instead).
+        { url: 'https://example.com/old-script.js', status: 301, resourceType: 'script' },
+      ],
+    });
+    const browser = createStubBrowser(page);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.fetch('https://example.com/');
+    expect(result.httpErrors).toEqual([
+      { url: 'https://example.com/missing.css', status: 404, resourceType: 'stylesheet' },
+      { url: 'https://api.example.com/data', status: 503, resourceType: 'xhr' },
+    ]);
+    await r.close();
+  });
+
+  it('returns httpErrors as an empty array when no 4xx/5xx responses occurred', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const page = createStubPage({
+      html: '<html></html>',
+      finalUrl: 'https://example.com/',
+      status: 200,
+      responses: [
+        { url: 'https://example.com/', status: 200, resourceType: 'document' },
+        { url: 'https://example.com/style.css', status: 200, resourceType: 'stylesheet' },
+      ],
+    });
+    const browser = createStubBrowser(page);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.fetch('https://example.com/');
+    expect(result.httpErrors).toEqual([]);
+    await r.close();
+  });
+
+  it('does NOT include the main-page 4xx response in httpErrors (already in RenderResult.status)', async () => {
+    // Edge: a page itself returns 404 (e.g. a /not-found URL). The
+    // 404 is captured on RenderResult.status — we don't double-count
+    // it in httpErrors, which is reserved for sub-resource errors.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    const page = createStubPage({
+      html: '<html></html>',
+      finalUrl: 'https://example.com/missing-page',
+      status: 404,
+      responses: [
+        { url: 'https://example.com/missing-page', status: 404, resourceType: 'document' },
+      ],
+    });
+    const browser = createStubBrowser(page);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.fetch('https://example.com/missing-page');
+    expect(result.status).toBe(404);
+    expect(result.httpErrors).toEqual([]);
     await r.close();
   });
 

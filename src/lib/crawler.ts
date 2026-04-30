@@ -54,6 +54,7 @@ function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number
     axeViolations: r.axeViolations,
     renderTimeMs: r.renderTimeMs,
     staticVsRenderedDiff: r.staticVsRenderedDiff,
+    httpErrors: r.httpErrors,
   };
 }
 

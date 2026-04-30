@@ -152,6 +152,34 @@ describe('AutoRenderer — E4 fields (renderTimeMs + staticVsRenderedDiff)', () 
     expect(result.staticVsRenderedDiff?.wordCountDelta).toBe(3);
   });
 
+  it('forwards httpErrors from the JS path on escalation', async () => {
+    const staticStub = stubRenderer('static', { html: SPA_SHELL_HTML, status: 200 });
+    const jsStub = stubRenderer('js', {
+      html: '<html><body>hydrated</body></html>',
+      status: 200,
+      httpErrors: [
+        { url: 'https://example.com/broken.js', status: 404, resourceType: 'script' },
+      ],
+    });
+
+    const auto = new AutoRenderer(staticStub, jsStub);
+    const result = await auto.fetch('https://example.com/');
+
+    expect(result.httpErrors).toEqual([
+      { url: 'https://example.com/broken.js', status: 404, resourceType: 'script' },
+    ]);
+  });
+
+  it('leaves httpErrors undefined when not escalated', async () => {
+    const staticStub = stubRenderer('static', { html: SERVER_RENDERED_HTML, status: 200 });
+    const jsStub = stubRenderer('js', { html: 'never-called' });
+
+    const auto = new AutoRenderer(staticStub, jsStub);
+    const result = await auto.fetch('https://example.com/');
+
+    expect(result.httpErrors).toBeUndefined();
+  });
+
   it('leaves renderTimeMs + staticVsRenderedDiff undefined when not escalated', async () => {
     const staticStub = stubRenderer('static', { html: SERVER_RENDERED_HTML, status: 200 });
     const jsStub = stubRenderer('js', { html: 'never-called' });

@@ -23,7 +23,7 @@
 
 import type { Browser, BrowserContext, Page, Response as PWResponse } from 'playwright-core';
 import type { Renderer, RenderResult, RendererOptions } from './types';
-import type { AxeViolation } from '@/types';
+import type { AxeViolation, HttpError } from '@/types';
 import { StaticRenderer } from './static';
 import { countVisibleWords } from '../util/visible-text';
 import { computeRenderDiff } from '../util/render-diff';
@@ -172,6 +172,24 @@ export class JsRenderer implements Renderer {
         if (status >= 300 && status < 400) chain.push(r.url());
       }
 
+      // E4.5: HTTP 4xx/5xx errors for sub-resources. The main-page
+      // response is excluded — its status lives on RenderResult.status,
+      // duplicating it here would just inflate the count. Resource type
+      // comes from request().resourceType() (Playwright's classifier).
+      const httpErrors: HttpError[] = [];
+      for (const r of responses) {
+        if (r.url() === finalUrl) continue;
+        const status = r.status();
+        if (status < 400 || status >= 600) continue;
+        let resourceType = 'other';
+        try {
+          resourceType = r.request().resourceType();
+        } catch {
+          /* request may already be GC'd; fall back to 'other' */
+        }
+        httpErrors.push({ url: r.url(), status, resourceType });
+      }
+
       // Lowercased headers from the final response.
       const headersObj: Record<string, string> = {};
       for (const [name, value] of Object.entries(navResp.headers())) {
@@ -194,6 +212,7 @@ export class JsRenderer implements Renderer {
         failedRequests,
         axeViolations,
         renderTimeMs,
+        httpErrors,
       };
     } finally {
       await page.close().catch(() => { /* page may already be closed */ });

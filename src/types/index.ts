@@ -7,6 +7,20 @@ export type Effort = 'low' | 'medium' | 'high';
 export type Impact = 'low' | 'medium' | 'high';
 export type Lang = 'de' | 'en';
 
+// HTTP-layer error captured during a JS render. Sub-resources only —
+// the main-page response is already represented by RenderResult.status,
+// so we don't double-count it here. Complementary to PageData.failed
+// Requests (which is the network-layer kind: DNS, CORS, ERR_ABORTED
+// — Playwright fires `requestfailed` OR `response`, not both).
+export interface HttpError {
+  url: string;
+  status: number;        // 400-599
+  // Playwright req.resourceType(): 'document' | 'stylesheet' | 'script'
+  // | 'image' | 'media' | 'font' | 'fetch' | 'xhr' | 'eventsource' |
+  // 'websocket' | 'manifest' | 'texttrack' | 'other'.
+  resourceType: string;
+}
+
 // Static-vs-rendered diff for a JS-rendered page. Only set in the JS
 // path (rendering=js, or rendering=auto when the page was escalated).
 // Threshold judgements ("is this delta significant?") live in the
@@ -132,6 +146,9 @@ export interface PageData {
   // escalation). undefined for static-only pages.
   renderTimeMs?: number;
   staticVsRenderedDiff?: StaticVsRenderedDiff;
+  // E4.5: 4xx/5xx responses for sub-resources during the JS render.
+  // Complementary to failedRequests (network-layer failures).
+  httpErrors?: HttpError[];
 }
 
 export interface Finding {
@@ -316,6 +333,8 @@ export interface PageSEOData {
   // or rendering=auto with escalation); undefined for static-only pages.
   renderTimeMs?: number;
   staticVsRenderedDiff?: StaticVsRenderedDiff;
+  // E4.5: HTTP 4xx/5xx sub-resource errors captured during JS render.
+  httpErrors?: HttpError[];
   // Body-content fingerprints for duplicate / near-duplicate detection.
   // bodyTextHash is FNV-1a hex over normalised body text — equality means
   // exact-duplicate content. bodyMinhash is a fixed-length MinHash

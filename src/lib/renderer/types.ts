@@ -6,7 +6,7 @@
 // the static fetch result captured in parallel — the SPA / "JS
 // required" finding compares the two.
 
-import type { AxeViolation, StaticVsRenderedDiff } from '@/types';
+import type { AxeViolation, StaticVsRenderedDiff, HttpError } from '@/types';
 
 export interface RenderResult {
   url: string;            // the URL we asked for
@@ -30,6 +30,9 @@ export interface RenderResult {
   // undefined when the result came from StaticRenderer.
   renderTimeMs?: number;
   staticVsRenderedDiff?: StaticVsRenderedDiff;
+  // E4.5 — HTTP 4xx/5xx sub-resource errors during the JS render.
+  // Complementary to failedRequests (network-layer kind).
+  httpErrors?: HttpError[];
 }
 
 export interface Renderer {

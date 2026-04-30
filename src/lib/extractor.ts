@@ -537,5 +537,6 @@ export function extractPageSEO(page: PageData): PageSEOData {
     axeViolations: page.axeViolations,
     renderTimeMs: page.renderTimeMs,
     staticVsRenderedDiff: page.staticVsRenderedDiff,
+    httpErrors: page.httpErrors,
   };
 }
