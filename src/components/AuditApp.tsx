@@ -527,6 +527,8 @@ export default function AuditApp() {
                 onKeyDown={e => e.key === 'Enter' && runAudit()}
                 placeholder="https://example.com"
                 style={inputStyle}
+                autoComplete="off"
+                data-kpxc-ignore="true"
               />
               <button onClick={runAudit} disabled={loading || !url.trim()} style={primaryBtnStyle}>
                 {loading ? t('Läuft…', 'Running…') : t('Audit starten', 'Start audit')}
