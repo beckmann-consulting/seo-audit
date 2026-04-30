@@ -26,6 +26,7 @@ import type { Renderer, RenderResult, RendererOptions } from './types';
 import type { AxeViolation } from '@/types';
 import { StaticRenderer } from './static';
 import { countVisibleWords } from '../util/visible-text';
+import { computeRenderDiff } from '../util/render-diff';
 
 export interface JsRendererOptions extends RendererOptions {
   endpoint: string;       // ws://localhost:9223 (no trailing slash, no token)
@@ -101,8 +102,14 @@ export class JsRenderer implements Renderer {
 
     const r = jsResult.value;
     if (staticOutcome.status === 'fulfilled' && staticOutcome.value.html) {
-      r.staticHtml = staticOutcome.value.html;
-      r.staticWordCount = countVisibleWords(staticOutcome.value.html);
+      const staticHtml = staticOutcome.value.html;
+      const staticWordCount = countVisibleWords(staticHtml);
+      r.staticHtml = staticHtml;
+      r.staticWordCount = staticWordCount;
+      // E4: compute the diff once, here, where we have both HTMLs.
+      // Only set when we actually have a static body to compare; if
+      // the static fetch came back with html='' it's not a useful diff.
+      r.staticVsRenderedDiff = computeRenderDiff(staticHtml, staticWordCount, r.html);
     }
     return r;
   }
@@ -127,6 +134,11 @@ export class JsRenderer implements Renderer {
     page.on('response', resp => responses.push(resp));
 
     try {
+      // E4: renderTimeMs covers only goto + content — the actual
+      // Browserless render. loadTimeMs (further down) covers the
+      // whole fetch including axe so the two metrics measure
+      // different things on purpose.
+      const renderStart = Date.now();
       const navResp = await page.goto(url, {
         waitUntil: 'networkidle',
         timeout: this.pageTimeoutMs,
@@ -137,6 +149,7 @@ export class JsRenderer implements Renderer {
       }
 
       const html = await page.content();
+      const renderTimeMs = Date.now() - renderStart;
       const finalUrl = page.url();
       // axe runs AFTER content capture so the page DOM is what users
       // see, not what's loading. Failures are swallowed — a flaky axe
@@ -180,6 +193,7 @@ export class JsRenderer implements Renderer {
         consoleErrors,
         failedRequests,
         axeViolations,
+        renderTimeMs,
       };
     } finally {
       await page.close().catch(() => { /* page may already be closed */ });

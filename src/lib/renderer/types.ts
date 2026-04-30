@@ -6,7 +6,7 @@
 // the static fetch result captured in parallel — the SPA / "JS
 // required" finding compares the two.
 
-import type { AxeViolation } from '@/types';
+import type { AxeViolation, StaticVsRenderedDiff } from '@/types';
 
 export interface RenderResult {
   url: string;            // the URL we asked for
@@ -26,6 +26,10 @@ export interface RenderResult {
   consoleErrors?: string[];  // page.on('console') / page.on('pageerror')
   failedRequests?: string[]; // resources the browser couldn't load
   axeViolations?: AxeViolation[]; // populated when JsRenderer.runAxe is true
+  // E4 — persisted by the JsRenderer when JS render actually ran.
+  // undefined when the result came from StaticRenderer.
+  renderTimeMs?: number;
+  staticVsRenderedDiff?: StaticVsRenderedDiff;
 }
 
 export interface Renderer {

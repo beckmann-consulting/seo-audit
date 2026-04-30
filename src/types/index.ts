@@ -7,6 +7,21 @@ export type Effort = 'low' | 'medium' | 'high';
 export type Impact = 'low' | 'medium' | 'high';
 export type Lang = 'de' | 'en';
 
+// Static-vs-rendered diff for a JS-rendered page. Only set in the JS
+// path (rendering=js, or rendering=auto when the page was escalated).
+// Threshold judgements ("is this delta significant?") live in the
+// E5 finding consumers, NOT here — keeping the data layer neutral
+// means thresholds can be tuned without rewriting persisted audits.
+export interface StaticVsRenderedDiff {
+  wordCountStatic: number;
+  wordCountRendered: number;
+  wordCountDelta: number;        // rendered - static (can be negative)
+  wordCountDeltaRatio: number;   // delta / max(1, static)
+  linkCountStatic: number;
+  linkCountRendered: number;
+  linkCountDelta: number;
+}
+
 // Subset of the @axe-core/playwright violation shape that we actually
 // surface — keeps the audit-result payload compact and version-stable.
 export interface AxeViolation {
@@ -112,6 +127,11 @@ export interface PageData {
   failedRequests?: string[];
   renderMode?: 'static' | 'js';
   axeViolations?: AxeViolation[];
+  // E4: persisted render-time + diff. Set when this page actually
+  // went through Browserless (rendering=js, or rendering=auto with
+  // escalation). undefined for static-only pages.
+  renderTimeMs?: number;
+  staticVsRenderedDiff?: StaticVsRenderedDiff;
 }
 
 export interface Finding {
@@ -291,6 +311,11 @@ export interface PageSEOData {
   consoleErrors?: string[];        // browser console / page errors during render
   failedRequests?: string[];       // sub-resources that failed to load
   axeViolations?: AxeViolation[];  // axe-core WCAG findings (only when accessibility module is active + rendering=js)
+  // E4: persisted render-time + diff for downstream finding consumers.
+  // Set when this page actually went through Browserless (rendering=js
+  // or rendering=auto with escalation); undefined for static-only pages.
+  renderTimeMs?: number;
+  staticVsRenderedDiff?: StaticVsRenderedDiff;
   // Body-content fingerprints for duplicate / near-duplicate detection.
   // bodyTextHash is FNV-1a hex over normalised body text — equality means
   // exact-duplicate content. bodyMinhash is a fixed-length MinHash
