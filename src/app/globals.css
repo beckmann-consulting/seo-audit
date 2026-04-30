@@ -5,18 +5,37 @@
   --surface: #ffffff;
   --border: #e0ddd8;
   --border-light: #eeebe6;
+  /* Slightly warmer than --border-light, used for inline card / row dividers
+     in the audit UI. Could be folded into --border-light in a later pass. */
+  --border-soft: #f0ede8;
+  --border-mid: #e0e0e0;
   --text: #1a1a18;
+  /* Slightly stronger than --text-muted for body copy in finding details
+     and table headers; #555 / #333 also map here (≤3 RGB drift). */
+  --text-strong: #444444;
   --text-muted: #6b6b68;
   --text-faint: #9b9b98;
   --accent: #ff7a00;
   --pass: #3b6d11;
+  /* Strengths-bullet on pass-bg — needs higher contrast than --pass. */
+  --pass-strong: #27500a;
   --pass-bg: #eaf3de;
+  --pass-border: #c0dd97;
   --warn: #854f0b;
   --warn-bg: #faeeda;
+  /* StatusBanner warning variant uses a softer yellow than --warn-bg.
+     Different visual weight — kept separate. */
+  --warn-bg-banner: #faf0d6;
+  --warn-border: #e8c777;
   --fail: #a32d2d;
   --fail-bg: #fcebeb;
+  --fail-border: #f7c1c1;
   --info: #185fa5;
   --info-bg: #e6f1fb;
+  /* StatusBanner info variant + adjustments-counter badge use a lighter
+     blue than --info-bg. Different visual weight — kept separate. */
+  --info-bg-banner: #eaf0f7;
+  --info-border: #b7cce3;
   --radius: 8px;
   --radius-lg: 12px;
 }

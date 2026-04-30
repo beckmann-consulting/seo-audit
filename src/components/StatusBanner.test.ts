@@ -19,11 +19,14 @@ describe('StatusBanner — renders one snapshot per variant', () => {
       // The variant-specific palette must appear in the rendered style
       // string. Brittle-on-purpose: if the colour table changes we want
       // a deliberate snapshot update, not a silent visual drift.
+      // The PALETTE was migrated from hex to CSS custom-property tokens
+      // (P7 step 1) — assertions track the var(--token) names, not the
+      // resolved hex (which depends on the active theme at render time).
       const expectedFg = {
-        ok: '#3b6d11',
-        info: '#185fa5',
-        warning: '#854f0b',
-        error: '#a32d2d',
+        ok: 'var(--pass)',
+        info: 'var(--info)',
+        warning: 'var(--warn)',
+        error: 'var(--fail)',
       }[variant];
       expect(html).toContain(`color:${expectedFg}`);
       expect(html).toContain(`Title for ${variant}`);

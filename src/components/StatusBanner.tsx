@@ -23,10 +23,10 @@ export interface StatusBannerProps {
 }
 
 const PALETTE: Record<StatusBannerVariant, { bg: string; border: string; fg: string }> = {
-  ok:      { bg: '#eaf3de', border: '#c0dd97', fg: '#3b6d11' },
-  info:    { bg: '#eaf0f7', border: '#b7cce3', fg: '#185fa5' },
-  warning: { bg: '#faf0d6', border: '#e8c777', fg: '#854f0b' },
-  error:   { bg: '#fcebeb', border: '#f7c1c1', fg: '#a32d2d' },
+  ok:      { bg: 'var(--pass-bg)',        border: 'var(--pass-border)', fg: 'var(--pass)' },
+  info:    { bg: 'var(--info-bg-banner)', border: 'var(--info-border)', fg: 'var(--info)' },
+  warning: { bg: 'var(--warn-bg-banner)', border: 'var(--warn-border)', fg: 'var(--warn)' },
+  error:   { bg: 'var(--fail-bg)',        border: 'var(--fail-border)', fg: 'var(--fail)' },
 };
 
 const ICON: Record<StatusBannerVariant, string> = {

@@ -72,7 +72,7 @@ export function GscRowsTable({ rows, totals, keyHeader, renderKey, isDE }: GscRo
 
   if (prep.rowsAfterFilter.length === 0) {
     return (
-      <div style={{ fontSize: 13, color: '#6b6b68', padding: '12px 0' }}>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
         {t('Keine Daten für diese Tabelle.', 'No data for this table.')}
       </div>
     );
@@ -85,10 +85,10 @@ export function GscRowsTable({ rows, totals, keyHeader, renderKey, isDE }: GscRo
       {/* Wrapper provides horizontal scroll on narrow viewports
           (<768px). min-width on the inner table prevents column
           squish that would render numbers unreadable. */}
-      <div style={{ overflowX: 'auto', border: '1px solid #e0ddd8', borderRadius: 8, background: '#fff' }}>
+      <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)' }}>
         <table style={{ width: '100%', minWidth: 480, borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ background: '#f8f8f6', textAlign: 'left' }}>
+            <tr style={{ background: 'var(--bg)', textAlign: 'left' }}>
               <th style={thStyle}>{keyHeader}</th>
               <th style={{ ...thStyle, textAlign: 'right' }}>{t('Klicks', 'Clicks')}</th>
               <th style={{ ...thStyle, textAlign: 'right' }}>{t('Impressions', 'Impressions')}</th>
@@ -98,7 +98,7 @@ export function GscRowsTable({ rows, totals, keyHeader, renderKey, isDE }: GscRo
           </thead>
           <tbody>
             {prep.visible.map((row, idx) => (
-              <tr key={`${row.keys?.[0] ?? '?'}-${idx}`} style={{ borderTop: '1px solid #f0ede8' }}>
+              <tr key={`${row.keys?.[0] ?? '?'}-${idx}`} style={{ borderTop: '1px solid var(--border-soft)' }}>
                 <td style={tdStyle}>{renderKey(row.keys?.[0] ?? '')}</td>
                 <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatNumber(row.clicks)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatNumber(row.impressions)}</td>
@@ -115,8 +115,8 @@ export function GscRowsTable({ rows, totals, keyHeader, renderKey, isDE }: GscRo
             type="button"
             onClick={() => setShowAll(s => !s)}
             style={{
-              fontSize: 12, padding: '6px 12px', border: '1px solid #e0ddd8',
-              background: '#fff', borderRadius: 6, cursor: 'pointer', color: '#1a1a18',
+              fontSize: 12, padding: '6px 12px', border: '1px solid var(--border)',
+              background: 'var(--surface)', borderRadius: 6, cursor: 'pointer', color: 'var(--text)',
             }}
           >
             {showAll
@@ -126,7 +126,7 @@ export function GscRowsTable({ rows, totals, keyHeader, renderKey, isDE }: GscRo
         </div>
       )}
       {prep.filteredCount > 0 && (
-        <div style={{ marginTop: 8, fontSize: 11, color: '#9b9b68', fontStyle: 'italic' }}>
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
           {t(
             `${prep.filteredCount} anonymisierte Long-Tail-Einträge ausgeblendet (~${prep.impressionsGapPct}% der Impressions). In den Banner-Totals enthalten.`,
             `${prep.filteredCount} anonymised long-tail entries hidden (~${prep.impressionsGapPct}% of impressions). Included in the banner totals.`,
@@ -141,7 +141,7 @@ const thStyle: React.CSSProperties = {
   padding: '8px 10px',
   fontSize: 11,
   fontWeight: 600,
-  color: '#6b6b68',
+  color: 'var(--text-muted)',
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
   whiteSpace: 'nowrap',
@@ -150,6 +150,6 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   padding: '8px 10px',
   fontSize: 12,
-  color: '#1a1a18',
+  color: 'var(--text)',
   verticalAlign: 'top',
 };

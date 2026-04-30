@@ -78,29 +78,29 @@ const ALL_MODULES: { id: Module; label_de: string; label_en: string; desc_de: st
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#a32d2d',
-  important: '#854f0b',
-  recommended: '#185fa5',
-  optional: '#555',
+  critical: 'var(--fail)',
+  important: 'var(--warn)',
+  recommended: 'var(--info)',
+  optional: 'var(--text-strong)',
 };
 
 const PRIORITY_BG: Record<string, string> = {
-  critical: '#fcebeb',
-  important: '#faeeda',
-  recommended: '#e6f1fb',
-  optional: '#f1efe8',
+  critical: 'var(--fail-bg)',
+  important: 'var(--warn-bg)',
+  recommended: 'var(--info-bg)',
+  optional: 'var(--border-soft)',
 };
 
 function scoreColor(s: number) {
-  if (s >= 75) return '#3b6d11';
-  if (s >= 50) return '#854f0b';
-  return '#a32d2d';
+  if (s >= 75) return 'var(--pass)';
+  if (s >= 50) return 'var(--warn)';
+  return 'var(--fail)';
 }
 
 function scoreBg(s: number) {
-  if (s >= 75) return '#eaf3de';
-  if (s >= 50) return '#faeeda';
-  return '#fcebeb';
+  if (s >= 75) return 'var(--pass-bg)';
+  if (s >= 50) return 'var(--warn-bg)';
+  return 'var(--fail-bg)';
 }
 
 export default function AuditApp() {
@@ -491,13 +491,13 @@ export default function AuditApp() {
   }) : [];
 
   return (
-    <div style={{ maxWidth: 920, margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: 14, color: '#1a1a18' }}>
+    <div style={{ maxWidth: 920, margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: 14, color: 'var(--text)' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>SEO Audit Pro</h1>
-          <p style={{ color: '#6b6b68', margin: '3px 0 0', fontSize: 13 }}>
+          <p style={{ color: 'var(--text-muted)', margin: '3px 0 0', fontSize: 13 }}>
             {t('Vollständiger, reproduzierbarer SEO-Audit mit PDF-Export', 'Complete, reproducible SEO audit with PDF export')}
           </p>
         </div>
@@ -515,7 +515,7 @@ export default function AuditApp() {
 
       {/* Config panel */}
       {showConfig && (
-        <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '1.5rem', marginBottom: '1.5rem' }}>
 
           {/* URL */}
           <div style={{ marginBottom: '1rem' }}>
@@ -544,16 +544,16 @@ export default function AuditApp() {
 
           {/* Google API Key */}
           {hasEnvGoogleKey ? (
-            <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#eaf3de', borderRadius: 8, border: '1px solid #c0dd97' }}>
-              <span style={{ fontSize: 13, color: '#3b6d11' }}>✓</span>
-              <span style={{ fontSize: 12, color: '#3b6d11', fontWeight: 500 }}>
+            <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--pass-bg)', borderRadius: 8, border: '1px solid var(--pass-border)' }}>
+              <span style={{ fontSize: 13, color: 'var(--pass)' }}>✓</span>
+              <span style={{ fontSize: 12, color: 'var(--pass)', fontWeight: 500 }}>
                 {t('Google API Key aktiv (PageSpeed + Safe Browsing aktiviert)', 'Google API Key active (PageSpeed + Safe Browsing enabled)')}
               </span>
             </div>
           ) : (
             <div style={{ marginBottom: '1rem' }}>
               <label style={labelStyle}>
-                Google API Key <span style={{ color: '#9b9b98', fontWeight: 400 }}>({t('optional — für PageSpeed & Safe Browsing', 'optional — for PageSpeed & Safe Browsing')})</span>
+                Google API Key <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({t('optional — für PageSpeed & Safe Browsing', 'optional — for PageSpeed & Safe Browsing')})</span>
               </label>
               <input
                 value={googleKey}
@@ -562,7 +562,7 @@ export default function AuditApp() {
                 type="password"
                 style={{ ...inputStyle, maxWidth: 400 }}
               />
-              <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9b9b98' }}>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-faint)' }}>
                 {t('Oder in .env.local eintragen: GOOGLE_API_KEY=AIza...', 'Or add to .env.local: GOOGLE_API_KEY=AIza...')}
               </p>
             </div>
@@ -597,7 +597,7 @@ export default function AuditApp() {
             // group transition (positions 5 and 8). Visual cue for the
             // 1-4 / 5-7 / 8-9 grouping without adding section headers.
             const groupDivider: React.CSSProperties = {
-              borderTop: '1px solid #e0e0e0',
+              borderTop: '1px solid var(--border-mid)',
               marginTop: '1.5rem',
               paddingTop: '1.5rem',
             };
@@ -628,17 +628,17 @@ export default function AuditApp() {
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     background: 'none', border: 'none', padding: '8px 0',
-                    cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#1a1a18',
+                    cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text)',
                   }}
                 >
-                  <span style={{ fontSize: 11, color: '#6b6b68' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     {advancedOpen ? '▾' : '▸'}
                   </span>
                   {t('Erweiterte Optionen', 'Advanced options')}
                   {adjustments > 0 && (
                     <span style={{
                       fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 20,
-                      background: '#eaf0f7', color: '#185fa5',
+                      background: 'var(--info-bg-banner)', color: 'var(--info)',
                     }}>
                       {t(`${adjustments} angepasst`, `${adjustments} customised`)}
                     </span>
@@ -649,14 +649,14 @@ export default function AuditApp() {
                   id="advanced-options-panel"
                   ref={advancedPanelRef}
                   hidden={!advancedOpen}
-                  style={{ marginTop: '0.5rem', paddingTop: '1rem', borderTop: '1px solid #f0ede8' }}
+                  style={{ marginTop: '0.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-soft)' }}
                 >
 
                     {/* 1. Rendering mode */}
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={labelStyle}>
                         {t('Rendering-Modus', 'Rendering mode')}{' '}
-                        <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                           ({t('JS-Mode rendert über Headless-Chromium — langsamer, aber sieht SPAs', 'JS mode renders via headless Chromium — slower, but sees SPAs')})
                         </span>
                       </label>
@@ -674,7 +674,7 @@ export default function AuditApp() {
                     {/* 2. User-Agent */}
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={labelStyle}>
-                        {t('User-Agent', 'User-Agent')} <span style={{ color: '#9b9b98', fontWeight: 400 }}>({t('beeinflusst Antwort vom Server und robots.txt-Auswertung', 'affects server response and robots.txt evaluation')})</span>
+                        {t('User-Agent', 'User-Agent')} <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({t('beeinflusst Antwort vom Server und robots.txt-Auswertung', 'affects server response and robots.txt evaluation')})</span>
                       </label>
                       <select
                         value={userAgent}
@@ -706,7 +706,7 @@ export default function AuditApp() {
                         <span style={{ fontSize: 13, fontWeight: 500 }}>
                           {t('Mobile/Desktop Content-Parität prüfen', 'Check Mobile/Desktop content parity')}
                         </span>
-                        <span style={{ fontSize: 11, color: '#9b9b98' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
                           ({t('Top-10-Seiten je doppelt fetchen', 'fetches top-10 pages twice each')})
                         </span>
                       </label>
@@ -716,7 +716,7 @@ export default function AuditApp() {
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={labelStyle}>
                         {t('Bild-Probe-Limit', 'Image probe limit')}{' '}
-                        <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                           ({t('HEAD-Requests für Datei-Größe; 0 deaktiviert; ~5s pro Bild', 'HEAD requests for file size; 0 disables; ~5s per image')})
                         </span>
                       </label>
@@ -734,7 +734,7 @@ export default function AuditApp() {
                     <div style={{ ...groupDivider, marginBottom: '1rem' }}>
                       <label style={labelStyle}>
                         {t('HTTP Basic Auth', 'HTTP Basic Auth')}{' '}
-                        <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                           ({t('für passwortgeschützte Staging-Sites — Credentials werden nicht im Report gespeichert', 'for password-protected staging sites — credentials are not stored in the report')})
                         </span>
                       </label>
@@ -761,7 +761,7 @@ export default function AuditApp() {
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={labelStyle}>
                         {t('Eigene HTTP-Header', 'Custom HTTP headers')}{' '}
-                        <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                        <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                           ({t('eine pro Zeile, "Name: Wert"; sensible Werte werden im Report maskiert', 'one per line, "Name: value"; sensitive values are masked in the report')})
                         </span>
                       </label>
@@ -780,7 +780,7 @@ export default function AuditApp() {
                         <div>
                           <label style={labelStyle}>
                             {t('Include-Patterns', 'Include patterns')}{' '}
-                            <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                            <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                               ({t('eine Regex pro Zeile, gegen volle URL', 'one regex per line, tested against full URL')})
                             </span>
                           </label>
@@ -799,14 +799,14 @@ export default function AuditApp() {
                             rows={3}
                             style={{
                               ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
-                              borderColor: patternError?.which === 'include' ? '#a32d2d' : undefined,
+                              borderColor: patternError?.which === 'include' ? 'var(--fail)' : undefined,
                             }}
                           />
                         </div>
                         <div>
                           <label style={labelStyle}>
                             {t('Exclude-Patterns', 'Exclude patterns')}{' '}
-                            <span style={{ color: '#9b9b98', fontWeight: 400 }}>
+                            <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
                               ({t('Exclude gewinnt', 'exclude wins')})
                             </span>
                           </label>
@@ -821,13 +821,13 @@ export default function AuditApp() {
                             rows={3}
                             style={{
                               ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11,
-                              borderColor: patternError?.which === 'exclude' ? '#a32d2d' : undefined,
+                              borderColor: patternError?.which === 'exclude' ? 'var(--fail)' : undefined,
                             }}
                           />
                         </div>
                       </div>
                       {patternError && (
-                        <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#a32d2d' }}>
+                        <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--fail)' }}>
                           {t(`Ungültiges Regex-Pattern: "${patternError.pattern}"`, `Invalid regex pattern: "${patternError.pattern}"`)}
                         </div>
                       )}
@@ -849,7 +849,7 @@ export default function AuditApp() {
                         <span style={{ fontSize: 13, fontWeight: 500 }}>
                           {t('Screenshots (Mobile + Desktop) im PDF anhängen', 'Attach Mobile + Desktop screenshots to PDF')}
                         </span>
-                        <span style={{ fontSize: 11, color: '#9b9b98' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
                           {rendering === 'js'
                             ? `(${t('Top-4-Seiten, je 2 Viewports', 'top 4 pages × 2 viewports')})`
                             : `(${t('nur in JS-Mode verfügbar', 'JS mode only')})`}
@@ -864,14 +864,14 @@ export default function AuditApp() {
                         {ALL_MODULES.map(m => (
                           <label key={m.id} style={{
                             display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
-                            border: `1px solid ${modules.includes(m.id) ? '#1a1a18' : '#e0ddd8'}`,
+                            border: `1px solid ${modules.includes(m.id) ? 'var(--text)' : 'var(--border)'}`,
                             borderRadius: 8, cursor: 'pointer',
-                            background: modules.includes(m.id) ? '#f8f8f6' : '#fff',
+                            background: modules.includes(m.id) ? 'var(--bg)' : 'var(--surface)',
                           }}>
                             <input type="checkbox" checked={modules.includes(m.id)} onChange={() => toggleModule(m.id)} style={{ marginTop: 2 }} />
                             <div>
                               <div style={{ fontWeight: 600, fontSize: 13 }}>{isDE ? m.label_de : m.label_en}</div>
-                              <div style={{ fontSize: 11, color: '#9b9b98', marginTop: 1 }}>{isDE ? m.desc_de : m.desc_en}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{isDE ? m.desc_de : m.desc_en}</div>
                             </div>
                           </label>
                         ))}
@@ -887,22 +887,22 @@ export default function AuditApp() {
       {/* Progress */}
       {loading && (
         <div style={{ marginBottom: '1.5rem' }}>
-          <div style={{ height: 4, background: '#e0ddd8', borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
-            <div style={{ height: '100%', width: `${progress}%`, background: '#ff7a00', borderRadius: 2, transition: 'width 0.4s ease' }} />
+          <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)', borderRadius: 2, transition: 'width 0.4s ease' }} />
           </div>
-          <p style={{ fontSize: 12, color: '#6b6b68', margin: 0 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
             {progressText}
             {progressDetail && (
-              <span style={{ marginLeft: 6, color: '#9b9b98', fontSize: 11 }}>· {progressDetail}</span>
+              <span style={{ marginLeft: 6, color: 'var(--text-faint)', fontSize: 11 }}>· {progressDetail}</span>
             )}
-            <span style={{ marginLeft: 6, color: '#9b9b98', fontSize: 11 }}>({Math.round(progress)}%)</span>
+            <span style={{ marginLeft: 6, color: 'var(--text-faint)', fontSize: 11 }}>({Math.round(progress)}%)</span>
           </p>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <div style={{ background: '#fcebeb', border: '1px solid #f7c1c1', borderRadius: 8, padding: '12px 16px', marginBottom: '1.5rem', color: '#a32d2d' }}>
+        <div style={{ background: 'var(--fail-bg)', border: '1px solid var(--fail-border)', borderRadius: 8, padding: '12px 16px', marginBottom: '1.5rem', color: 'var(--fail)' }}>
           {error}
         </div>
       )}
@@ -912,11 +912,11 @@ export default function AuditApp() {
         <>
           {/* Top 5 Fixes — highest-impact actions, rendered above everything else */}
           {result.topFindings && result.topFindings.length > 0 && (
-            <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '18px 20px', marginBottom: '1.5rem' }}>
-              <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: '#ff7a00' }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>
                 {t('Top 5 Fixes — Größter Impact auf deinen Score', 'Top 5 Fixes — Highest Impact on Your Score')}
               </h2>
-              <p style={{ margin: '0 0 14px', fontSize: 12, color: '#6b6b68' }}>
+              <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--text-muted)' }}>
                 {t('Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung', 'The 5 most impactful actions for immediate score improvement')}
               </p>
               {result.topFindings.map((f, idx) => {
@@ -926,7 +926,7 @@ export default function AuditApp() {
                 return (
                   <div key={f.id} style={{
                     padding: idx === 0 ? '0 0 12px' : '12px 0',
-                    borderTop: idx === 0 ? 'none' : '1px solid #f0ede8',
+                    borderTop: idx === 0 ? 'none' : '1px solid var(--border-soft)',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                       <span style={{
@@ -939,17 +939,17 @@ export default function AuditApp() {
                           : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
                         }
                       </span>
-                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#1a1a18' }}>
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
                         {isDE ? f.title_de : f.title_en}
                       </span>
                       <span style={{
                         fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-                        background: '#eaf3de', color: '#3b6d11', whiteSpace: 'nowrap',
+                        background: 'var(--pass-bg)', color: 'var(--pass)', whiteSpace: 'nowrap',
                       }}>
                         +{gain} {t('Pkt.', 'pts')}
                       </span>
                     </div>
-                    <div style={{ fontSize: 11, color: '#9b9b98', marginLeft: 4 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>
                       <span style={{ textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>{f.module}</span>
                       <span> · {recTrim}</span>
                     </div>
@@ -962,12 +962,12 @@ export default function AuditApp() {
           {/* Score overview */}
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, marginBottom: '1.5rem' }}>
             {/* Total score */}
-            <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '16px 20px', textAlign: 'center', minWidth: 110 }}>
-              <div style={{ fontSize: 11, color: '#6b6b68', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', textAlign: 'center', minWidth: 110 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
                 {t('Gesamt', 'Total')}
               </div>
               <div style={{ fontSize: 42, fontWeight: 700, color: scoreColor(result.totalScore), lineHeight: 1 }}>{result.totalScore}</div>
-              <div style={{ fontSize: 11, color: '#9b9b98' }}>/100</div>
+              <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>/100</div>
             </div>
 
             {/* Module scores */}
@@ -975,7 +975,7 @@ export default function AuditApp() {
               {result.moduleScores.map(ms => (
                 <div key={ms.module} style={{ background: scoreBg(ms.score), borderRadius: 8, padding: '10px 8px', textAlign: 'center' }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color: scoreColor(ms.score) }}>{ms.score}</div>
-                  <div style={{ fontSize: 10, color: '#6b6b68', marginTop: 2 }}>{isDE ? ms.label_de : ms.label_en}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{isDE ? ms.label_de : ms.label_en}</div>
                 </div>
               ))}
             </div>
@@ -1003,7 +1003,7 @@ export default function AuditApp() {
               </>
             )}
             {diffError && (
-              <span style={{ fontSize: 12, color: '#a32d2d' }}>{diffError}</span>
+              <span style={{ fontSize: 12, color: 'var(--fail)' }}>{diffError}</span>
             )}
           </div>
 
@@ -1013,7 +1013,7 @@ export default function AuditApp() {
           )}
 
           {/* Summary */}
-          <p style={{ color: '#555', fontSize: 13, lineHeight: 1.7, marginBottom: '1.5rem', padding: '12px 16px', background: '#f8f8f6', borderRadius: 8, borderLeft: '3px solid #e0ddd8' }}>
+          <p style={{ color: 'var(--text-strong)', fontSize: 13, lineHeight: 1.7, marginBottom: '1.5rem', padding: '12px 16px', background: 'var(--bg)', borderRadius: 8, borderLeft: '3px solid var(--border)' }}>
             {isDE ? result.summary_de : result.summary_en}
           </p>
 
@@ -1022,13 +1022,13 @@ export default function AuditApp() {
             {[
               { label: t('Seiten gecrawlt', 'Pages crawled'), value: result.crawlStats.crawledPages },
               { label: t('Findings gesamt', 'Total findings'), value: result.findings.length },
-              { label: t('Kritisch', 'Critical'), value: result.findings.filter(f => f.priority === 'critical').length, color: '#a32d2d' },
-              { label: t('Wichtig', 'Important'), value: result.findings.filter(f => f.priority === 'important').length, color: '#854f0b' },
-              { label: t('Defekte Links', 'Broken links'), value: result.crawlStats.brokenLinks.length, color: result.crawlStats.brokenLinks.length > 0 ? '#a32d2d' : undefined },
+              { label: t('Kritisch', 'Critical'), value: result.findings.filter(f => f.priority === 'critical').length, color: 'var(--fail)' },
+              { label: t('Wichtig', 'Important'), value: result.findings.filter(f => f.priority === 'important').length, color: 'var(--warn)' },
+              { label: t('Defekte Links', 'Broken links'), value: result.crawlStats.brokenLinks.length, color: result.crawlStats.brokenLinks.length > 0 ? 'var(--fail)' : undefined },
             ].map(s => (
-              <div key={s.label} style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 8, padding: '8px 14px', textAlign: 'center' }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: s.color || '#1a1a18' }}>{s.value}</div>
-                <div style={{ fontSize: 10, color: '#9b9b98' }}>{s.label}</div>
+              <div key={s.label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 14px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: s.color || 'var(--text)' }}>{s.value}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{s.label}</div>
               </div>
             ))}
           </div>
@@ -1048,12 +1048,12 @@ export default function AuditApp() {
               ? `Search Console (${gscIssueCount})`
               : 'Search Console';
             return (
-              <div style={{ display: 'flex', gap: 4, marginBottom: '1rem', borderBottom: '1px solid #e0ddd8' }}>
+              <div style={{ display: 'flex', gap: 4, marginBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
                 {(['findings', 'pages', 'tech', 'gsc', 'prompt'] as const).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} style={{
                     padding: '8px 14px', fontSize: 13, border: 'none', background: 'none', cursor: 'pointer',
-                    borderBottom: activeTab === tab ? '2px solid #1a1a18' : '2px solid transparent',
-                    fontWeight: activeTab === tab ? 600 : 400, color: activeTab === tab ? '#1a1a18' : '#6b6b68',
+                    borderBottom: activeTab === tab ? '2px solid var(--text)' : '2px solid transparent',
+                    fontWeight: activeTab === tab ? 600 : 400, color: activeTab === tab ? 'var(--text)' : 'var(--text-muted)',
                   }}>
                     {tab === 'findings' && t(`Findings (${result.findings.length})`, `Findings (${result.findings.length})`)}
                     {tab === 'pages' && t(`Seiten (${result.pages.length})`, `Pages (${result.pages.length})`)}
@@ -1072,7 +1072,7 @@ export default function AuditApp() {
               {sortedFindings.map(f => {
                 const isOpen = openFindings.has(f.id);
                 return (
-                  <div key={f.id} style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 10, overflow: 'hidden' }}>
+                  <div key={f.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                     <div
                       onClick={() => setOpenFindings(prev => { const s = new Set(prev); isOpen ? s.delete(f.id) : s.add(f.id); return s; })}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer' }}
@@ -1087,17 +1087,17 @@ export default function AuditApp() {
                           : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
                         }
                       </span>
-                      <span style={{ fontSize: 12, color: '#9b9b98' }}>{f.module}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{f.module}</span>
                       <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{isDE ? f.title_de : f.title_en}</span>
-                      <span style={{ fontSize: 11, color: '#9b9b98' }}>{isOpen ? '▲' : '▼'}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{isOpen ? '▲' : '▼'}</span>
                     </div>
                     {isOpen && (
-                      <div style={{ padding: '0 14px 14px', borderTop: '1px solid #f0ede8' }}>
-                        <div style={{ fontSize: 11, color: '#9b9b98', marginBottom: 6 }}>
+                      <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border-soft)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 6 }}>
                           {t('Aufwand', 'Effort')}: {f.effort} · {t('Impact', 'Impact')}: {f.impact}
-                          {f.affectedUrl && <> · <a href={f.affectedUrl} target="_blank" rel="noopener" style={{ color: '#185fa5' }}>{f.affectedUrl}</a></>}
+                          {f.affectedUrl && <> · <a href={f.affectedUrl} target="_blank" rel="noopener" style={{ color: 'var(--info)' }}>{f.affectedUrl}</a></>}
                         </div>
-                        <p style={{ margin: '0 0 8px', fontSize: 13, color: '#444', lineHeight: 1.6 }}>
+                        <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--text-strong)', lineHeight: 1.6 }}>
                           {isDE ? f.description_de : f.description_en}
                         </p>
                         <p style={{ margin: 0, fontSize: 13, color: PRIORITY_COLORS[f.priority], lineHeight: 1.6 }}>
@@ -1110,12 +1110,12 @@ export default function AuditApp() {
               })}
 
               {/* Strengths */}
-              <div style={{ marginTop: '1rem', background: '#eaf3de', border: '1px solid #c0dd97', borderRadius: 10, padding: '14px 16px' }}>
-                <h3 style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: '#3b6d11' }}>
+              <div style={{ marginTop: '1rem', background: 'var(--pass-bg)', border: '1px solid var(--pass-border)', borderRadius: 10, padding: '14px 16px' }}>
+                <h3 style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: 'var(--pass)' }}>
                   {t('Was gut ist', "What's Working Well")}
                 </h3>
                 {(isDE ? result.strengths_de : result.strengths_en).map((s, i) => (
-                  <p key={i} style={{ margin: '0 0 4px', fontSize: 12, color: '#27500a' }}>✓ {s}</p>
+                  <p key={i} style={{ margin: '0 0 4px', fontSize: 12, color: 'var(--pass-strong)' }}>✓ {s}</p>
                 ))}
               </div>
             </div>
@@ -1127,24 +1127,24 @@ export default function AuditApp() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
-                    <tr style={{ background: '#f8f8f6' }}>
+                    <tr style={{ background: 'var(--bg)' }}>
                       {['URL', 'Title', t('Title Z. / px', 'Title chars / px'), t('Description Z. / px', 'Description chars / px'), 'H1', 'Schema', t('Wörter', 'Words'), t('Bilder/Alt', 'Img/Alt')].map(h => (
-                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left', border: '1px solid #e0ddd8', fontWeight: 600, color: '#444' }}>{h}</th>
+                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left', border: '1px solid var(--border)', fontWeight: 600, color: 'var(--text-strong)' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {result.pages.map((p, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#fafaf8' }}>
+                      <tr key={i} style={{ background: i % 2 === 0 ? 'var(--surface)' : 'var(--bg)' }}>
                         <td style={tdStyle}>
-                          <a href={p.url} target="_blank" rel="noopener" style={{ color: '#185fa5', fontSize: 11 }}>
+                          <a href={p.url} target="_blank" rel="noopener" style={{ color: 'var(--info)', fontSize: 11 }}>
                             {p.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
                           </a>
                         </td>
                         <td style={{ ...tdStyle, maxWidth: 180 }}>
                           {p.title
                             ? <span title={p.title}>{p.title.substring(0, 35)}{p.title.length > 35 ? '…' : ''}</span>
-                            : <span style={{ color: '#a32d2d', fontWeight: 600 }}>FEHLT</span>
+                            : <span style={{ color: 'var(--fail)', fontWeight: 600 }}>FEHLT</span>
                           }
                         </td>
                         <td style={{
@@ -1152,13 +1152,13 @@ export default function AuditApp() {
                           color: (
                             (p.titleLength != null && (p.titleLength < 30 || p.titleLength > 65)) ||
                             (p.titlePixelWidth != null && p.titlePixelWidth > TITLE_LIMIT_MOBILE_PX)
-                          ) ? '#854f0b' : '#3b6d11',
+                          ) ? 'var(--warn)' : 'var(--pass)',
                           whiteSpace: 'nowrap',
                         }}>
                           {p.titleLength != null ? (
                             <>
                               {p.titleLength}
-                              <span style={{ color: '#9b9b98', marginLeft: 4 }}>
+                              <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>
                                 / {p.titlePixelWidth ?? '—'}px
                               </span>
                             </>
@@ -1169,13 +1169,13 @@ export default function AuditApp() {
                           color: (
                             (p.metaDescriptionLength != null && (p.metaDescriptionLength < 70 || p.metaDescriptionLength > 165)) ||
                             (p.metaDescriptionPixelWidth != null && p.metaDescriptionPixelWidth > META_DESC_LIMIT_PX)
-                          ) ? '#854f0b' : '#3b6d11',
+                          ) ? 'var(--warn)' : 'var(--pass)',
                           whiteSpace: 'nowrap',
                         }}>
                           {p.metaDescriptionLength != null ? (
                             <>
                               {p.metaDescriptionLength}
-                              <span style={{ color: '#9b9b98', marginLeft: 4 }}>
+                              <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>
                                 / {p.metaDescriptionPixelWidth ?? '—'}px
                               </span>
                             </>
@@ -1183,15 +1183,15 @@ export default function AuditApp() {
                         </td>
                         <td style={tdStyle}>
                           {p.h1s.length === 1
-                            ? <span style={{ color: '#3b6d11' }}>✓</span>
+                            ? <span style={{ color: 'var(--pass)' }}>✓</span>
                             : p.h1s.length === 0
-                              ? <span style={{ color: '#a32d2d', fontWeight: 600 }}>✗</span>
-                              : <span style={{ color: '#854f0b' }}>{p.h1s.length}×</span>
+                              ? <span style={{ color: 'var(--fail)', fontWeight: 600 }}>✗</span>
+                              : <span style={{ color: 'var(--warn)' }}>{p.h1s.length}×</span>
                           }
                         </td>
-                        <td style={tdStyle}>{p.schemaTypes.slice(0, 2).join(', ') || <span style={{ color: '#9b9b98' }}>—</span>}</td>
-                        <td style={{ ...tdStyle, color: p.wordCount < 300 ? '#854f0b' : '#444' }}>{p.wordCount}</td>
-                        <td style={{ ...tdStyle, color: p.imagesMissingAlt > 0 ? '#a32d2d' : '#3b6d11' }}>
+                        <td style={tdStyle}>{p.schemaTypes.slice(0, 2).join(', ') || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
+                        <td style={{ ...tdStyle, color: p.wordCount < 300 ? 'var(--warn)' : 'var(--text-strong)' }}>{p.wordCount}</td>
+                        <td style={{ ...tdStyle, color: p.imagesMissingAlt > 0 ? 'var(--fail)' : 'var(--pass)' }}>
                           {p.imagesMissingAlt}/{p.totalImages}
                         </td>
                       </tr>
@@ -1453,7 +1453,7 @@ export default function AuditApp() {
 
                 {/* Top queries */}
                 <div style={{ marginTop: '1.5rem' }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: '#1a1a18' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
                     {t('Top-Suchanfragen', 'Top queries')}
                   </h3>
                   <GscRowsTable
@@ -1467,7 +1467,7 @@ export default function AuditApp() {
 
                 {/* Top pages */}
                 <div style={{ marginTop: '1.5rem' }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: '#1a1a18' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
                     {t('Top-Seiten', 'Top pages')}
                   </h3>
                   <GscRowsTable
@@ -1491,7 +1491,7 @@ export default function AuditApp() {
                           target="_blank"
                           rel="noopener noreferrer"
                           title={url}
-                          style={{ color: '#185fa5', textDecoration: 'none' }}
+                          style={{ color: 'var(--info)', textDecoration: 'none' }}
                         >
                           {display}
                         </a>
@@ -1535,11 +1535,11 @@ export default function AuditApp() {
           {/* Claude Prompt tab */}
           {activeTab === 'prompt' && (
             <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ background: '#f8f8f6', border: '1px solid #e0ddd8', borderRadius: 10, padding: '16px' }}>
+              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                   <div>
                     <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{t('Claude-Prompt für Deep Analysis', 'Claude Prompt for Deep Analysis')}</h3>
-                    <p style={{ margin: '4px 0 0', fontSize: 12, color: '#6b6b68' }}>
+                    <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
                       {t('Kopiere diesen Prompt und führe ihn in Claude aus für Content- & UX-Analyse', 'Copy this prompt and run it in Claude for content & UX analysis')}
                     </p>
                   </div>
@@ -1550,14 +1550,14 @@ export default function AuditApp() {
                 <textarea
                   readOnly
                   value={result.claudePrompt}
-                  style={{ width: '100%', height: 400, fontSize: 11, fontFamily: 'monospace', border: '1px solid #e0ddd8', borderRadius: 6, padding: '10px', background: '#fff', resize: 'vertical', color: '#333' }}
+                  style={{ width: '100%', height: 400, fontSize: 11, fontFamily: 'monospace', border: '1px solid var(--border)', borderRadius: 6, padding: '10px', background: 'var(--surface)', resize: 'vertical', color: 'var(--text-strong)' }}
                 />
               </div>
             </div>
           )}
 
           {/* Exports */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e0ddd8', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
             <select
               value={csvTable}
               onChange={e => setCsvTable(e.target.value as typeof csvTable)}
@@ -1586,9 +1586,9 @@ export default function AuditApp() {
 
 function TechRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #f0ede8', fontSize: 12 }}>
-      <span style={{ color: '#6b6b68' }}>{label}</span>
-      <span style={{ fontWeight: 600, color: ok ? '#3b6d11' : '#a32d2d' }}>{value}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border-soft)', fontSize: 12 }}>
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ fontWeight: 600, color: ok ? 'var(--pass)' : 'var(--fail)' }}>{value}</span>
     </div>
   );
 }
@@ -1599,7 +1599,7 @@ function DiffView({ diff, isDE, t, onClose }: {
   t: (de: string, en: string) => string;
   onClose: () => void;
 }) {
-  const deltaColor = diff.scoreDelta > 0 ? '#3b6d11' : diff.scoreDelta < 0 ? '#a32d2d' : '#6b6b68';
+  const deltaColor = diff.scoreDelta > 0 ? 'var(--pass)' : diff.scoreDelta < 0 ? 'var(--fail)' : 'var(--text-muted)';
   const deltaSign = diff.scoreDelta > 0 ? '+' : '';
   const previousLabel = (() => {
     try {
@@ -1610,7 +1610,7 @@ function DiffView({ diff, isDE, t, onClose }: {
   })();
 
   const findingRow = (f: Finding) => (
-    <div key={f.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid #f0ede8', alignItems: 'center' }}>
+    <div key={f.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'center' }}>
       <span style={{
         fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 12,
         background: PRIORITY_BG[f.priority], color: PRIORITY_COLORS[f.priority],
@@ -1621,20 +1621,20 @@ function DiffView({ diff, isDE, t, onClose }: {
           : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
         }
       </span>
-      <span style={{ flex: 1, fontSize: 12, color: '#1a1a18' }}>{isDE ? f.title_de : f.title_en}</span>
-      <span style={{ fontSize: 10, color: '#9b9b98', textTransform: 'uppercase' }}>{f.module}</span>
+      <span style={{ flex: 1, fontSize: 12, color: 'var(--text)' }}>{isDE ? f.title_de : f.title_en}</span>
+      <span style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase' }}>{f.module}</span>
     </div>
   );
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e0ddd8', borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem' }}>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#ff7a00' }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>
           {t('Audit-Vergleich', 'Audit Comparison')}
         </h2>
         <button onClick={onClose} style={btnStyle}>{t('Diff schließen', 'Close diff')}</button>
       </div>
-      <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6b6b68' }}>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>
         {t(`Vergleich: ${diff.domain} — ${previousLabel} → Heute`, `Comparison: ${diff.domain} — ${previousLabel} → Today`)}
       </p>
 
@@ -1642,37 +1642,37 @@ function DiffView({ diff, isDE, t, onClose }: {
         <span style={{ fontSize: 28, fontWeight: 800, color: deltaColor }}>
           {deltaSign}{diff.scoreDelta} {t('Punkte', 'points')}
         </span>
-        <span style={{ fontSize: 12, color: '#6b6b68' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           ({diff.previousAudit.totalScore} → {diff.currentAudit.totalScore})
         </span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
         <div>
-          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#3b6d11' }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--pass)' }}>
             ✅ {t(`Behoben (${diff.resolved.length})`, `Resolved (${diff.resolved.length})`)}
           </h3>
           {diff.resolved.length === 0
-            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            ? <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>—</p>
             : diff.resolved.map(findingRow)}
         </div>
         <div>
-          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#a32d2d' }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--fail)' }}>
             🆕 {t(`Neu (${diff.new.length})`, `New (${diff.new.length})`)}
           </h3>
           {diff.new.length === 0
-            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            ? <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>—</p>
             : diff.new.map(findingRow)}
         </div>
         <div>
-          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#6b6b68' }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
             ➡ {t(`Unverändert (${diff.unchanged.length})`, `Unchanged (${diff.unchanged.length})`)}
           </h3>
           {diff.unchanged.length === 0
-            ? <p style={{ fontSize: 11, color: '#9b9b98', margin: 0 }}>—</p>
+            ? <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>—</p>
             : diff.unchanged.slice(0, 10).map(findingRow)}
           {diff.unchanged.length > 10 && (
-            <p style={{ fontSize: 11, color: '#9b9b98', margin: '4px 0 0' }}>
+            <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '4px 0 0' }}>
               +{diff.unchanged.length - 10} {t('weitere', 'more')}
             </p>
           )}
@@ -1681,29 +1681,29 @@ function DiffView({ diff, isDE, t, onClose }: {
 
       {diff.moduleDeltas.length > 0 && (
         <div>
-          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#1a1a18' }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
             {t('Modul-Scores', 'Module scores')}
           </h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background: '#f8f8f6' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'left', border: '1px solid #e0ddd8' }}>{t('Modul', 'Module')}</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>{t('Vorher', 'Before')}</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>{t('Nachher', 'After')}</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid #e0ddd8' }}>Δ</th>
+              <tr style={{ background: 'var(--bg)' }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left', border: '1px solid var(--border)' }}>{t('Modul', 'Module')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid var(--border)' }}>{t('Vorher', 'Before')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid var(--border)' }}>{t('Nachher', 'After')}</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right', border: '1px solid var(--border)' }}>Δ</th>
               </tr>
             </thead>
             <tbody>
               {diff.moduleDeltas.map(md => {
                 const prev = diff.previousAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
                 const curr = diff.currentAudit.moduleScores.find(m => m.module === md.module)?.score ?? 0;
-                const color = md.delta > 0 ? '#3b6d11' : md.delta < 0 ? '#a32d2d' : '#6b6b68';
+                const color = md.delta > 0 ? 'var(--pass)' : md.delta < 0 ? 'var(--fail)' : 'var(--text-muted)';
                 return (
                   <tr key={md.module}>
-                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textTransform: 'uppercase', fontSize: 11 }}>{md.module}</td>
-                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right' }}>{prev}</td>
-                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right' }}>{curr}</td>
-                    <td style={{ padding: '5px 8px', border: '1px solid #e0ddd8', textAlign: 'right', color, fontWeight: 600 }}>
+                    <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textTransform: 'uppercase', fontSize: 11 }}>{md.module}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'right' }}>{prev}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'right' }}>{curr}</td>
+                    <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'right', color, fontWeight: 600 }}>
                       {md.delta > 0 ? '+' : ''}{md.delta}
                     </td>
                   </tr>
@@ -1719,32 +1719,32 @@ function DiffView({ diff, isDE, t, onClose }: {
 
 const btnStyle: React.CSSProperties = {
   height: 36, padding: '0 14px', fontSize: 12, fontWeight: 500,
-  border: '1px solid #e0ddd8', borderRadius: 8, background: '#fff',
-  color: '#1a1a18', cursor: 'pointer',
+  border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)',
+  color: 'var(--text)', cursor: 'pointer',
 };
 
 const primaryBtnStyle: React.CSSProperties = {
-  ...btnStyle, background: '#1a1a18', color: '#fff', border: '1px solid #1a1a18',
+  ...btnStyle, background: 'var(--text)', color: 'var(--surface)', border: '1px solid var(--text)',
 };
 
 const inputStyle: React.CSSProperties = {
   flex: 1, height: 40, padding: '0 12px', fontSize: 14,
-  border: '1px solid #e0ddd8', borderRadius: 8, background: '#fff',
-  color: '#1a1a18', outline: 'none',
+  border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)',
+  color: 'var(--text)', outline: 'none',
 };
 
 const labelStyle: React.CSSProperties = {
-  display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#444',
+  display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6, color: 'var(--text-strong)',
 };
 
 const techCardStyle: React.CSSProperties = {
-  background: '#fff', border: '1px solid #e0ddd8', borderRadius: 10, padding: '14px 16px',
+  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px',
 };
 
 const techCardTitle: React.CSSProperties = {
-  margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: '#1a1a18',
+  margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: 'var(--text)',
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: '7px 10px', border: '1px solid #e0ddd8', verticalAlign: 'top',
+  padding: '7px 10px', border: '1px solid var(--border)', verticalAlign: 'top',
 };
