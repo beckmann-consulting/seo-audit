@@ -51,6 +51,9 @@ export class StaticRenderer implements Renderer {
 
   async fetch(startUrl: string): Promise<RenderResult> {
     const start = Date.now();
+    // [static-trace] DIAGNOSTIC — to be removed after the audit-hang
+    // issue is resolved.
+    console.log(`[static-trace] +0ms fetch-start url=${startUrl}`);
     const chain: string[] = [];
     let currentUrl = startUrl;
     let loopDetected = false;
@@ -88,6 +91,7 @@ export class StaticRenderer implements Renderer {
       } catch (err) {
         // network error / timeout — return a synthetic 0-status result
         // so the crawler can record the URL as broken without crashing.
+        console.log(`[static-trace] +${Date.now() - start}ms fetch-error message=${(err as Error).message}`);
         return {
           url: startUrl,
           finalUrl: currentUrl,
@@ -104,6 +108,7 @@ export class StaticRenderer implements Renderer {
     }
 
     if (!lastResponse) {
+      console.log(`[static-trace] +${Date.now() - start}ms fetch-done status=0 bytes=0 reason=no-response`);
       return {
         url: startUrl,
         finalUrl: currentUrl,
@@ -130,6 +135,7 @@ export class StaticRenderer implements Renderer {
       }
     }
 
+    console.log(`[static-trace] +${Date.now() - start}ms fetch-done status=${lastResponse.status} bytes=${html.length}`);
     return {
       url: startUrl,
       finalUrl: currentUrl,

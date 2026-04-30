@@ -116,8 +116,14 @@ export class JsRenderer implements Renderer {
 
   private async fetchWithBrowser(url: string): Promise<RenderResult> {
     const start = Date.now();
+    // [js-trace] DIAGNOSTIC — to be removed after the audit-hang issue
+    // is resolved. Pinpoint which sub-step of fetchWithBrowser hangs.
+    console.log(`[js-trace] +0ms fetch-start url=${url}`);
+    console.log(`[js-trace] +${Date.now() - start}ms context-requesting`);
     const ctx = await this.getContext();
+    console.log(`[js-trace] +${Date.now() - start}ms context-ready`);
     const page = await ctx.newPage();
+    console.log(`[js-trace] +${Date.now() - start}ms page-created`);
 
     const consoleErrors: string[] = [];
     const failedRequests: string[] = [];
@@ -139,10 +145,12 @@ export class JsRenderer implements Renderer {
       // whole fetch including axe so the two metrics measure
       // different things on purpose.
       const renderStart = Date.now();
+      console.log(`[js-trace] +${Date.now() - start}ms goto-start url=${url} waitUntil=networkidle timeout=${this.pageTimeoutMs}`);
       const navResp = await page.goto(url, {
         waitUntil: 'networkidle',
         timeout: this.pageTimeoutMs,
       });
+      console.log(`[js-trace] +${Date.now() - start}ms goto-done status=${navResp?.status() ?? 'null'}`);
 
       if (!navResp) {
         throw new Error(`page.goto returned null for ${url}`);
@@ -150,16 +158,20 @@ export class JsRenderer implements Renderer {
 
       const html = await page.content();
       const renderTimeMs = Date.now() - renderStart;
+      console.log(`[js-trace] +${Date.now() - start}ms content-captured bytes=${html.length}`);
       const finalUrl = page.url();
       // axe runs AFTER content capture so the page DOM is what users
       // see, not what's loading. Failures are swallowed — a flaky axe
       // run shouldn't tank the whole audit.
       let axeViolations: AxeViolation[] | undefined;
       if (this.opts.runAxe) {
+        console.log(`[js-trace] +${Date.now() - start}ms axe-start`);
         try {
           const runner = this.opts.axeRunner ?? defaultAxeRunner;
           axeViolations = await runner(page);
-        } catch {
+          console.log(`[js-trace] +${Date.now() - start}ms axe-done violations=${axeViolations?.length ?? 0}`);
+        } catch (err) {
+          console.log(`[js-trace] +${Date.now() - start}ms axe-error message=${(err as Error).message}`);
           axeViolations = undefined;
         }
       }
@@ -214,6 +226,9 @@ export class JsRenderer implements Renderer {
         renderTimeMs,
         httpErrors,
       };
+    } catch (err) {
+      console.log(`[js-trace] +${Date.now() - start}ms fetch-error message=${(err as Error).message}`);
+      throw err;
     } finally {
       await page.close().catch(() => { /* page may already be closed */ });
     }
