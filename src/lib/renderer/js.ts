@@ -1,8 +1,15 @@
-// JsRenderer — connects to a Browserless container via WebSocket and
-// drives a real Chromium for each page. Used when the audit opts into
-// rendering=js. Static-mode users never load this file (the route
-// handler imports it conditionally) so playwright-core only enters
-// the runtime when actually needed.
+// JsRenderer — connects to a Browserless v2 container over CDP (Chrome
+// DevTools Protocol) and drives a real Chromium for each page. Used
+// when the audit opts into rendering=js. Static-mode users never load
+// this file (the route handler imports it conditionally) so playwright-
+// core only enters the runtime when actually needed.
+//
+// Why connectOverCDP and not connect? Browserless v2's WebSocket
+// endpoint speaks CDP — the version-agnostic wire protocol. Playwright's
+// native `connect()` expects a /playwright endpoint plus a strict
+// playwright-core ↔ Chromium version match, which we cannot guarantee
+// across upgrades of either side. `connectOverCDP()` is what the
+// Browserless docs recommend for this exact setup.
 //
 // Connection model:
 // - One Browser instance per audit (per JsRenderer lifetime).
@@ -12,8 +19,8 @@
 //
 // Concurrency is enforced by Browserless server-side
 // (MAX_CONCURRENT_SESSIONS=2). When all sessions are busy, our
-// chromium.connect() call blocks until one is freed; the user-set
-// timeout aborts hung connections.
+// chromium.connectOverCDP() call blocks until one is freed; the
+// user-set timeout aborts hung connections.
 //
 // Each fetch also runs the StaticRenderer in parallel — the static
 // HTML is captured for the static-vs-rendered diff that drives the
@@ -67,7 +74,7 @@ export class JsRenderer implements Renderer {
       const ws = `${this.opts.endpoint}?token=${encodeURIComponent(this.opts.token)}`;
       const connect = this.opts.connect ?? (async (target: string) => {
         const { chromium } = await import('playwright-core');
-        return chromium.connect(target);
+        return chromium.connectOverCDP(target);
       });
       this.browserPromise = connect(ws);
     }
