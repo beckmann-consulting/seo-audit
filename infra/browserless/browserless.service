@@ -1,0 +1,28 @@
+# systemd unit for the Browserless container that backs the seo-audit
+# JS-rendering mode. Deploy:
+#   1. Copy the docker-compose.yml + .env to /home/tobias/apps/seo-audit-browserless/
+#      (the compose file's source-of-truth lives in this repo at infra/browserless/).
+#   2. Copy this file to /etc/systemd/system/browserless.service.
+#   3. systemctl daemon-reload && systemctl enable --now browserless.service.
+# See infra/browserless/README.md for full setup notes.
+
+[Unit]
+Description=Browserless Chromium for seo-audit JS-rendering
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=tobias
+WorkingDirectory=/home/tobias/apps/seo-audit-browserless
+# `docker compose` (v2 plugin) is shipped via the docker-compose-plugin
+# package on Debian 13. Container restart-on-failure is handled inside
+# the compose file (`restart: unless-stopped`), so the unit only has to
+# start / stop the stack once at boot / shutdown.
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target

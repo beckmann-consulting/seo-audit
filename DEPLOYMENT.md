@@ -209,6 +209,34 @@ primäre Sicherheitsgrenze.
 Im Audit-UI: Modul-Sektion → "Rendering-Modus" → "JavaScript". Static
 bleibt der Default; JS-Mode ist eine bewusste Entscheidung pro Audit.
 
+#### Optional: Auto-Start via systemd
+
+Damit der Container nach Server-Reboots automatisch hochfährt, gibt es
+ein systemd-Unit-File im Repo: `infra/browserless/browserless.service`.
+Es startet/stoppt den Compose-Stack über `docker compose up -d` /
+`down`. Container-Restart-on-failure macht das Compose-File selbst
+(`restart: unless-stopped`).
+
+Setup ist in `infra/browserless/README.md` dokumentiert. Kurzfassung:
+
+```bash
+# Compose-File + .env in das Browserless-App-Verzeichnis kopieren
+sudo mkdir -p /home/tobias/apps/seo-audit-browserless
+sudo chown tobias:tobias /home/tobias/apps/seo-audit-browserless
+cp infra/browserless/docker-compose.yml /home/tobias/apps/seo-audit-browserless/
+cp infra/browserless/.env.example       /home/tobias/apps/seo-audit-browserless/.env
+# … BROWSERLESS_TOKEN in der .env eintragen
+
+# systemd-Unit installieren
+sudo cp infra/browserless/browserless.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now browserless.service
+```
+
+Der Pfad `/home/tobias/apps/seo-audit-browserless/` hält Browserless als
+eigenständigen Service neben der Audit-App (`/home/tobias/apps/seo-audit/`).
+So sind die beiden Service-Lifecycles voneinander entkoppelt.
+
 ---
 
 ## 3. Build & Start
