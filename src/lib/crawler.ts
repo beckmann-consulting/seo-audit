@@ -98,12 +98,7 @@ export async function crawlSite(
       onProgress?.(pages.length, queue.length + pages.length + 1, url);
 
       try {
-        // [audit-trace] DIAGNOSTIC — to be removed after the audit-hang
-        // issue is resolved. n is 0-based count of already-rendered pages.
-        console.log(`[audit-trace] page-start url=${url} n=${pages.length}/${queue.length + pages.length + 1} depth=${depth}`);
-        const _pageStart = Date.now();
         const result = await activeRenderer.fetch(url);
-        console.log(`[audit-trace] page-rendered url=${url} status=${result.status} mode=${result.mode} ms=${Date.now() - _pageStart}`);
 
         // Network error / no response
         if (result.status === 0) {

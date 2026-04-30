@@ -44,17 +44,6 @@ import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/t
 
 export const maxDuration = 300; // 5 min timeout
 
-// [audit-trace] DIAGNOSTIC — to be removed after the audit-hang issue
-// is resolved. Force unbuffered stdout so journalctl shows console.log
-// calls live during long-running SSE streams instead of all-at-once
-// when the process exits.
-if (process.stdout.isTTY === false) {
-  // _handle is private (Node internals) but exists on the stream impl;
-  // cast to unknown shape so TS lets us reach it.
-  const handle = (process.stdout as unknown as { _handle?: { setBlocking?: (b: boolean) => void } })._handle;
-  handle?.setBlocking?.(true);
-}
-
 const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   seo: { de: 'SEO', en: 'SEO' },
   content: { de: 'Inhalte', en: 'Content' },
@@ -86,17 +75,10 @@ async function runAudit(
   const progress = (step: string, percent: number, detail?: string) =>
     send({ type: 'progress', step, percent, detail });
 
-  // [audit-trace] DIAGNOSTIC helper — relative ms since audit start so
-  // we can pinpoint where the pipeline hangs. Removed after fix.
-  const auditStart = Date.now();
-  const trace = (msg: string) =>
-    console.log(`[audit-trace] +${Date.now() - auditStart}ms ${msg}`);
-
   // Normalize URL
   let url = config.url.trim();
   if (!url.startsWith('http')) url = 'https://' + url;
   const domain = new URL(url).hostname;
-  trace(`start url=${url} rendering=${config.rendering ?? 'auto'} maxPages=${config.maxPages ?? 0}`);
 
   // Resolve UA once — every HTTP fetch in the audit pipeline uses
   // this string. Audits run "as Googlebot" or "as a custom crawler"
@@ -168,8 +150,6 @@ async function runAudit(
   const googleKey = config.googleApiKey || process.env.GOOGLE_API_KEY || '';
   const psiRuns = config.quickMode ? 1 : 2;
   progress('pagespeed_check', 75);
-  trace(`external-call type=psi url=${url} runs=${psiRuns}`);
-  const _psiStart = Date.now();
   const pageSpeedData = (googleKey && config.modules.includes('performance'))
     ? await checkPageSpeed(url, googleKey, psiRuns, (runNumber, totalRuns) => {
         // Run 1 emits at 75%, subsequent runs at +3% each — keeps the
@@ -178,13 +158,9 @@ async function runAudit(
         progress('pagespeed_check', pct, totalRuns > 1 ? `Run ${runNumber}/${totalRuns}` : undefined);
       })
     : undefined;
-  trace(`external-done type=psi ms=${Date.now() - _psiStart} ok=${pageSpeedData ? !pageSpeedData.error : 'skipped'}`);
-  trace(`external-call type=sb url=${url}`);
-  const _sbStart = Date.now();
   const safeBrowsingData = googleKey
     ? await checkSafeBrowsing(url, googleKey)
     : undefined;
-  trace(`external-done type=sb ms=${Date.now() - _sbStart} ok=${safeBrowsingData ? !safeBrowsingData.error : 'skipped'}`);
 
   // ---- STEP 7: Security Headers (80%) ----
   progress('security_headers', 80);
@@ -231,13 +207,10 @@ async function runAudit(
   // states (no token, property-not-found, api-error) all produce
   // a successful audit; only the headline tab gets a different hint.
   progress('gsc_fetch', 88);
-  trace(`external-call type=gsc domain=${domain}`);
-  const _gscStart = Date.now();
   const gscResult: GscResult = await resolveGscResult({
     domain,
     refreshToken: process.env.GSC_REFRESH_TOKEN,
   });
-  trace(`external-done type=gsc ms=${Date.now() - _gscStart} ok=${gscResult.state === 'ok'} state=${gscResult.state}`);
   // Live warning during the SSE stream when GSC's API hiccupped
   // (state='api-error'). The other three states are intentional
   // outcomes that the final result banner already covers.
@@ -245,7 +218,6 @@ async function runAudit(
 
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
-  trace(`findings-start pages=${pages.length}`);
   const allHtml = rawPages.map(p => p.html).join('\n');
   const allFindings: Finding[] = [];
 
@@ -407,7 +379,6 @@ async function runAudit(
   auditResult.claudePrompt = generateClaudePrompt(auditResult);
 
   progress('complete', 100);
-  trace(`audit-done totalMs=${Date.now() - auditStart}`);
   return auditResult;
 }
 
@@ -512,7 +483,6 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('Audit error:', message);
-        console.log(`[audit-trace] error stage=stream message=${message}`);
         send({ type: 'error', message });
       } finally {
         // Ensure the renderer's resources (Browserless session) are
