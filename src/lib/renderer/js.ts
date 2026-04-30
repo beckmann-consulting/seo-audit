@@ -289,14 +289,14 @@ export async function probeBrowserless(
   token: string,
   timeoutMs: number = 5000,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  // We hit the /health HTTP endpoint rather than opening a WebSocket;
+  // We hit the /pressure HTTP endpoint rather than opening a WebSocket;
   // that's both faster and doesn't consume one of the limited sessions.
   // Endpoint format: ws://host:port → http://host:port
   const httpEndpoint = endpoint
     .replace(/^ws:/i, 'http:')
     .replace(/^wss:/i, 'https:');
   try {
-    const resp = await fetch(`${httpEndpoint}/health?token=${encodeURIComponent(token)}`, {
+    const resp = await fetch(`${httpEndpoint}/pressure?token=${encodeURIComponent(token)}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (resp.ok) return { ok: true };

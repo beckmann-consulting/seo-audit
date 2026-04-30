@@ -507,13 +507,13 @@ describe('JsRenderer.captureScreenshot', () => {
 });
 
 describe('probeBrowserless', () => {
-  it('returns ok when /health responds 2xx', async () => {
+  it('returns ok when /pressure responds 2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     const r = await probeBrowserless('ws://localhost:9223', 't');
     expect(r).toEqual({ ok: true });
   });
 
-  it('returns ok=false with the status code when health responds 4xx/5xx', async () => {
+  it('returns ok=false with the status code when pressure responds 4xx/5xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
     const r = await probeBrowserless('ws://localhost:9223', 't');
     expect(r).toMatchObject({ ok: false });
@@ -527,12 +527,12 @@ describe('probeBrowserless', () => {
     if (!r.ok) expect(r.error).toContain('ECONNREFUSED');
   });
 
-  it('rewrites ws:// to http:// for the health check', async () => {
+  it('rewrites ws:// to http:// for the pressure check', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     await probeBrowserless('ws://localhost:9223', 'tok');
     const url = String(fetchSpy.mock.calls[0][0]);
     expect(url).toMatch(/^http:\/\/localhost:9223/);
-    expect(url).toContain('/health?token=tok');
+    expect(url).toContain('/pressure?token=tok');
   });
 
   it('rewrites wss:// to https://', async () => {
