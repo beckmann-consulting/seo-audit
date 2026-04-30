@@ -29,7 +29,11 @@ export interface RenderResult {
 }
 
 export interface Renderer {
-  readonly mode: 'static' | 'js';
+  // 'auto' is the AutoRenderer that picks per-page between static and
+  // js based on a CSR-shell heuristic. RenderResult.mode stays binary
+  // ('static' | 'js') because each rendered page is one or the other —
+  // 'auto' is purely the selection strategy at the audit-config level.
+  readonly mode: 'static' | 'js' | 'auto';
   fetch(url: string): Promise<RenderResult>;
   close(): Promise<void>;
 }

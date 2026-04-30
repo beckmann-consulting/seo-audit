@@ -123,7 +123,7 @@ export default function AuditApp() {
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
-  const [rendering, setRendering] = useState<'static' | 'js'>('static');
+  const [rendering, setRendering] = useState<'static' | 'js' | 'auto'>('auto');
   const [includeScreenshots, setIncludeScreenshots] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -574,7 +574,7 @@ export default function AuditApp() {
               modules.length === defaultModuleSet.size &&
               modules.every(m => defaultModuleSet.has(m));
             const adjustments = [
-              rendering !== 'static',
+              rendering !== 'auto',
               userAgent !== 'default',
               mobileDesktopParity,
               imageProbeLimit !== 20,
@@ -654,11 +654,12 @@ export default function AuditApp() {
                       </label>
                       <select
                         value={rendering}
-                        onChange={e => setRendering(e.target.value as 'static' | 'js')}
+                        onChange={e => setRendering(e.target.value as 'static' | 'js' | 'auto')}
                         style={{ ...inputStyle, maxWidth: 400 }}
                       >
-                        <option value="static">{t('Static (HTTP fetch — Default)', 'Static (HTTP fetch — default)')}</option>
-                        <option value="js">{t('JavaScript (Browserless / Chromium)', 'JavaScript (Browserless / Chromium)')}</option>
+                        <option value="auto">{t('Auto (Static + JS bei SPA-Erkennung — Default)', 'Auto (static + JS on SPA detection — default)')}</option>
+                        <option value="static">{t('Static (HTTP fetch)', 'Static (HTTP fetch)')}</option>
+                        <option value="js">{t('JavaScript (Browserless / Chromium für jede Seite)', 'JavaScript (Browserless / Chromium for every page)')}</option>
                       </select>
                     </div>
 

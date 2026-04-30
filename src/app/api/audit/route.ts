@@ -414,21 +414,28 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  // Build the renderer once, up-front. JS-mode probes Browserless health
-  // before opening the SSE stream — a clear 502 beats a stuck audit.
+  // Build the renderer once, up-front. Both 'js' and 'auto' need
+  // Browserless reachable up front — fail fast with a clear 502 rather
+  // than letting an audit kick off and hit per-page failures.
   let renderer: Renderer;
-  if (config.rendering === 'js') {
+  const ua = resolveUserAgent(config);
+  const auth = buildBasicAuthHeader(config.basicAuth);
+  const baseRendererOpts = {
+    userAgent: ua,
+    authHeader: auth,
+    customHeaders: config.customHeaders,
+  };
+
+  if (config.rendering === 'js' || config.rendering === 'auto') {
     const endpoint = process.env.BROWSERLESS_ENDPOINT || 'ws://localhost:9223';
     const token = process.env.BROWSERLESS_TOKEN || '';
     if (!token) {
       return NextResponse.json(
-        { error: 'JS rendering requested but BROWSERLESS_TOKEN is not set on the server' },
+        { error: `${config.rendering === 'js' ? 'JS' : 'Auto'} rendering requested but BROWSERLESS_TOKEN is not set on the server` },
         { status: 500 },
       );
     }
-    const ua = resolveUserAgent(config);
-    const auth = buildBasicAuthHeader(config.basicAuth);
-    const { JsRenderer, probeBrowserless } = await import('@/lib/renderer');
+    const { JsRenderer, AutoRenderer, probeBrowserless } = await import('@/lib/renderer');
     const probe = await probeBrowserless(endpoint, token);
     if (!probe.ok) {
       return NextResponse.json(
@@ -436,22 +443,23 @@ export async function POST(req: NextRequest) {
         { status: 502 },
       );
     }
-    renderer = new JsRenderer({
+    const jsRenderer = new JsRenderer({
+      ...baseRendererOpts,
       endpoint,
       token,
-      userAgent: ua,
-      authHeader: auth,
-      customHeaders: config.customHeaders,
       // Run axe-core on each page only when the user explicitly
       // selected the accessibility module. Adds ~1-2s per page.
       runAxe: config.modules.includes('accessibility'),
     });
+    if (config.rendering === 'js') {
+      renderer = jsRenderer;
+    } else {
+      // Auto-mode: compose a StaticRenderer for the first-pass + the
+      // JsRenderer for escalation. AutoRenderer.fetch decides per page.
+      renderer = new AutoRenderer(new StaticRenderer(baseRendererOpts), jsRenderer);
+    }
   } else {
-    renderer = new StaticRenderer({
-      userAgent: resolveUserAgent(config),
-      authHeader: buildBasicAuthHeader(config.basicAuth),
-      customHeaders: config.customHeaders,
-    });
+    renderer = new StaticRenderer(baseRendererOpts);
   }
 
   const stream = new ReadableStream<Uint8Array>({

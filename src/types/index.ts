@@ -76,11 +76,15 @@ export interface AuditConfig {
   // loaded content or hidden-by-default mobile sections.
   mobileDesktopParityCheck?: boolean;
   mobileDesktopParitySampleSize?: number; // default 10
-  // Render mode for the crawl. 'static' (default) is a plain HTTP fetch
-  // — what every audit has done historically. 'js' routes every page
-  // through a real Chromium (Browserless container) so SPAs render
-  // their content the same way Googlebot's renderer would.
-  rendering?: 'static' | 'js';
+  // Render mode for the crawl.
+  // 'static' — plain HTTP fetch, what every audit historically did.
+  // 'js'     — every page routes through a real Chromium (Browserless
+  //            container) so SPAs render the way Googlebot's renderer
+  //            would. Slower; requires Browserless.
+  // 'auto'   — DEFAULT for new audits. Static-first; pages whose static
+  //            HTML looks like a CSR shell escalate to a JS render.
+  //            Spends Browserless cycles only where they matter.
+  rendering?: 'static' | 'js' | 'auto';
   // Screenshot capture in JS-mode. Adds Mobile (375×667) and Desktop
   // (1920×1080) screenshots of the homepage + top-3 pages by depth
   // to the audit result and the PDF export. Only honoured when

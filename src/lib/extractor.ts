@@ -10,6 +10,7 @@ import {
   fleschReadingEase, pickReadabilityLang,
 } from './util/readability';
 import { countSmallTouchTargets } from './util/touch-targets';
+import { detectCsrFromRoot } from './util/csr-detection';
 
 // Pages with fewer words than this skip duplicate fingerprinting —
 // shingling needs ≥ k words to produce anything, and very thin pages
@@ -440,41 +441,12 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const hasWebManifest = !!root.querySelector('link[rel="manifest"]');
   const hasThemeColor = !!root.querySelector('meta[name="theme-color"]');
 
-  // Client-side rendering detection
-  // SPAs usually ship an HTML shell with an empty root element that gets
-  // filled in by JS at runtime. Crawlers without JS execution (AI retrieval
-  // bots, social preview fetchers, old search engines) won't see anything.
-  let likelyClientRendered = false;
-  let clientRenderSignal: string | undefined;
-
-  const spaRoots: { selector: string; name: string }[] = [
-    { selector: '#root', name: 'React #root' },
-    { selector: '#app', name: 'Vue/generic #app' },
-    { selector: '#__next', name: 'Next.js #__next' },
-    { selector: '#___gatsby', name: 'Gatsby #___gatsby' },
-    { selector: '#__nuxt', name: 'Nuxt #__nuxt' },
-    { selector: '[data-reactroot]', name: 'React data-reactroot' },
-  ];
-  for (const { selector, name } of spaRoots) {
-    const el = root.querySelector(selector);
-    if (el) {
-      const innerText = el.text.replace(/\s+/g, ' ').trim();
-      if (innerText.length < 100) {
-        likelyClientRendered = true;
-        clientRenderSignal = `${name} is empty (${innerText.length} chars)`;
-        break;
-      }
-    }
-  }
-
-  // Fallback heuristic: body has almost no text but there is a <noscript> fallback
-  if (!likelyClientRendered && wordCount < 30) {
-    const noscript = root.querySelector('noscript');
-    if (noscript && noscript.text.trim().length > 50) {
-      likelyClientRendered = true;
-      clientRenderSignal = `body has ${wordCount} words but <noscript> contains content`;
-    }
-  }
+  // Client-side rendering detection — same heuristic AutoRenderer uses
+  // to decide whether to escalate a page to JS render. Pulled into a
+  // shared helper so the rule lives in one place.
+  const csr = detectCsrFromRoot(root, wordCount);
+  const likelyClientRendered = csr.likelyClientRendered;
+  const clientRenderSignal = csr.signal;
 
   return {
     url: page.url,
