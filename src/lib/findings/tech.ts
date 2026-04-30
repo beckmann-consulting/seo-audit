@@ -1,6 +1,7 @@
 import type {
   Finding, PageSEOData, CrawlStats, SSLInfo, DNSInfo,
   SafeBrowsingData, SecurityHeadersInfo, WwwConsistencyInfo,
+  HttpError,
 } from '@/types';
 import { id } from './utils';
 
@@ -571,6 +572,113 @@ const JS_REQUIRED_CRITICAL_STATIC_MAX = 30;
 const JS_REQUIRED_IMPORTANT_RATIO = 2;
 const JS_REQUIRED_IMPORTANT_RENDERED_MIN = 100;
 
+// E5 — failed-network-requests thresholds.
+// Resource types that "matter" when they fail same-origin: scripts and
+// stylesheets break rendering, document/fetch/xhr break dynamic data
+// loads. Images / fonts / media degrade visuals but rarely break SEO.
+const CRITICAL_RESOURCE_TYPES = new Set([
+  'script', 'stylesheet', 'document', 'fetch', 'xhr',
+]);
+// Heuristic for failedRequests (which is `string[]` without resourceType):
+// a URL ending in .js / .mjs / .css is critical regardless of why it
+// failed. Other extensions (png, woff, etc.) are downgraded.
+const CRITICAL_URL_EXTENSION_RE = /\.(js|mjs|css)(?:\?|$|#)/i;
+const FAILED_REQUEST_PARSE_RE = /^(https?:\/\/[^\s]+):\s*(.+)$/;
+
+// E5 — hydration-mismatch-suspected thresholds. Empirical first
+// estimates — tighten if practice shows false-positives.
+const HYDRATION_WORD_LOSS_RATIO_THRESHOLD = -0.30;
+const HYDRATION_LINK_LOSS_DELTA_THRESHOLD = -10;
+const HYDRATION_LINK_LOSS_MIN_STATIC_COUNT = 20;
+
+// E5 — sample sizes (consistent with existing js-rendering findings).
+const E5_SAMPLE_PAGE_COUNT = 5;
+const E5_PAGE_FAILURE_DETAIL_COUNT = 2;
+
+interface ParsedFailedRequest {
+  url: string;
+  reason: string;
+}
+
+function parseFailedRequest(s: string): ParsedFailedRequest | null {
+  const m = FAILED_REQUEST_PARSE_RE.exec(s);
+  if (!m) return null;
+  return { url: m[1], reason: m[2] };
+}
+
+function isSameOriginAs(pageUrl: string, otherUrl: string): boolean {
+  try {
+    return new URL(otherUrl).origin === new URL(pageUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isCriticalHttpError(e: HttpError): boolean {
+  return CRITICAL_RESOURCE_TYPES.has(e.resourceType);
+}
+
+function isCriticalFailedRequestUrl(url: string): boolean {
+  return CRITICAL_URL_EXTENSION_RE.test(url);
+}
+
+// Combined per-page Failure record across both data sources, with the
+// critical/origin classification pre-computed so finding rendering
+// stays a sort + slice.
+interface PageFailure {
+  url: string;
+  // Either status (httpErrors) or reason (failedRequests) — never both.
+  status?: number;
+  reason?: string;
+  resourceType?: string;
+  sameOrigin: boolean;
+  critical: boolean;
+}
+
+function collectPageFailures(p: PageSEOData): PageFailure[] {
+  const out: PageFailure[] = [];
+  for (const e of p.httpErrors ?? []) {
+    const sameOrigin = isSameOriginAs(p.url, e.url);
+    out.push({
+      url: e.url,
+      status: e.status,
+      resourceType: e.resourceType,
+      sameOrigin,
+      critical: sameOrigin && isCriticalHttpError(e),
+    });
+  }
+  for (const raw of p.failedRequests ?? []) {
+    const parsed = parseFailedRequest(raw);
+    const url = parsed?.url ?? raw;
+    const reason = parsed?.reason ?? 'unknown';
+    const sameOrigin = isSameOriginAs(p.url, url);
+    out.push({
+      url,
+      reason,
+      sameOrigin,
+      critical: sameOrigin && isCriticalFailedRequestUrl(url),
+    });
+  }
+  return out;
+}
+
+// Sort: critical first (so the worst offenders surface in the
+// per-page detail line), then by status descending (5xx > 4xx).
+function sortFailuresWorstFirst(a: PageFailure, b: PageFailure): number {
+  if (a.critical !== b.critical) return a.critical ? -1 : 1;
+  return (b.status ?? 0) - (a.status ?? 0);
+}
+
+// One-line description fragment for a failure: "{url} ({status}, {type})"
+// or "{url} ({reason})" for network-layer failures.
+function describeFailure(f: PageFailure, isDE: boolean): string {
+  if (f.status !== undefined) {
+    const typeLabel = f.resourceType ? `, ${f.resourceType}` : '';
+    return `${f.url} (${f.status}${typeLabel})`;
+  }
+  return `${f.url} (${f.reason ?? (isDE ? 'unbekannt' : 'unknown')})`;
+}
+
 export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
   const findings: Finding[] = [];
   const jsPages = pages.filter(p => p.renderMode === 'js' && p.staticWordCount !== undefined);
@@ -644,6 +752,135 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
       recommendation_de: 'Browser-DevTools-Console im normalen Browser öffnen und die genannten Seiten besuchen — die Fehler sollten reproduzieren. Stack-Traces im Code aufspüren, fehlerhafte Imports / null-Zugriffe / fehlende Polyfills beheben. Bei Drittanbieter-Scripts (Tracking, A/B-Test-Tools): mit dem Anbieter klären oder das Script gegebenenfalls entfernen.',
       recommendation_en: 'Open browser DevTools console in a regular browser and visit the listed pages — the errors should reproduce. Trace stack traces in the code, fix broken imports / null accesses / missing polyfills. For third-party scripts (tracking, A/B-test tools): contact the vendor or remove the script if non-essential.',
       affectedUrl: withErrors[0].url,
+    });
+  }
+
+  // ------------------------------------------------------------
+  // failed-network-requests (E5)
+  // ------------------------------------------------------------
+  // Combines two complementary data sources:
+  //   - httpErrors: 4xx/5xx sub-resource responses (E4.5)
+  //   - failedRequests: network-layer failures (DNS, CORS, ABORTED, …)
+  // Same-origin + critical-resource (script/stylesheet/document/fetch/xhr,
+  // or .js/.mjs/.css URL pattern) escalates to Important. Anything else
+  // (cross-origin, images/fonts/media) stays Recommended.
+  type PageWithFailures = { page: PageSEOData; failures: PageFailure[]; criticalCount: number };
+  const pagesWithFailures: PageWithFailures[] = [];
+  for (const p of jsPages) {
+    const failures = collectPageFailures(p);
+    if (failures.length === 0) continue;
+    failures.sort(sortFailuresWorstFirst);
+    const criticalCount = failures.filter(f => f.critical).length;
+    pagesWithFailures.push({ page: p, failures, criticalCount });
+  }
+
+  if (pagesWithFailures.length > 0) {
+    const totalFailures = pagesWithFailures.reduce((s, x) => s + x.failures.length, 0);
+    const totalCritical = pagesWithFailures.reduce((s, x) => s + x.criticalCount, 0);
+    const priority: 'important' | 'recommended' = totalCritical > 0 ? 'important' : 'recommended';
+
+    // Pages first by critical-count desc, then total-count desc — worst
+    // offenders surface in the sample.
+    const sortedPages = [...pagesWithFailures].sort((a, b) => {
+      if (b.criticalCount !== a.criticalCount) return b.criticalCount - a.criticalCount;
+      return b.failures.length - a.failures.length;
+    });
+    const samplePages = sortedPages.slice(0, E5_SAMPLE_PAGE_COUNT);
+
+    const renderSample = (isDE: boolean): string =>
+      samplePages.map(({ page, failures }) => {
+        const detail = failures.slice(0, E5_PAGE_FAILURE_DETAIL_COUNT)
+          .map(f => describeFailure(f, isDE)).join(', ');
+        const overflow = failures.length > E5_PAGE_FAILURE_DETAIL_COUNT
+          ? ` (+ ${failures.length - E5_PAGE_FAILURE_DETAIL_COUNT} ${isDE ? 'weitere' : 'more'})`
+          : '';
+        return `${page.url}: ${detail}${overflow}`;
+      }).join('; ');
+
+    const sample = renderSample(true);
+    const sampleEn = renderSample(false);
+    const criticalNoteDe = totalCritical > 0
+      ? `, davon ${totalCritical} kritisch (Same-Origin auf Script/Stylesheet/Fetch)`
+      : '';
+    const criticalNoteEn = totalCritical > 0
+      ? ` — ${totalCritical} of them critical (same-origin on script/stylesheet/fetch)`
+      : '';
+
+    findings.push({
+      id: id(),
+      priority,
+      module: 'tech',
+      effort: 'medium',
+      impact: priority === 'important' ? 'high' : 'medium',
+      title_de: `${totalFailures} fehlgeschlagene Netzwerk-Request(s) auf ${pagesWithFailures.length} Seite(n)${criticalNoteDe}`,
+      title_en: `${totalFailures} failed network request(s) on ${pagesWithFailures.length} page(s)${criticalNoteEn}`,
+      description_de: `Beim Headless-Browser-Render brachen Sub-Resource-Requests ab — entweder durch HTTP 4xx/5xx-Antworten oder durch Network-Layer-Fehler (DNS, CORS, ABORTED). Same-Origin-Fehler auf Script/Stylesheet/Fetch sind kritisch, weil sie die Page funktional brechen können. Cross-Origin-Fehler (Drittanbieter-Tracker, externe Fonts) sind milder, signalisieren aber unzuverlässige Abhängigkeiten. Beispiele: ${sample}`,
+      description_en: `When rendering with the headless browser, sub-resource requests broke — either via HTTP 4xx/5xx responses or via network-layer failures (DNS, CORS, ABORTED). Same-origin failures on script/stylesheet/fetch are critical because they can functionally break the page. Cross-origin failures (third-party trackers, external fonts) are milder but signal unreliable dependencies. Examples: ${sampleEn}`,
+      recommendation_de: 'Im Browser-DevTools-Network-Tab die genannten Pages reproduzieren und die fehlerhaften Requests untersuchen. Bei Same-Origin-404: prüfe Asset-Pfade, deployte Builds, Routing. Bei Cross-Origin-CORS: prüfe Allow-Origin-Header oder entferne den nicht-essentiellen Drittanbieter. Bei zeitweise fehlschlagenden Tracker: in Erwägung ziehen, das Script async/defer zu laden oder zu entfernen.',
+      recommendation_en: 'Reproduce in browser DevTools Network tab on the listed pages and inspect the broken requests. Same-origin 404: verify asset paths, deployed builds, routing. Cross-origin CORS: check Allow-Origin headers or drop the non-essential third party. Intermittently-failing trackers: consider loading async/defer or removing the script.',
+      affectedUrl: samplePages[0].page.url,
+    });
+  }
+
+  // ------------------------------------------------------------
+  // hydration-mismatch-suspected (E5)
+  // ------------------------------------------------------------
+  // Only candidates with the E4 staticVsRenderedDiff field set; static
+  // pages and non-escalated auto-mode pages are excluded by definition.
+  type HydrationFlag = {
+    page: PageSEOData;
+    diff: NonNullable<PageSEOData['staticVsRenderedDiff']>;
+    triggers: string[];  // 'word-loss' | 'link-loss'
+  };
+  const hydrationFlags: HydrationFlag[] = [];
+  for (const p of jsPages) {
+    const diff = p.staticVsRenderedDiff;
+    if (!diff) continue;
+    const triggers: string[] = [];
+    if (diff.wordCountDeltaRatio < HYDRATION_WORD_LOSS_RATIO_THRESHOLD) {
+      triggers.push('word-loss');
+    }
+    if (diff.linkCountDelta < HYDRATION_LINK_LOSS_DELTA_THRESHOLD &&
+        diff.linkCountStatic > HYDRATION_LINK_LOSS_MIN_STATIC_COUNT) {
+      triggers.push('link-loss');
+    }
+    if (triggers.length > 0) {
+      hydrationFlags.push({ page: p, diff, triggers });
+    }
+  }
+
+  if (hydrationFlags.length > 0) {
+    // Sort by wordCountDeltaRatio asc (most negative = biggest loss first).
+    const sorted = [...hydrationFlags].sort(
+      (a, b) => a.diff.wordCountDeltaRatio - b.diff.wordCountDeltaRatio,
+    );
+    const samplePages = sorted.slice(0, E5_SAMPLE_PAGE_COUNT);
+
+    const renderSample = (isDE: boolean): string =>
+      samplePages.map(({ page, diff }) => {
+        const ratioPct = (diff.wordCountDeltaRatio * 100).toFixed(0);
+        const wordPart = isDE
+          ? `Static ${diff.wordCountStatic} → Rendered ${diff.wordCountRendered} Wörter (${ratioPct}%)`
+          : `static ${diff.wordCountStatic} → rendered ${diff.wordCountRendered} words (${ratioPct}%)`;
+        const linkPart = diff.linkCountDelta < 0
+          ? `, ${isDE ? 'Links' : 'links'} ${diff.linkCountStatic} → ${diff.linkCountRendered}`
+          : '';
+        return `${page.url} (${wordPart}${linkPart})`;
+      }).join('; ');
+
+    findings.push({
+      id: id(),
+      priority: 'recommended',
+      module: 'tech',
+      effort: 'medium',
+      impact: 'medium',
+      title_de: `Hydration-Mismatch vermutet auf ${hydrationFlags.length} Seite(n)`,
+      title_en: `Hydration mismatch suspected on ${hydrationFlags.length} page(s)`,
+      description_de: `Diese Seiten verlieren beim JS-Render messbar Inhalt: entweder ≥30% weniger Wörter im gerenderten DOM als im statischen HTML, oder >10 Links absolut weniger bei einem ausreichend großen Static-Pool. Mögliche Ursachen: clientseitige Filter, Conditional Renders mit fehlerhaften Bedingungen, oder echte Hydration-Errors, bei denen React/Vue Mismatches einfach Inhalt verwerfen. Verdachts-Finding — manuell verifizieren. Beispiele: ${renderSample(true)}`,
+      description_en: `These pages measurably lose content during JS render: either ≥30% fewer words in the rendered DOM than in static HTML, or >10 links absolutely lost from an adequately large static pool. Possible causes: client-side filters, conditional renders with buggy predicates, or actual hydration errors where React/Vue silently discards content on mismatch. Suspected finding — verify manually. Examples: ${renderSample(false)}`,
+      recommendation_de: 'Browser-DevTools-Console öffnen und die Pages besuchen: React/Vue-Hydration-Warnings (z.B. "Text content did not match", "Hydration failed") deuten direkt auf das Problem. Bei clientseitigen Filtern: Logik prüfen, ob Default-Filter unbeabsichtigt Inhalt versteckt. Bei Conditional Renders: window/document-Zugriffe vor Hydration vermeiden — sie werden auf Server und Client unterschiedlich aufgelöst.',
+      recommendation_en: 'Open browser DevTools console and visit the pages: React/Vue hydration warnings ("Text content did not match", "Hydration failed") point directly at the problem. For client-side filters: check whether default filters unintentionally hide content. For conditional renders: avoid window/document access pre-hydration — server and client resolve them differently.',
+      affectedUrl: samplePages[0].page.url,
     });
   }
 
