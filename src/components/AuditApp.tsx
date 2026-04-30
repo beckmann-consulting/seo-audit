@@ -1637,9 +1637,13 @@ const tdStyle: React.CSSProperties = {
 // recipe; field rows inside use a 12px gap instead of marginBottom.
 const p8CardStyle: React.CSSProperties = {
   background: 'var(--surface)',
-  border: '1px solid var(--border)',
+  border: '1px solid var(--border-strong)',
   borderRadius: 12,
-  padding: '0.85rem 1rem',
+  padding: '1rem 1.1rem',
+  // Subtle two-layer shadow for spatial depth without a floating-card
+  // effect — picks up the card outline against the page bg even when
+  // the user has a low-contrast monitor or browser-extension theme.
+  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06)',
 };
 
 const p8FieldGroup: React.CSSProperties = {
@@ -1650,7 +1654,17 @@ const p8FieldGroup: React.CSSProperties = {
 
 function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+    <div style={{
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      marginBottom: 14,
+      paddingBottom: 10,
+      // --border-light sits intentionally lighter than the card's
+      // outer --border-strong so the divider doesn't visually merge
+      // with the card frame.
+      borderBottom: '1px solid var(--border-light)',
+    }}>
       <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{title}</span>
       {subtitle && (
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>— {subtitle}</span>

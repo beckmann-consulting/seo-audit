@@ -5,6 +5,9 @@
   --surface: #ffffff;
   --border: #e0ddd8;
   --border-light: #eeebe6;
+  /* Stronger than --border for card outlines that need to read as
+     spatial boundaries against --bg / --surface (P8.1). */
+  --border-strong: #d0ccc4;
   /* Slightly warmer than --border-light, used for inline card / row dividers
      in the audit UI. Could be folded into --border-light in a later pass. */
   --border-soft: #f0ede8;
