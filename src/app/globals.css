@@ -40,6 +40,40 @@
   --radius-lg: 12px;
 }
 
+/* ---------- Dark theme ----------
+   Soft-dark anthracite palette. Status colours are lifted relative to
+   their backgrounds so contrast stays roughly WCAG-AA. First-pass
+   values — tune in browser if any combination looks off, don't drift
+   the light theme to fix dark. */
+[data-theme="dark"] {
+  --bg: #1f2024;
+  --surface: #2a2b30;
+  --border: #3a3b40;
+  --border-light: #2f3035;
+  --border-soft: #32333a;
+  --border-mid: #36373c;
+  --text: #e8e6e0;
+  --text-strong: #c8c6c0;
+  --text-muted: #a8a6a0;
+  --text-faint: #78766f;
+  --accent: #ff7a00;
+  --pass: #7fbf3f;
+  --pass-strong: #a8d878;
+  --pass-bg: #2a3d1f;
+  --pass-border: #4a6028;
+  --warn: #d8a04e;
+  --warn-bg: #3d2f1a;
+  --warn-bg-banner: #3d3220;
+  --warn-border: #604824;
+  --fail: #d86060;
+  --fail-bg: #3a2020;
+  --fail-border: #5a3030;
+  --info: #5fa3e8;
+  --info-bg: #1f2d3d;
+  --info-bg-banner: #1d2d3d;
+  --info-border: #3a5878;
+}
+
 html { background: var(--bg); }
 body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; color: var(--text); line-height: 1.6; }
 
