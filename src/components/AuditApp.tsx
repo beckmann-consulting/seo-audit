@@ -5,7 +5,6 @@ import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAg
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
 import { formatDate } from '@/lib/util/format';
-import { type Theme, getInitialTheme, setTheme as persistTheme, nextTheme } from '@/lib/theme';
 import { StatusBanner } from './StatusBanner';
 import { GscRowsTable } from './GscRowsTable';
 import { getVisibleGscWarnings } from './gsc-warnings';
@@ -106,20 +105,6 @@ function scoreBg(s: number) {
 
 export default function AuditApp() {
   const [lang, setLang] = useState<Lang>('de');
-  // Theme state mirrors localStorage. Initial 'system' for SSR — the
-  // post-mount effect rehydrates from storage. The boot script in
-  // layout.tsx already set <html data-theme="…"> before React, so the
-  // single-frame mismatch only affects this state, not the rendered
-  // colours.
-  const [theme, setThemeState] = useState<Theme>('system');
-  useEffect(() => { setThemeState(getInitialTheme()); }, []);
-  const cycleTheme = () => {
-    const next = nextTheme(theme);
-    setThemeState(next);
-    persistTheme(next);
-  };
-  const themeIcon = theme === 'light' ? '☀️' : theme === 'dark' ? '🌙' : '🖥️';
-  const themeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'Auto';
   const [url, setUrl] = useState('');
   const [googleKey, setGoogleKey] = useState('');
   const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false);
@@ -522,17 +507,6 @@ export default function AuditApp() {
               {showConfig ? t('Config ausblenden', 'Hide config') : t('Neuer Audit', 'New audit')}
             </button>
           )}
-          <button
-            onClick={cycleTheme}
-            style={btnStyle}
-            title={t(
-              `Theme: ${themeLabel} (klicken für Wechsel)`,
-              `Theme: ${themeLabel} (click to cycle)`,
-            )}
-            aria-label={t(`Theme wechseln, aktuell ${themeLabel}`, `Cycle theme, currently ${themeLabel}`)}
-          >
-            {themeIcon} {themeLabel}
-          </button>
           <button onClick={() => setLang(l => l === 'de' ? 'en' : 'de')} style={btnStyle}>
             {lang === 'de' ? '🇩🇪 DE' : '🇬🇧 EN'}
           </button>
