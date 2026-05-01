@@ -569,6 +569,9 @@ export interface AuditResult {
   // Search Console state — always present once G1b ships; one of
   // disabled / property-not-found / api-error / ok. See GscResult.
   gscResult?: GscResult;
+  // Bing Webmaster state — always present once G3b ships; one of
+  // disabled / site-not-found / api-error / ok. See BingResult.
+  bingResult?: BingResult;
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
   claudePrompt: string;
   summary_de: string;

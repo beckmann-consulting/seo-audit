@@ -39,7 +39,9 @@ import { StaticRenderer } from '@/lib/renderer';
 import type { JsRenderer, Renderer } from '@/lib/renderer';
 import { captureScreenshotsForAudit } from '@/lib/screenshots';
 import { resolveGscResult, emitGscWarning } from '@/lib/external-gsc/route-helper';
-import type { GscResult, StreamEvent } from '@/types';
+import { resolveBingResult, emitBingWarning } from '@/lib/external-bing/route-helper';
+import { getBingApiKey } from '@/lib/external-bing/auth';
+import type { GscResult, BingResult, StreamEvent } from '@/types';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -231,6 +233,18 @@ async function runAudit(
   // outcomes that the final result banner already covers.
   emitGscWarning(gscResult, send);
 
+  // ---- STEP 8f: Bing Webmaster Tools ----
+  // Same shape as GSC: always populates a bingResult so the UI can
+  // render the right banner without distinguishing "Bing was never
+  // tried" from "Bing tried and produced no data". 4-state graceful
+  // degradation, all four producing a successful (200) audit.
+  progress('bing_check', 89);
+  const bingResult: BingResult = await resolveBingResult({
+    siteUrl: url,
+    apiKey: getBingApiKey() ?? undefined,
+  });
+  emitBingWarning(bingResult, send);
+
   // ---- STEP 9: Findings generation (90%) ----
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
@@ -385,6 +399,7 @@ async function runAudit(
     mobileDesktopParity,
     screenshots,
     gscResult,
+    bingResult,
     topFindings: getTopFindings(allFindings, 5),
     claudePrompt: '',
     summary_de,
