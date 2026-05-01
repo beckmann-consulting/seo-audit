@@ -44,6 +44,12 @@ import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/t
 
 export const maxDuration = 300; // 5 min timeout
 
+// A9.2 — When sitemap.xml is found, feed up to this many URLs into the
+// crawler queue as additional seeds. Tighter than the parser's 5000-cap
+// because here we'll actually fetch every URL — limit keeps audit time
+// bounded for sites with multi-thousand-entry sitemaps.
+const MAX_SITEMAP_SEEDS = 200;
+
 const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   seo: { de: 'SEO', en: 'SEO' },
   content: { de: 'Inhalte', en: 'Content' },
@@ -110,6 +116,14 @@ async function runAudit(
     ? await fetchSitemap(sitemapUrl, userAgent, authHeader, customHeaders)
     : undefined;
 
+  // A9.2 — feed sitemap-discovered URLs into the crawler queue so
+  // footer-only or multi-language pages aren't missed. Capped at
+  // MAX_SITEMAP_SEEDS because the parser allows much larger sitemaps
+  // than we want to actually fetch.
+  const sitemapSeeds = sitemapInfo?.urls
+    ? sitemapInfo.urls.slice(0, MAX_SITEMAP_SEEDS).map(u => u.url).filter(Boolean)
+    : undefined;
+
   // ---- STEP 5: Crawl (25% → 70%) ----
   progress('crawl_start', 25);
   let lastCrawlPercent = 25;
@@ -130,6 +144,7 @@ async function runAudit(
     authHeader,
     customHeaders,
     renderer,
+    sitemapSeeds,
   );
 
   if (rawPages.length === 0) {

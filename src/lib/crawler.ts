@@ -82,6 +82,13 @@ export async function crawlSite(
   authHeader?: string,
   customHeaders?: Record<string, string>,
   renderer?: Renderer,
+  // A9.2 — additional seed URLs (typically extracted from sitemap.xml)
+  // that get added to the crawl queue alongside the start URL. Without
+  // these, footer-only and multi-language pages stay invisible if the
+  // start URL doesn't link to them. Origin-filtered (with www tolerance)
+  // so a sitemap that references external domains can't drag the
+  // crawler off-site.
+  seedUrls?: string[],
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -92,6 +99,22 @@ export async function crawlSite(
   let externalLinkCount = 0;
 
   const baseDomain = new URL(startUrl).hostname;
+
+  // Sitemap-derived seeds enter at depth=1 — they're parallel discoveries,
+  // not reached by following the start URL. Visited-set deduplication
+  // handles overlap with subsequently-discovered links.
+  if (seedUrls && seedUrls.length > 0) {
+    for (const seed of seedUrls) {
+      try {
+        const seedHost = new URL(seed).hostname;
+        if (sameHostnameWithWww(seedHost, baseDomain)) {
+          queue.push({ url: seed, depth: 1 });
+        }
+      } catch {
+        /* skip malformed sitemap entries */
+      }
+    }
+  }
 
   // Default to a freshly-built StaticRenderer when none is passed. Keeps
   // the test surface small — most call sites just hand over the URL +
