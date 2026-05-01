@@ -5,7 +5,6 @@ import type { AuditConfig } from '@/types';
 const baseConfig: AuditConfig = {
   url: 'https://example.com/',
   modules: [],
-  author: 'tester',
   maxPages: 0,
 };
 

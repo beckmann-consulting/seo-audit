@@ -53,7 +53,7 @@ function makePage(o: Partial<PageSEOData> = {}): PageSEOData {
 
 function makeResult(o: Partial<AuditResult> = {}): AuditResult {
   return {
-    config: { url: 'https://example.com/', modules: [], author: 't', maxPages: 0 },
+    config: { url: 'https://example.com/', modules: [], maxPages: 0 },
     auditedAt: '2026-04-27T10:00:00.000Z',
     domain: 'example.com',
     totalScore: 75,

@@ -329,7 +329,6 @@ export default function AuditApp() {
       url: url.trim(),
       googleApiKey: googleKey.trim() || undefined,
       modules,
-      author: 'TW Beckmann Consultancy Services',
       maxPages: Number.isFinite(maxPages) ? Math.max(0, maxPages) : 0,
       quickMode,
       userAgent,

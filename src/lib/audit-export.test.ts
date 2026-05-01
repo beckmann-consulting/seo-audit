@@ -15,7 +15,6 @@ function makeResult(overrides: Partial<AuditResult> = {}): AuditResult {
     config: {
       url: 'https://example.com/',
       modules: ['seo'],
-      author: 'tester',
       maxPages: 0,
     },
     auditedAt: '2026-04-27T10:00:00.000Z',
@@ -53,8 +52,7 @@ describe('buildJsonExport', () => {
       config: {
         url: 'https://example.com/',
         modules: ['seo'],
-        author: 'tester',
-        maxPages: 0,
+          maxPages: 0,
         basicAuth: { username: 'admin', password: 'secret' },
       },
     }));
@@ -66,8 +64,7 @@ describe('buildJsonExport', () => {
       config: {
         url: 'https://example.com/',
         modules: ['seo'],
-        author: 'tester',
-        maxPages: 0,
+          maxPages: 0,
         googleApiKey: 'AIzaXXX',
       },
     }));
@@ -79,8 +76,7 @@ describe('buildJsonExport', () => {
       config: {
         url: 'https://example.com/',
         modules: ['seo'],
-        author: 'tester',
-        maxPages: 0,
+          maxPages: 0,
         basicAuth: { username: 'a', password: 'b' },
       },
     });

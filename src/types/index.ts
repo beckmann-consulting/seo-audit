@@ -72,7 +72,6 @@ export interface AuditConfig {
   url: string;
   googleApiKey?: string;
   modules: Module[];
-  author: string;
   maxPages: number; // 0 = unlimited
   quickMode?: boolean; // when true, PSI runs once (default: run twice and average for score stability)
   userAgent?: UserAgentPreset; // default: 'default'
