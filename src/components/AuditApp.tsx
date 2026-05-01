@@ -8,6 +8,8 @@ import { formatDate } from '@/lib/util/format';
 import { StatusBanner } from './StatusBanner';
 import { GscRowsTable } from './GscRowsTable';
 import { getVisibleGscWarnings } from './gsc-warnings';
+import { BingRowsTable } from './BingRowsTable';
+import { getVisibleBingWarnings } from './bing-warnings';
 import { checkPatterns, type PatternError } from './audit-form-validation';
 
 const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
@@ -140,7 +142,7 @@ export default function AuditApp() {
   // via Extract so adding new SSE-warning fields doesn't require a
   // second declaration here.
   const [warnings, setWarnings] = useState<Extract<StreamEvent, { type: 'warning' }>[]>([]);
-  const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'gsc' | 'prompt'>('findings');
+  const [activeTab, setActiveTab] = useState<'findings' | 'pages' | 'tech' | 'gsc' | 'bing' | 'prompt'>('findings');
   const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   const [showConfig, setShowConfig] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -966,9 +968,18 @@ export default function AuditApp() {
             const gscLabel = gscIssueCount > 0
               ? `Search Console (${gscIssueCount})`
               : 'Search Console';
+            // Bing tab badge — same logic as GSC, with Bing's
+            // 'site-not-found' replacing GSC's 'property-not-found'.
+            const bingWarningCount = warnings.filter(w => w.source === 'bing').length;
+            const bingStateIndicator =
+              result.bingResult?.state === 'api-error' || result.bingResult?.state === 'site-not-found' ? 1 : 0;
+            const bingIssueCount = bingWarningCount + bingStateIndicator;
+            const bingLabel = bingIssueCount > 0
+              ? `Bing (${bingIssueCount})`
+              : 'Bing';
             return (
               <div style={{ display: 'flex', gap: 4, marginBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
-                {(['findings', 'pages', 'tech', 'gsc', 'prompt'] as const).map(tab => (
+                {(['findings', 'pages', 'tech', 'gsc', 'bing', 'prompt'] as const).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} style={{
                     padding: '8px 14px', fontSize: 13, border: 'none', background: 'none', cursor: 'pointer',
                     borderBottom: activeTab === tab ? '2px solid var(--text)' : '2px solid transparent',
@@ -978,6 +989,7 @@ export default function AuditApp() {
                     {tab === 'pages' && t(`Seiten (${result.pages.length})`, `Pages (${result.pages.length})`)}
                     {tab === 'tech' && t('SSL & DNS', 'SSL & DNS')}
                     {tab === 'gsc' && gscLabel}
+                    {tab === 'bing' && bingLabel}
                     {tab === 'prompt' && t('Claude-Prompt', 'Claude Prompt')}
                   </button>
                 ))}
@@ -1441,6 +1453,148 @@ export default function AuditApp() {
                       key={i}
                       variant="warning"
                       title={t('Search Console — Warnung beim Abruf', 'Search Console — fetch warning')}
+                      onDismiss={() => setWarnings(arr => arr.filter(other => other !== w))}
+                    >
+                      {w.message}
+                    </StatusBanner>
+                  ))}
+                </div>
+              );
+            })()}
+          </>}
+
+          {/* Bing tab — same shape as GSC, simpler banner content
+              because Bing has no property-variant resolution and the
+              data layer doesn't carry a date range. */}
+          {activeTab === 'bing' && <>
+            {(() => {
+              const r = result.bingResult;
+              if (!r || r.state === 'disabled') {
+                return (
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <StatusBanner
+                      variant="info"
+                      title={t('Bing Webmaster Tools nicht aktiviert', 'Bing Webmaster Tools not enabled')}
+                    >
+                      {t(
+                        'Setze BING_WMT_API_KEY in deiner Umgebung, um Bing-Suchdaten dieses Audits zu sehen.',
+                        'Set BING_WMT_API_KEY in your environment to see Bing search data for this audit.',
+                      )}
+                    </StatusBanner>
+                  </div>
+                );
+              }
+              if (r.state === 'site-not-found') {
+                return (
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <StatusBanner
+                      variant="info"
+                      title={t(
+                        'Site nicht in deinem Bing-Webmaster-Konto verfügbar',
+                        'Site not available in your Bing Webmaster account',
+                      )}
+                    >
+                      {t(
+                        `Füge die Site in https://www.bing.com/webmasters hinzu und verifiziere sie. Danach erneut auditen.`,
+                        `Add and verify the site at https://www.bing.com/webmasters, then re-run the audit.`,
+                      )}
+                    </StatusBanner>
+                  </div>
+                );
+              }
+              if (r.state === 'api-error') {
+                return (
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <StatusBanner
+                      variant="error"
+                      title={t('Bing API-Fehler', 'Bing API error')}
+                    >
+                      {r.message}
+                      <div style={{ marginTop: 6 }}>
+                        {t(
+                          'Bitte ein neues Audit starten, um aktuelle Daten zu laden.',
+                          'Please start a new audit to fetch current data.',
+                        )}
+                      </div>
+                    </StatusBanner>
+                  </div>
+                );
+              }
+              // r.state === 'ok' — banner + queries + pages tables.
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <StatusBanner
+                    variant="ok"
+                    title={t('Bing Webmaster Tools verbunden', 'Bing Webmaster Tools connected')}
+                  >
+                    {r.data.siteUrl}
+                  </StatusBanner>
+
+                  {/* Top queries */}
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                      {t('Top-Suchanfragen', 'Top queries')}
+                    </h3>
+                    <BingRowsTable
+                      rows={r.data.topQueries}
+                      keyHeader={t('Suchanfrage', 'Query')}
+                      keyOf={(row) => row.query}
+                      renderKey={(k: string) => k}
+                      isDE={isDE}
+                    />
+                  </div>
+
+                  {/* Top pages */}
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <h3 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                      {t('Top-Seiten', 'Top pages')}
+                    </h3>
+                    <BingRowsTable
+                      rows={r.data.topPages}
+                      keyHeader={t('Seite', 'Page')}
+                      keyOf={(row) => row.page}
+                      renderKey={(url: string) => {
+                        // Path-only display + full URL on hover + new-tab on
+                        // click — same UX choice as the GSC pages table.
+                        let display = url;
+                        try {
+                          const u = new URL(url);
+                          display = u.pathname + u.search;
+                          if (display === '') display = '/';
+                        } catch {
+                          /* fallthrough — keep raw */
+                        }
+                        return (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={url}
+                            style={{ color: 'var(--info)', textDecoration: 'none' }}
+                          >
+                            {display}
+                          </a>
+                        );
+                      }}
+                      isDE={isDE}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Warnings stack — same hide-on-api-error contract as
+                the GSC tab. See getVisibleBingWarnings. */}
+            {(() => {
+              const visible = getVisibleBingWarnings(warnings, result.bingResult);
+              if (visible.length === 0) return null;
+              return (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  {visible.map((w, i) => (
+                    <StatusBanner
+                      key={i}
+                      variant="warning"
+                      title={t('Bing — Warnung beim Abruf', 'Bing — fetch warning')}
                       onDismiss={() => setWarnings(arr => arr.filter(other => other !== w))}
                     >
                       {w.message}
