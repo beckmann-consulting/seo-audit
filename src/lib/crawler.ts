@@ -12,12 +12,26 @@ import { urlMatches } from './util/url-filter';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
+// Compares two hostnames, treating `example.com` and `www.example.com`
+// as the same origin. Real subdomains (blog.example.com, shop.…) are
+// still distinct — `www` is the only exception, because it's commonly
+// used as a display variant of the canonical hostname. Case-insensitive.
+//
+// Used by the crawler to decide whether a discovered link belongs to
+// the audit scope. Without this tolerance, a footer link from
+// `https://example.com/` to `https://www.example.com/privacy` is
+// dropped, and the privacy-page detection misfires (A9.1 bug).
+export function sameHostnameWithWww(a: string, b: string): boolean {
+  const stripWww = (h: string) => h.replace(/^www\./i, '').toLowerCase();
+  return stripWww(a) === stripWww(b);
+}
+
 function normalizeUrl(url: string, base: string): string | null {
   try {
     const u = new URL(url, base);
-    // Only same domain
+    // Only same domain (www-tolerant)
     const baseHost = new URL(base).hostname;
-    if (u.hostname !== baseHost) return null;
+    if (!sameHostnameWithWww(u.hostname, baseHost)) return null;
     // Only HTML-likely
     if (/\.(pdf|jpg|jpeg|png|gif|svg|webp|avif|css|js|woff|woff2|ttf|eot|ico|xml|json|zip|mp4|mp3)(\?|$)/i.test(u.pathname)) return null;
     // Remove fragment
@@ -132,7 +146,7 @@ export async function crawlSite(
           const href = a.getAttribute('href') || '';
           try {
             const fullUrl = new URL(href, result.finalUrl);
-            if (fullUrl.hostname === baseDomain) {
+            if (sameHostnameWithWww(fullUrl.hostname, baseDomain)) {
               const normalized = normalizeUrl(href, result.finalUrl);
               if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
                 // Discovered URL — apply user filter. The start URL itself
