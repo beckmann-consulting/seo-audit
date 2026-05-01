@@ -122,6 +122,8 @@ export default function AuditApp() {
   const [customHeadersText, setCustomHeadersText] = useState('');
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
+  // 0 = unlimited; matches the existing route-level default.
+  const [maxPages, setMaxPages] = useState<number>(0);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
   const [rendering, setRendering] = useState<'static' | 'js' | 'auto'>('auto');
   const [includeScreenshots, setIncludeScreenshots] = useState(false);
@@ -325,7 +327,7 @@ export default function AuditApp() {
       googleApiKey: googleKey.trim() || undefined,
       modules,
       author: 'TW Beckmann Consultancy Services',
-      maxPages: 0,
+      maxPages: Number.isFinite(maxPages) ? Math.max(0, maxPages) : 0,
       userAgent,
       customUserAgent: userAgent === 'custom' ? customUserAgent.trim() || undefined : undefined,
       include: splitLines(includePatterns),
@@ -609,6 +611,22 @@ export default function AuditApp() {
                     value={imageProbeLimit}
                     onChange={e => setImageProbeLimit(parseInt(e.target.value, 10) || 0)}
                     style={{ ...inputStyle, maxWidth: 120 }}
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>
+                    {t('Maximale Seiten', 'Maximum pages')}{' '}
+                    <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                      ({t('0 = unbegrenzt; gut bei großen Sites', '0 = unlimited; useful for large sites')})
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={maxPages}
+                    onChange={e => setMaxPages(parseInt(e.target.value, 10) || 0)}
+                    style={{ ...inputStyle, maxWidth: 100 }}
                   />
                 </div>
 
