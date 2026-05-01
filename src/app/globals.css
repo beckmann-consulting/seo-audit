@@ -5,9 +5,13 @@
   --surface: #ffffff;
   --border: #e0ddd8;
   --border-light: #eeebe6;
-  /* Stronger than --border for card outlines that need to read as
-     spatial boundaries against --bg / --surface (P8.1). */
-  --border-strong: #d0ccc4;
+  /* Mid-grey for card outlines that need to read as actual spatial
+     boundaries against --bg / --surface — clearly visible without
+     looking harsh. Warm grey to match the rest of the token palette
+     (P8.1 introduced this token at #d0ccc4; P8.2 darkened it to
+     #8a8680 because the lighter value was barely perceptible and
+     also failed to invert reliably under Dark Reader). */
+  --border-strong: #8a8680;
   /* Slightly warmer than --border-light, used for inline card / row dividers
      in the audit UI. Could be folded into --border-light in a later pass. */
   --border-soft: #f0ede8;
