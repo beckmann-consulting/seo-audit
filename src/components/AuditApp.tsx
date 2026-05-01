@@ -124,6 +124,9 @@ export default function AuditApp() {
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
   // 0 = unlimited; matches the existing route-level default.
   const [maxPages, setMaxPages] = useState<number>(0);
+  // false = PSI runs twice per URL (default — score-stable).
+  // true = PSI runs once (faster, less stable). Power-user toggle.
+  const [quickMode, setQuickMode] = useState<boolean>(false);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
   const [rendering, setRendering] = useState<'static' | 'js' | 'auto'>('auto');
   const [includeScreenshots, setIncludeScreenshots] = useState(false);
@@ -328,6 +331,7 @@ export default function AuditApp() {
       modules,
       author: 'TW Beckmann Consultancy Services',
       maxPages: Number.isFinite(maxPages) ? Math.max(0, maxPages) : 0,
+      quickMode,
       userAgent,
       customUserAgent: userAgent === 'custom' ? customUserAgent.trim() || undefined : undefined,
       include: splitLines(includePatterns),
@@ -594,6 +598,20 @@ export default function AuditApp() {
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
                     ({t('Top-10-Seiten je doppelt', 'top 10 pages twice')})
+                  </span>
+                </label>
+
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={quickMode}
+                    onChange={e => setQuickMode(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>
+                    {t('Quick-Mode', 'Quick mode')}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    ({t('PSI nur 1× pro URL — schneller, weniger stabile Scores', 'PSI runs once per URL — faster, less stable scores')})
                   </span>
                 </label>
 
