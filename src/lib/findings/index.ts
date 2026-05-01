@@ -7,3 +7,4 @@ export * from './performance';
 export * from './legal';
 export * from './accessibility';
 export * from './gsc';
+export * from './bing';

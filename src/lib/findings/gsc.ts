@@ -17,23 +17,7 @@ import type {
   SitemapInfo,
 } from '@/types';
 import { id } from './utils';
-
-// Strip trailing slash + fragment so a crawled URL like
-// "https://example.com/about" matches the GSC topPages key
-// "https://example.com/about/" (trailing slash variation is the
-// most common false-mismatch in practice).
-function normaliseUrl(u: string): string {
-  try {
-    const parsed = new URL(u);
-    parsed.hash = '';
-    if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-    return parsed.href;
-  } catch {
-    return u;
-  }
-}
+import { normaliseUrl } from '../util/url-normalize';
 
 // Pages with a sitemap lastmod newer than this many days are
 // excluded from the indexing-issues analysis: they may simply not
