@@ -478,6 +478,57 @@ export type GscResult =
   | { state: 'api-error'; message: string }
   | { state: 'ok'; data: GscData };
 
+// ============================================================
+//  Bing Webmaster Tools (Phase G3)
+// ============================================================
+// Mirrors the GSC type shape so the UI layer (Bing tab) can reuse
+// the existing table component patterns. Auth is a single API key
+// in env (BING_WMT_API_KEY); no OAuth flow, no property resolver.
+//
+//   disabled        — BING_WMT_API_KEY not set in env. Audit ran
+//                     without Bing data by design.
+//   site-not-found  — key set, but the audit's siteUrl is not in
+//                     the verified-sites list of that key.
+//   api-error       — key + site OK, but Bing API returned 4xx/5xx
+//                     or network error. Audit completes; UI shows
+//                     a warning.
+//   ok              — happy path. data carries the BingData payload.
+//
+// All four states result in a successful (200, status='ok') audit.
+export interface BingTotals {
+  clicks: number;
+  impressions: number;
+  ctr: number;        // clicks / max(1, impressions); guarded against div-by-zero
+  position: number;   // average impression position
+}
+
+export interface BingRow {
+  // For getQueryStats this is the search term; for getPageStats the URL.
+  query?: string;
+  page?: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;        // computed at parse time — Bing doesn't include it
+  position: number;
+}
+
+export interface BingData {
+  siteUrl: string;
+  // Bing's API returns aggregated data without exposing the underlying
+  // window. No startDate/endDate fields here — a synthetic range would
+  // be misleading. If Bing ever ships a range-filter, add real values
+  // then.
+  totals: BingTotals;
+  topQueries: BingRow[];
+  topPages: BingRow[];
+}
+
+export type BingResult =
+  | { state: 'disabled' }
+  | { state: 'site-not-found'; siteUrl: string }
+  | { state: 'api-error'; message: string }
+  | { state: 'ok'; data: BingData };
+
 export interface WwwConsistencyInfo {
   canonicalUrl: string;
   variantUrl: string;
