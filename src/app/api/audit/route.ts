@@ -44,7 +44,7 @@ import { captureScreenshotsForAudit } from '@/lib/screenshots';
 import { resolveGscResult, emitGscWarning } from '@/lib/external-gsc/route-helper';
 import { resolveBingResult, emitBingWarning } from '@/lib/external-bing/route-helper';
 import { getBingApiKey } from '@/lib/external-bing/auth';
-import type { GscResult, BingResult, StreamEvent } from '@/types';
+import type { GscResult, BingResult, StreamEvent, SSLInfo } from '@/types';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
 
 export const maxDuration = 300; // 5 min timeout
@@ -107,9 +107,17 @@ async function runAudit(
   progress('dns_check', 5);
   const dnsInfo = config.modules.includes('tech') ? await checkDNS(domain) : undefined;
 
-  // ---- STEP 2: SSL (10%) ----
+  // ---- STEP 2: SSL (10%) — kicked off in parallel ----
+  // SSL Labs polling can take up to 180s. We start it here but don't
+  // await yet — the crawl, sitemap, PSI and security-headers steps run
+  // concurrently, and we await the result just before findings
+  // generation. Worst-case the audit waits at most 180s in addition
+  // to whatever was happening anyway, which is much faster than
+  // serializing a 180s wait before the rest of the pipeline.
   progress('ssl_check', 10);
-  const sslInfo = config.modules.includes('tech') ? await checkSSL(domain) : undefined;
+  const sslInfoPromise: Promise<SSLInfo | undefined> = config.modules.includes('tech')
+    ? checkSSL(domain)
+    : Promise.resolve(undefined);
 
   // ---- STEP 3: robots.txt (15%) ----
   progress('robots_fetch', 15);
@@ -254,6 +262,12 @@ async function runAudit(
   emitBingWarning(bingResult, send);
 
   // ---- STEP 9: Findings generation (90%) ----
+  // Resolve the SSL Labs scan that was kicked off in step 2. By now
+  // the polling has had the entire crawl + PSI window to finish; a
+  // freshly-issued cert on a slow site may still hit the 180s budget,
+  // in which case sslInfo.pendingSlow is set and downstream code
+  // treats it as a neutral "scan still running" outcome.
+  const sslInfo = await sslInfoPromise;
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
   const allFindings: Finding[] = [];

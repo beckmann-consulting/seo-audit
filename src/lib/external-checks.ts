@@ -29,51 +29,143 @@ function probeHeaders(
 // ============================================================
 //  SSL CHECK via SSL Labs API (no key required)
 // ============================================================
+// Polling budget: SSL Labs typically completes in 60-120s for a fresh
+// scan, but cold-cache cases (or sites with many endpoints) can run
+// up to ~3 minutes. We poll every 10s for at most 180s, then fall
+// back to a minimal HTTPS reachability probe and surface pendingSlow
+// so the UI renders a neutral "scan still running" hint instead of
+// a misleading "unknown" or red error.
+//
+// Async architecture: the route handler kicks off checkSSL early and
+// awaits its promise just before findings generation, so the polling
+// runs in parallel with the crawl / sitemap / PSI steps — the worst-
+// case 180s polling budget no longer adds 180s to total audit time.
+const SSL_POLL_INTERVAL_MS = 10_000;
+const SSL_POLL_TIMEOUT_MS = 180_000;
+
+// SSL Labs grades from best to worst. T = cert untrusted, M = name
+// mismatch — both are clear failures. F is the worst valid letter
+// grade (still cryptographically broken, but at least the cert chain
+// validates). Used to pick the worst-case grade across multi-endpoint
+// scans (large sites often have separate IPv4/IPv6 endpoints).
+const SSL_GRADE_RANK: Record<string, number> = {
+  'A+': 0, 'A': 1, 'A-': 2,
+  'B': 3,
+  'C': 4,
+  'D': 5,
+  'E': 6,
+  'F': 7,
+  'T': 8,
+  'M': 9,
+};
+
+function worstGrade(grades: Array<string | undefined>): string | undefined {
+  const valid = grades.filter((g): g is string => typeof g === 'string' && g in SSL_GRADE_RANK);
+  if (valid.length === 0) {
+    // No ranked grade — fall back to the first non-empty value so the
+    // UI still has something to show (e.g. unranked "Z" or transitional
+    // grades SSL Labs occasionally returns).
+    return grades.find((g): g is string => typeof g === 'string' && g.length > 0);
+  }
+  return valid.reduce((worst, g) => (SSL_GRADE_RANK[g] > SSL_GRADE_RANK[worst] ? g : worst));
+}
+
+interface SSLLabsEndpoint {
+  grade?: string;
+  details?: {
+    cert?: { notAfter?: number; issuerSubject?: string };
+    protocols?: Array<{ name: string; version: string }>;
+  };
+}
+
+interface SSLLabsResponse {
+  status?: 'DNS' | 'IN_PROGRESS' | 'READY' | 'ERROR';
+  statusMessage?: string;
+  endpoints?: SSLLabsEndpoint[];
+}
+
+async function fallbackHttpsProbe(domain: string): Promise<boolean> {
+  try {
+    const r = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(8000), redirect: 'follow' });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkSSL(domain: string): Promise<SSLInfo> {
   try {
-    // Trigger analysis
-    const triggerUrl = `https://api.ssllabs.com/api/v3/analyze?host=${domain}&startNew=on&all=done`;
-    await fetch(triggerUrl, { signal: AbortSignal.timeout(10000) });
+    // Kick off a fresh analysis. The triggering call returns the
+    // current status (DNS / IN_PROGRESS) immediately — we don't need
+    // its body, just need to side-effect the queue submission.
+    const triggerUrl = `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(domain)}&startNew=on&all=done`;
+    await fetch(triggerUrl, { signal: AbortSignal.timeout(10_000) });
 
-    // Poll for result (max 30s)
-    for (let i = 0; i < 6; i++) {
-      await new Promise(r => setTimeout(r, 5000));
-      const resp = await fetch(
-        `https://api.ssllabs.com/api/v3/analyze?host=${domain}&all=done`,
-        { signal: AbortSignal.timeout(10000) }
-      );
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      if (data.status === 'READY' && data.endpoints?.length > 0) {
-        const ep = data.endpoints[0];
-        const cert = ep.details?.cert;
+    const pollUrl = `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(domain)}&all=done`;
+    const deadline = Date.now() + SSL_POLL_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, SSL_POLL_INTERVAL_MS));
+
+      let data: SSLLabsResponse | null = null;
+      try {
+        const resp = await fetch(pollUrl, { signal: AbortSignal.timeout(10_000) });
+        if (resp.ok) {
+          data = (await resp.json()) as SSLLabsResponse;
+        }
+      } catch {
+        // Network blip on a single poll — continue, don't fail the whole scan.
+        continue;
+      }
+      if (!data) continue;
+
+      if (data.status === 'READY' && data.endpoints && data.endpoints.length > 0) {
+        const grade = worstGrade(data.endpoints.map(e => e.grade));
+        // Pull cert details from the first endpoint with a cert — they
+        // share a cert in the common case (multi-IP behind one host).
+        const certEp = data.endpoints.find(e => e.details?.cert);
+        const cert = certEp?.details?.cert;
         const expiresMs = cert?.notAfter;
         const expiresAt = expiresMs ? new Date(expiresMs).toISOString() : undefined;
         const daysUntilExpiry = expiresMs
           ? Math.floor((expiresMs - Date.now()) / 86400000)
           : undefined;
         return {
-          valid: ep.grade !== 'T' && ep.grade !== 'F',
-          grade: ep.grade,
+          valid: !!grade && grade !== 'T' && grade !== 'M' && grade !== 'F',
+          grade,
           issuer: cert?.issuerSubject,
           expiresAt,
           daysUntilExpiry,
-          protocols: ep.details?.protocols?.map((p: { name: string; version: string }) => `${p.name} ${p.version}`),
+          protocols: certEp?.details?.protocols?.map(p => `${p.name} ${p.version}`),
         };
       }
-      if (data.status === 'ERROR') break;
+
+      if (data.status === 'ERROR') {
+        // Hard fail from SSL Labs — surface the API's own error text
+        // so the UI can show why (e.g. "Unable to resolve domain
+        // name", "Server's certificate doesn't match its hostname").
+        const valid = await fallbackHttpsProbe(domain);
+        return {
+          valid,
+          error: data.statusMessage || 'SSL Labs reported ERROR',
+        };
+      }
+      // status === 'DNS' or 'IN_PROGRESS' → keep polling.
     }
-    // Fallback: simple HTTPS check
-    const r = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(8000), redirect: 'follow' });
-    return { valid: r.ok, grade: 'unknown (SSL Labs timeout)' };
+
+    // 180s exhausted, scan still running. Fall back to a basic HTTPS
+    // probe so the audit still has a valid/invalid signal, and flag
+    // pendingSlow so the UI shows the neutral "re-audit later" hint
+    // instead of treating this as an error.
+    const valid = await fallbackHttpsProbe(domain);
+    return { valid, pendingSlow: true };
   } catch (err) {
-    // Simple fallback
-    try {
-      const r = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(8000) });
-      return { valid: r.ok };
-    } catch {
-      return { valid: false, error: String(err) };
-    }
+    // Trigger call itself blew up (DNS, network) — fall back without
+    // a grade and don't mark pendingSlow (this isn't a slow scan, it's
+    // a hard failure to reach SSL Labs).
+    const valid = await fallbackHttpsProbe(domain);
+    if (valid) return { valid };
+    return { valid: false, error: String(err) };
   }
 }
 
