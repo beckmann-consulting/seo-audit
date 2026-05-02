@@ -15,7 +15,7 @@ import {
   generateHreflangFindings, generateAIReadinessFindings,
   generateStructuredDataFindings, generateDuplicateContentFindings,
   generateCrawlStructureFindings, generateClientRenderingFindings,
-  generateSitemapCoverageFindings, generateRedirectFindings,
+  generateSitemapCoverageFindings, generateRedirectFindings, generateRedirectedInternalLinkFindings,
   generateAnchorTextFindings, generateRobotsConflictFindings,
   generateOpenGraphFindings, generateSitemapQualityFindings,
   generateRichResultsFindings, generateImageDetailFindings,
@@ -284,6 +284,7 @@ async function runAudit(
     allFindings.push(...generateSecurityHeadersFindings(securityHeaders));
     allFindings.push(...generateClientRenderingFindings(pages));
     allFindings.push(...generateRedirectFindings(pages, url));
+    allFindings.push(...generateRedirectedInternalLinkFindings(pages));
     allFindings.push(...generateThirdPartyScriptFindings(pages));
     allFindings.push(...generateWwwConsistencyFindings(wwwConsistency));
     allFindings.push(...generateInsecureLinkFindings(pages));

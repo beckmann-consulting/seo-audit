@@ -4,6 +4,7 @@ import type {
   HttpError,
 } from '@/types';
 import { id } from './utils';
+import { normaliseUrl } from '../util/url-normalize';
 
 // ============================================================
 //  TECH FINDINGS
@@ -431,6 +432,96 @@ export function generateRedirectFindings(pages: PageSEOData[], startUrl: string)
   }
 
   return findings;
+}
+
+// ============================================================
+//  REDIRECTED-INTERNAL-LINK FINDING (H1)
+// ============================================================
+// Cross-page check: did the audit's other pages set internal links
+// to URLs that themselves redirect? Each such link wastes a hop on
+// the user's first-click (and Googlebot's crawl) — the easy fix is
+// to point the link directly at the final URL in the CMS / template,
+// skipping the server-side redirect entirely.
+//
+// Distinct from generateRedirectFindings above (which flags the
+// redirect itself). This finding flags the LINKERS — the source
+// pages that should update their hrefs.
+//
+// Trivial redirects (HTTP→HTTPS upgrade, www↔apex) are excluded:
+// those are server-level concerns, not content links worth rewriting.
+function isTrivialRedirect(from: string, to: string): boolean {
+  try {
+    const f = new URL(from);
+    const t = new URL(to);
+    if (f.pathname !== t.pathname) return false;
+    if (f.search !== t.search) return false;
+    const stripWww = (h: string) => h.replace(/^www\./i, '');
+    return stripWww(f.hostname) === stripWww(t.hostname);
+  } catch {
+    return false;
+  }
+}
+
+interface RedirectedLinkRef {
+  source: string;       // page that contains the redirected link
+  target: string;       // the link's href (the redirect-source URL)
+  finalTarget: string;  // where the redirect ultimately lands
+}
+
+export function generateRedirectedInternalLinkFindings(pages: PageSEOData[]): Finding[] {
+  if (pages.length === 0) return [];
+
+  // Build map of (normalised redirect-source URL) → finalUrl, only for
+  // non-trivial redirects. The map's domain is what we look up against
+  // each page's internalLinks.
+  const redirectMap = new Map<string, string>();
+  for (const p of pages) {
+    if (p.redirectChain.length === 0) continue;
+    const source = p.redirectChain[0];
+    if (isTrivialRedirect(source, p.finalUrl)) continue;
+    redirectMap.set(normaliseUrl(source), p.finalUrl);
+  }
+  if (redirectMap.size === 0) return [];
+
+  // Collect every (source-page, link, finalUrl) triple where a
+  // crawled page's internalLinks point at one of those redirect sources.
+  const refs: RedirectedLinkRef[] = [];
+  for (const p of pages) {
+    for (const link of p.internalLinks) {
+      const final = redirectMap.get(normaliseUrl(link));
+      if (!final) continue;
+      // Don't report self-references — a page linking to its own
+      // redirect-source resolves back to itself (canonical signal,
+      // breadcrumb, back-to-top construct). Match on the resolved
+      // target, not the link href, since the link points at the OLD
+      // URL while p.url is the NEW one.
+      if (normaliseUrl(final) === normaliseUrl(p.url)) continue;
+      refs.push({ source: p.url, target: link, finalTarget: final });
+    }
+  }
+  if (refs.length === 0) return [];
+
+  // Top-3 sample of source→target pairs (unique by target — multiple
+  // pages linking to the same redirect-source land under one entry).
+  const seenTargets = new Set<string>();
+  const sample: string[] = [];
+  for (const r of refs) {
+    if (seenTargets.has(r.target)) continue;
+    seenTargets.add(r.target);
+    sample.push(`${r.source} → ${r.target} → ${r.finalTarget}`);
+    if (sample.length >= 3) break;
+  }
+
+  return [{
+    id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
+    title_de: `Interne Links auf Redirect-URLs: ${refs.length} Verlinkung(en)`,
+    title_en: `Internal links pointing to redirect URLs: ${refs.length} link(s)`,
+    description_de: `Andere Seiten der Site verlinken intern auf URLs, die sofort einen Redirect auslösen. Jeder dieser Klicks kostet einen unnötigen Hop — Linkjuice geht teilweise verloren (~10% pro Hop laut Google), Crawl-Budget wird verschwendet, und Time-to-First-Byte steigt. Beispiele: ${sample.join('; ')}`,
+    description_en: `Other pages of the site set internal links to URLs that immediately trigger a redirect. Each such click wastes an unnecessary hop — link equity is partially lost (~10% per hop per Google statements), crawl budget is wasted, and time-to-first-byte goes up. Examples: ${sample.join('; ')}`,
+    recommendation_de: 'Im CMS/Template/Code die internen Links direkt auf die finale URL setzen, statt auf die alte Redirect-Quelle. Bei vielen alten URLs lohnt eine globale Search-and-Replace-Migration in der Datenbank/Content.',
+    recommendation_en: 'In the CMS/template/code, set the internal links directly to the final URL instead of the old redirect source. For many old URLs, a global search-and-replace migration in the database/content is worth it.',
+    affectedUrl: refs[0].source,
+  }];
 }
 
 
