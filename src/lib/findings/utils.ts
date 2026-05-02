@@ -12,16 +12,21 @@ export function id(): string {
 // ============================================================
 //  SCORING
 // ============================================================
+// Diminishing returns per severity group: penalty(severity) = base × √count.
+// Linear penalties saturated the score to 0 on sites with many low-severity
+// findings (typical Webflow defaults), making before/after diffs meaningless.
+// √count keeps the first finding's full weight but flattens the tail.
 export function calculateModuleScore(findings: Finding[], module: Module, maxPossible: number = 100): number {
-  const moduleFindings = findings.filter(f => f.module === module);
-  let penalty = 0;
-  moduleFindings.forEach(f => {
-    if (f.priority === 'critical') penalty += 25;
-    else if (f.priority === 'important') penalty += 12;
-    else if (f.priority === 'recommended') penalty += 5;
-    else penalty += 2;
-  });
-  return Math.max(0, Math.min(100, maxPossible - penalty));
+  const counts = { critical: 0, important: 0, recommended: 0, optional: 0 };
+  for (const f of findings) {
+    if (f.module === module) counts[f.priority]++;
+  }
+  const penalty =
+    22  * Math.sqrt(counts.critical) +
+    10  * Math.sqrt(counts.important) +
+    4   * Math.sqrt(counts.recommended) +
+    1.5 * Math.sqrt(counts.optional);
+  return Math.max(0, Math.min(maxPossible, Math.round(maxPossible - penalty)));
 }
 
 // ============================================================

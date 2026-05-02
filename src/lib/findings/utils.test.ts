@@ -21,15 +21,42 @@ describe('calculateModuleScore', () => {
     expect(calculateModuleScore([], 'seo')).toBe(100);
   });
 
-  it('applies penalty 25 / 12 / 5 / 2 by priority', () => {
-    expect(calculateModuleScore([f({ module: 'seo', priority: 'critical' })], 'seo')).toBe(75);
-    expect(calculateModuleScore([f({ module: 'seo', priority: 'important' })], 'seo')).toBe(88);
-    expect(calculateModuleScore([f({ module: 'seo', priority: 'recommended' })], 'seo')).toBe(95);
-    expect(calculateModuleScore([f({ module: 'seo', priority: 'optional' })], 'seo')).toBe(98);
+  it('applies single-finding penalty 22 / 10 / 4 / 1.5 by priority', () => {
+    expect(calculateModuleScore([f({ module: 'seo', priority: 'critical' })], 'seo')).toBe(78);
+    expect(calculateModuleScore([f({ module: 'seo', priority: 'important' })], 'seo')).toBe(90);
+    expect(calculateModuleScore([f({ module: 'seo', priority: 'recommended' })], 'seo')).toBe(96);
+    // 100 - 1.5 = 98.5 → round = 99
+    expect(calculateModuleScore([f({ module: 'seo', priority: 'optional' })], 'seo')).toBe(99);
   });
 
-  it('clamps at 0', () => {
-    const findings = Array.from({ length: 5 }, (_, i) => f({ id: `f${i}`, priority: 'critical' }));
+  it('applies diminishing returns within a severity group (√count)', () => {
+    // 4 critical → penalty = 22 × √4 = 44 → score 56
+    const four = Array.from({ length: 4 }, (_, i) => f({ id: `c${i}`, priority: 'critical' }));
+    expect(calculateModuleScore(four, 'seo')).toBe(56);
+    // 9 important → penalty = 10 × √9 = 30 → score 70 (linear would have been 0)
+    const nine = Array.from({ length: 9 }, (_, i) => f({ id: `i${i}`, priority: 'important' }));
+    expect(calculateModuleScore(nine, 'seo')).toBe(70);
+  });
+
+  it('sums penalties across severity groups for mixed findings', () => {
+    // 1c + 1i + 1r + 1o → 22 + 10 + 4 + 1.5 = 37.5 → score = 100 - 37.5 = 62.5 → round 63
+    const findings = [
+      f({ id: 'a', module: 'seo', priority: 'critical' }),
+      f({ id: 'b', module: 'seo', priority: 'important' }),
+      f({ id: 'c', module: 'seo', priority: 'recommended' }),
+      f({ id: 'd', module: 'seo', priority: 'optional' }),
+    ];
+    expect(calculateModuleScore(findings, 'seo')).toBe(63);
+  });
+
+  it('clamps catastrophic results at 0', () => {
+    // 10 of each → penalty ≈ (22+10+4+1.5) × √10 ≈ 118.6 → clamped to 0
+    const findings = [
+      ...Array.from({ length: 10 }, (_, i) => f({ id: `c${i}`, priority: 'critical' })),
+      ...Array.from({ length: 10 }, (_, i) => f({ id: `i${i}`, priority: 'important' })),
+      ...Array.from({ length: 10 }, (_, i) => f({ id: `r${i}`, priority: 'recommended' })),
+      ...Array.from({ length: 10 }, (_, i) => f({ id: `o${i}`, priority: 'optional' })),
+    ];
     expect(calculateModuleScore(findings, 'seo')).toBe(0);
   });
 
@@ -38,8 +65,15 @@ describe('calculateModuleScore', () => {
       f({ id: 'f1', module: 'seo', priority: 'critical' }),
       f({ id: 'f2', module: 'tech', priority: 'critical' }),
     ];
-    expect(calculateModuleScore(findings, 'seo')).toBe(75);
-    expect(calculateModuleScore(findings, 'tech')).toBe(75);
+    expect(calculateModuleScore(findings, 'seo')).toBe(78);
+    expect(calculateModuleScore(findings, 'tech')).toBe(78);
+  });
+
+  it('caps the score at maxPossible override', () => {
+    // No findings + maxPossible = 80 → score should be 80, not 100
+    expect(calculateModuleScore([], 'seo', 80)).toBe(80);
+    // 1 critical against maxPossible = 80 → 80 - 22 = 58
+    expect(calculateModuleScore([f({ module: 'seo', priority: 'critical' })], 'seo', 80)).toBe(58);
   });
 });
 
