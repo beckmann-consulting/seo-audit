@@ -985,6 +985,225 @@ export function generateStructuredDataFindings(pages: PageSEOData[]): Finding[] 
     });
   }
 
+  // ---- H3: extension checks (recommended-properties, alternatives, substructure) ----
+  findings.push(...checkRecommendedProperties(pages));
+  findings.push(...checkAlternativesConstraints(pages));
+  findings.push(...checkSchemaSubstructure(pages));
+
+  return findings;
+}
+
+// ============================================================
+//  H3 — Recommended properties (additive over Required)
+// ============================================================
+// Properties beyond the Google Rich Results required set that visibly
+// improve the rendered result quality. Required-Findings already cover the
+// hard failures; these surface "rich-result rendered, but suboptimal" cases.
+const SCHEMA_RECOMMENDED: Record<string, string[]> = {
+  Article: ['description', 'publisher', 'mainEntityOfPage'],
+  NewsArticle: ['description', 'publisher', 'dateModified'],
+  BlogPosting: ['description', 'publisher'],
+  Product: ['brand', 'sku', 'description'],
+  Organization: ['logo', 'sameAs'],
+  LocalBusiness: ['telephone', 'openingHours', 'geo'],
+  Recipe: ['description', 'cookTime', 'prepTime', 'recipeYield'],
+  Event: ['description', 'organizer', 'offers'],
+  Review: ['datePublished'],
+};
+
+function checkRecommendedProperties(pages: PageSEOData[]): Finding[] {
+  type Issue = { type: string; missing: string[]; url: string };
+  const issues: Issue[] = [];
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      const recommended = SCHEMA_RECOMMENDED[schema.type];
+      if (!recommended) continue;
+      // Skip when required already missing — required-findings own that case.
+      const required = SCHEMA_REQUIRED_FIELDS[schema.type];
+      if (required && required.some(f => !hasField(schema.data, f))) continue;
+      const missing = recommended.filter(f => !hasField(schema.data, f));
+      if (missing.length > 0) {
+        issues.push({ type: schema.type, missing, url: page.url });
+      }
+    }
+  }
+  const byType = new Map<string, Issue[]>();
+  for (const issue of issues) {
+    const list = byType.get(issue.type) || [];
+    list.push(issue);
+    byType.set(issue.type, list);
+  }
+  const findings: Finding[] = [];
+  for (const [type, list] of byType) {
+    const allMissing = new Set<string>();
+    list.forEach(l => l.missing.forEach(f => allMissing.add(f)));
+    const missingList = [...allMissing].join(', ');
+    const sample = list.slice(0, 3).map(l => l.url).join(', ');
+    findings.push({
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'low',
+      title_de: `Schema-Empfehlungen: ${list.length} Page(s) mit unvollständigem ${type}-Schema`,
+      title_en: `Schema recommendations: ${list.length} page(s) with incomplete ${type} schema`,
+      description_de: `${list.length} Page(s) haben ein vollständiges ${type}-Schema (alle Pflichtfelder OK), aber empfohlene Felder fehlen: ${missingList}. Google rendert das Rich Result trotzdem, aber qualitativ schwächer (z.B. ohne Beschreibung im SERP). Beispiele: ${sample}`,
+      description_en: `${list.length} page(s) have a complete ${type} schema (all required fields OK) but recommended fields are missing: ${missingList}. Google still renders the rich result, but with lower quality (e.g. no description in SERP). Examples: ${sample}`,
+      recommendation_de: `Empfohlene Felder im ${type}-JSON-LD ergänzen: ${missingList}. Spec: developers.google.com/search/docs/appearance/structured-data`,
+      recommendation_en: `Add the recommended fields to the ${type} JSON-LD: ${missingList}. Spec: developers.google.com/search/docs/appearance/structured-data`,
+      affectedUrl: list[0].url,
+    });
+  }
+  return findings;
+}
+
+// ============================================================
+//  H3 — Alternative-property constraints ("at least one of …")
+// ============================================================
+const SCHEMA_ALTERNATIVES: Record<string, { name: string; properties: string[] }[]> = {
+  Product: [
+    { name: 'rating-or-review-or-description', properties: ['aggregateRating', 'review', 'description'] },
+  ],
+  Organization: [
+    { name: 'identification', properties: ['url', 'sameAs'] },
+  ],
+};
+
+function checkAlternativesConstraints(pages: PageSEOData[]): Finding[] {
+  type Issue = { type: string; constraint: string; properties: string[]; url: string };
+  const issues: Issue[] = [];
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      const constraints = SCHEMA_ALTERNATIVES[schema.type];
+      if (!constraints) continue;
+      // Skip when required already missing.
+      const required = SCHEMA_REQUIRED_FIELDS[schema.type];
+      if (required && required.some(f => !hasField(schema.data, f))) continue;
+      for (const c of constraints) {
+        const hasAny = c.properties.some(f => hasField(schema.data, f));
+        if (!hasAny) {
+          issues.push({ type: schema.type, constraint: c.name, properties: c.properties, url: page.url });
+        }
+      }
+    }
+  }
+  const grouped = new Map<string, { type: string; properties: string[]; urls: string[] }>();
+  for (const issue of issues) {
+    const key = issue.type + ':' + issue.constraint;
+    const entry = grouped.get(key) || { type: issue.type, properties: issue.properties, urls: [] };
+    entry.urls.push(issue.url);
+    grouped.set(key, entry);
+  }
+  const findings: Finding[] = [];
+  for (const entry of grouped.values()) {
+    const orList = entry.properties.join(' OR ');
+    const sample = entry.urls.slice(0, 3).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: `Schema-Alternative fehlt: ${entry.urls.length} ${entry.type}-Schema(s) ohne ${orList}`,
+      title_en: `Schema alternative missing: ${entry.urls.length} ${entry.type} schema(s) without ${orList}`,
+      description_de: `Auf ${entry.urls.length} Page(s) hat das ${entry.type}-Schema KEINE der Properties ${orList} gesetzt. Mindestens eine davon ist nötig, damit Google ein Rich Result rendert. Beispiele: ${sample}`,
+      description_en: `On ${entry.urls.length} page(s), the ${entry.type} schema has NONE of the properties ${orList} set. At least one is required for Google to render a rich result. Examples: ${sample}`,
+      recommendation_de: `Mindestens eine der Properties (${orList}) im ${entry.type}-JSON-LD setzen. Bei Product ist aggregateRating der häufigste Hebel — falls keine Reviews verfügbar, mindestens description füllen.`,
+      recommendation_en: `Set at least one of (${orList}) in the ${entry.type} JSON-LD. For Product, aggregateRating is the most common lever — if no reviews are available, at least populate description.`,
+      affectedUrl: entry.urls[0],
+    });
+  }
+  return findings;
+}
+
+// ============================================================
+//  H3 — Substructure validation (FAQPage / HowTo / BreadcrumbList)
+// ============================================================
+function checkSchemaSubstructure(pages: PageSEOData[]): Finding[] {
+  type Issue = { type: string; bug: string; url: string };
+  const issues: Issue[] = [];
+
+  for (const page of pages) {
+    for (const schema of page.schemas) {
+      if (schema.type === 'FAQPage') {
+        const me = schema.data['mainEntity'];
+        if (!Array.isArray(me)) {
+          // `mainEntity` exists (existing required-check ensures it), but it's
+          // a single object instead of an array — Google needs an array.
+          if (me !== undefined && me !== null) {
+            issues.push({ type: 'FAQPage', bug: 'mainEntity-not-array', url: page.url });
+          }
+        } else {
+          const broken = me.some(q => {
+            if (!q || typeof q !== 'object') return true;
+            const qObj = q as Record<string, unknown>;
+            if (!hasField(qObj, 'name')) return true;
+            const ans = qObj['acceptedAnswer'];
+            if (!ans || typeof ans !== 'object') return true;
+            return !hasField(ans as Record<string, unknown>, 'text');
+          });
+          if (broken) {
+            issues.push({ type: 'FAQPage', bug: 'question-without-answer', url: page.url });
+          }
+        }
+      } else if (schema.type === 'HowTo') {
+        const step = schema.data['step'];
+        if (Array.isArray(step)) {
+          if (step.length < 2) {
+            issues.push({ type: 'HowTo', bug: 'step-too-few', url: page.url });
+          }
+        } else if (step !== undefined && step !== null) {
+          issues.push({ type: 'HowTo', bug: 'step-not-array', url: page.url });
+        }
+      } else if (schema.type === 'BreadcrumbList') {
+        const items = schema.data['itemListElement'];
+        if (Array.isArray(items)) {
+          const broken = items.some(it => {
+            if (!it || typeof it !== 'object') return true;
+            const itObj = it as Record<string, unknown>;
+            return !hasField(itObj, 'position') || !hasField(itObj, 'name');
+          });
+          if (broken) {
+            issues.push({ type: 'BreadcrumbList', bug: 'item-incomplete', url: page.url });
+          }
+        } else if (items !== undefined && items !== null) {
+          issues.push({ type: 'BreadcrumbList', bug: 'itemListElement-not-array', url: page.url });
+        }
+      }
+    }
+  }
+
+  const BUG_DE: Record<string, string> = {
+    'mainEntity-not-array': 'mainEntity ist kein Array',
+    'question-without-answer': 'Question ohne acceptedAnswer.text',
+    'step-not-array': 'step ist kein Array',
+    'step-too-few': 'weniger als 2 step-Items',
+    'itemListElement-not-array': 'itemListElement ist kein Array',
+    'item-incomplete': 'item ohne position/name',
+  };
+  const BUG_EN: Record<string, string> = {
+    'mainEntity-not-array': 'mainEntity is not an array',
+    'question-without-answer': 'Question without acceptedAnswer.text',
+    'step-not-array': 'step is not an array',
+    'step-too-few': 'fewer than 2 step items',
+    'itemListElement-not-array': 'itemListElement is not an array',
+    'item-incomplete': 'item missing position/name',
+  };
+
+  const grouped = new Map<string, { type: string; bug: string; urls: string[] }>();
+  for (const issue of issues) {
+    const key = issue.type + ':' + issue.bug;
+    const entry = grouped.get(key) || { type: issue.type, bug: issue.bug, urls: [] };
+    entry.urls.push(issue.url);
+    grouped.set(key, entry);
+  }
+
+  const findings: Finding[] = [];
+  for (const entry of grouped.values()) {
+    const sample = entry.urls.slice(0, 3).join(', ');
+    findings.push({
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      title_de: `Schema-Substruktur defekt: ${entry.urls.length} ${entry.type}-Schema(s) — ${BUG_DE[entry.bug]}`,
+      title_en: `Schema substructure broken: ${entry.urls.length} ${entry.type} schema(s) — ${BUG_EN[entry.bug]}`,
+      description_de: `${entry.urls.length} Page(s) haben ein ${entry.type}-Schema mit Substruktur-Bug: ${BUG_DE[entry.bug]}. Google rendert KEIN Rich Result, wenn die innere Struktur nicht stimmt — auch wenn alle Top-Level-Felder vorhanden sind. Beispiele: ${sample}`,
+      description_en: `${entry.urls.length} page(s) have a ${entry.type} schema with substructure bug: ${BUG_EN[entry.bug]}. Google renders NO rich result when the inner structure is broken — even if all top-level fields are present. Examples: ${sample}`,
+      recommendation_de: `${entry.type}-JSON-LD-Substruktur reparieren. Spec: schema.org/${entry.type} + developers.google.com/search/docs/appearance/structured-data.`,
+      recommendation_en: `Fix the ${entry.type} JSON-LD substructure. Spec: schema.org/${entry.type} + developers.google.com/search/docs/appearance/structured-data.`,
+      affectedUrl: entry.urls[0],
+    });
+  }
   return findings;
 }
 
