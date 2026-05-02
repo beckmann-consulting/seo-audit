@@ -658,6 +658,161 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
   return findings;
 }
 
+// ============================================================
+//  CANONICAL-TARGET CORRECTNESS (H2)
+// ============================================================
+// Two cross-page semantic checks on the canonical target URL:
+//
+//   1. Target is unreachable or itself redirects (broken-target):
+//      Google ignores canonicals that don't resolve cleanly. Common
+//      CMS bug — e.g. canonical hardcoded with old URL after a slug
+//      rename, or canonical pointing at the pre-redirect HTTP variant.
+//
+//   2. Target carries noindex / X-Robots-Tag noindex (noindex-conflict):
+//      "This is the indexable version" + "but don't index me" cancel
+//      out. Google ignores the canonical signal in this case. Subtle
+//      because both directives can look correct in isolation.
+//
+// 4xx targets are matched against errorPages (crawler-side), since
+// 4xx pages are filtered out of the main `pages` array. Redirect
+// targets and noindex targets are matched against `pages` directly.
+//
+// External-domain canonicals (cross-site canonical) are deliberately
+// out of scope: they're sometimes intentional (syndicated content),
+// and we only have crawled data for own-domain URLs anyway.
+export function generateCanonicalTargetFindings(
+  pages: PageSEOData[],
+  errorPages: { url: string; status: number }[],
+): Finding[] {
+  if (pages.length === 0) return [];
+
+  const pageMap = new Map<string, PageSEOData>();
+  for (const p of pages) {
+    pageMap.set(normalizeUrl(p.url), p);
+    // Also index pre-redirect URLs so canonicals pointing at a redirect-source
+    // resolve to the (post-redirect) page.
+    for (const src of p.redirectChain) pageMap.set(normalizeUrl(src), p);
+  }
+  const errorMap = new Map<string, number>();
+  for (const e of errorPages) errorMap.set(normalizeUrl(e.url), e.status);
+
+  type BrokenRef = {
+    source: string;
+    target: string;
+    reason: 'http-error' | 'redirect';
+    status?: number;
+    finalUrl?: string;
+  };
+  type NoindexRef = {
+    source: string;
+    target: string;
+    via: 'meta' | 'header';
+  };
+  const broken: BrokenRef[] = [];
+  const noindex: NoindexRef[] = [];
+
+  for (const page of pages) {
+    if (!page.canonicalUrl) continue;
+    // Skip relative canonicals — covered by the existing relative-canonical
+    // finding; we'd double-count if we ran them through here.
+    if (!/^https?:\/\//i.test(page.canonicalUrl)) continue;
+
+    const sourceUrl = normalizeUrl(page.url);
+    const targetUrl = normalizeUrl(page.canonicalUrl);
+    if (sourceUrl === targetUrl) continue; // self-canonical
+
+    // 4xx target — error pages are filtered out of `pages` by the crawler,
+    // so they only show up in errorPages.
+    const errorStatus = errorMap.get(targetUrl);
+    if (errorStatus !== undefined) {
+      broken.push({
+        source: page.url,
+        target: page.canonicalUrl,
+        reason: 'http-error',
+        status: errorStatus,
+      });
+      continue; // no point in further checks; 4xx target won't be in pageMap
+    }
+
+    const target = pageMap.get(targetUrl);
+    if (!target) continue; // target not crawled — can't say anything
+
+    // Redirect target — `target` itself was the result of a redirect,
+    // so its canonical points at the pre-redirect URL.
+    if (target.redirectChain.length >= 1) {
+      broken.push({
+        source: page.url,
+        target: page.canonicalUrl,
+        reason: 'redirect',
+        finalUrl: target.finalUrl,
+      });
+    }
+
+    // Noindex target via meta-robots OR X-Robots-Tag header.
+    if (target.hasNoindex || target.xRobotsNoindex) {
+      noindex.push({
+        source: page.url,
+        target: page.canonicalUrl,
+        via: target.hasNoindex ? 'meta' : 'header',
+      });
+    }
+  }
+
+  const findings: Finding[] = [];
+
+  if (broken.length > 0) {
+    const sample = broken.slice(0, 3).map(b =>
+      b.reason === 'http-error'
+        ? `${b.source} → ${b.target} (HTTP ${b.status})`
+        : `${b.source} → ${b.target} → ${b.finalUrl}`,
+    ).join('; ');
+    const has4xx = broken.some(b => b.reason === 'http-error');
+    const hasRedirect = broken.some(b => b.reason === 'redirect');
+    const reasonLabelDe = has4xx && hasRedirect
+      ? '4xx oder Redirect'
+      : has4xx ? '4xx' : 'Redirect';
+    const reasonLabelEn = has4xx && hasRedirect
+      ? '4xx or redirect'
+      : has4xx ? '4xx' : 'redirect';
+    findings.push({
+      id: id(),
+      priority: 'important',
+      module: 'seo',
+      effort: 'medium',
+      impact: 'high',
+      title_de: `Canonical zeigt auf ${reasonLabelDe}: ${broken.length} Seite(n)`,
+      title_en: `Canonical points to ${reasonLabelEn}: ${broken.length} page(s)`,
+      description_de: `Diese Seiten haben einen Canonical, dessen Ziel-URL entweder einen 4xx-Status liefert oder selbst per Redirect woanders hinverweist. Google verlangt einen sauberen, direkt erreichbaren Canonical-Target — ist der Status 4xx oder ein Redirect, wird das Canonical-Signal verworfen und Google wählt selbst eine Hauptversion. Beispiele: ${sample}`,
+      description_en: `These pages have a canonical whose target URL either returns a 4xx status or itself redirects elsewhere. Google requires a clean, directly reachable canonical target — if the status is 4xx or a redirect, the canonical signal is discarded and Google picks a main version on its own. Examples: ${sample}`,
+      recommendation_de: 'Canonical-Tag direkt auf die finale, indexierbare URL setzen. Bei 4xx-Targets: prüfen ob das Target eigentlich existieren sollte (404 = Tippfehler im Canonical?) oder ob auf eine andere Page kanonisiert werden muss. Bei Redirect-Targets: einfach auf die finale URL aktualisieren.',
+      recommendation_en: 'Point the canonical tag directly at the final, indexable URL. For 4xx targets: check whether the target should actually exist (404 = typo in the canonical?) or whether a different page should be the canonical. For redirect targets: simply update to the final URL.',
+      affectedUrl: broken[0].source,
+    });
+  }
+
+  if (noindex.length > 0) {
+    const sample = noindex.slice(0, 3).map(n =>
+      `${n.source} → ${n.target} (noindex via ${n.via === 'meta' ? '<meta robots>' : 'X-Robots-Tag header'})`,
+    ).join('; ');
+    findings.push({
+      id: id(),
+      priority: 'important',
+      module: 'seo',
+      effort: 'medium',
+      impact: 'high',
+      title_de: `Canonical zeigt auf noindex-Seite: ${noindex.length} Seite(n)`,
+      title_en: `Canonical points to noindex page: ${noindex.length} page(s)`,
+      description_de: `Diese Seiten haben einen Canonical, dessen Ziel mit noindex markiert ist (entweder via <meta robots> oder per X-Robots-Tag-Header). Das ist ein Widerspruch: "Diese hier ist die Hauptversion" vs. "Diese soll nicht indexiert werden". Google ignoriert das Canonical-Signal in diesem Fall — noindex wiegt schwerer — und wählt selbst aus, ob die Quell-Seiten als Duplikate behandelt werden. Beispiele: ${sample}`,
+      description_en: `These pages have a canonical whose target is marked noindex (either via <meta robots> or via X-Robots-Tag header). This is contradictory: "this is the main version" vs. "don't index this one". Google ignores the canonical signal in this case — noindex wins — and decides on its own whether to treat the source pages as duplicates. Examples: ${sample}`,
+      recommendation_de: 'Eine der zwei Direktiven entfernen: entweder das noindex auf der Target-Seite (wenn sie indexierbar sein soll) oder den Canonical auf den Source-Pages anpassen (auf eine andere indexierbare Hauptversion zeigen). Reine Self-Canonicals sind nie betroffen — der Bug entsteht nur bei Cross-Page-Canonicals.',
+      recommendation_en: 'Remove one of the two directives: either the noindex on the target page (if it should be indexable) or update the canonical on the source pages (point to a different indexable main version). Self-canonicals are never affected — this bug only arises with cross-page canonicals.',
+      affectedUrl: noindex[0].source,
+    });
+  }
+
+  return findings;
+}
+
 
 // ============================================================
 //  STRUCTURED DATA DEEP VALIDATION

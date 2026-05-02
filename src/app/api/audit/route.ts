@@ -16,6 +16,7 @@ import {
   generateStructuredDataFindings, generateDuplicateContentFindings,
   generateCrawlStructureFindings, generateClientRenderingFindings,
   generateSitemapCoverageFindings, generateRedirectFindings, generateRedirectedInternalLinkFindings,
+  generateCanonicalTargetFindings,
   generateAnchorTextFindings, generateRobotsConflictFindings,
   generateOpenGraphFindings, generateSitemapQualityFindings,
   generateRichResultsFindings, generateImageDetailFindings,
@@ -252,6 +253,7 @@ async function runAudit(
 
   if (config.modules.includes('seo')) {
     allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
+    allFindings.push(...generateCanonicalTargetFindings(pages, crawlStats.errorPages));
     allFindings.push(...generateHreflangFindings(pages));
     allFindings.push(...generateAIReadinessFindings(aiReadiness));
     allFindings.push(...generateStructuredDataFindings(pages));
