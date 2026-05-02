@@ -195,6 +195,11 @@ export interface SSLInfo {
   daysUntilExpiry?: number;
   protocols?: string[];
   error?: string;
+  // True when the SSL Labs scan didn't finish within the polling
+  // budget. The audit completes anyway (we fall back to a basic HTTPS
+  // reachability probe), and the UI renders a neutral "scan taking
+  // longer than expected" hint instead of treating it as an error.
+  pendingSlow?: boolean;
 }
 
 export interface DNSInfo {

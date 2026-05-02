@@ -1153,30 +1153,63 @@ export default function AuditApp() {
           {activeTab === 'tech' && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: '1.5rem' }}>
               {/* SSL */}
-              {result.sslInfo && (
-                <div style={techCardStyle}>
-                  <h3 style={techCardTitle}>SSL / HTTPS</h3>
-                  <TechRow label="Grade" value={result.sslInfo.grade || '—'} ok={result.sslInfo.valid} />
-                  <TechRow label={t('Gültig', 'Valid')} value={result.sslInfo.valid ? '✓' : '✗'} ok={result.sslInfo.valid} />
-                  {result.sslInfo.daysUntilExpiry !== undefined && (
-                    <TechRow label={t('Läuft ab in', 'Expires in')} value={`${result.sslInfo.daysUntilExpiry} ${t('Tagen', 'days')}`} ok={result.sslInfo.daysUntilExpiry > 30} />
-                  )}
-                  {result.sslInfo.issuer && <TechRow label="Issuer" value={result.sslInfo.issuer.substring(0, 40)} ok={true} />}
-                </div>
-              )}
+              {result.sslInfo && (() => {
+                // Grade severity:
+                //   A+/A/A-          → good (production-grade)
+                //   B / unknown      → warn (works, but not optimal)
+                //   pendingSlow flag → neutral ("scan still running")
+                //   invalid          → bad
+                const g = result.sslInfo.grade || '';
+                const gradeSev: TechSeverity =
+                  result.sslInfo.pendingSlow ? 'neutral'
+                  : !result.sslInfo.valid ? 'bad'
+                  : ['A+', 'A', 'A-'].includes(g) ? 'good'
+                  : g ? 'warn'
+                  : 'neutral';
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>SSL / HTTPS</h3>
+                    <TechRow label="Grade" value={result.sslInfo.grade || '—'} severity={gradeSev} />
+                    <TechRow label={t('Gültig', 'Valid')} value={result.sslInfo.valid ? '✓' : '✗'} severity={result.sslInfo.valid ? 'good' : 'bad'} />
+                    {result.sslInfo.daysUntilExpiry !== undefined && (
+                      <TechRow
+                        label={t('Läuft ab in', 'Expires in')}
+                        value={`${result.sslInfo.daysUntilExpiry} ${t('Tagen', 'days')}`}
+                        severity={result.sslInfo.daysUntilExpiry < 14 ? 'bad' : result.sslInfo.daysUntilExpiry < 30 ? 'warn' : 'good'}
+                      />
+                    )}
+                    {result.sslInfo.issuer && <TechRow label="Issuer" value={result.sslInfo.issuer.substring(0, 40)} severity="neutral" />}
+                    {result.sslInfo.pendingSlow && (
+                      <TechRow
+                        label={t('Hinweis', 'Note')}
+                        value={t('SSL Labs Scan dauert länger als erwartet — Audit später erneut prüfen', 'SSL Labs scan is taking longer than expected — re-audit later')}
+                        severity="neutral"
+                      />
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* DNS */}
-              {result.dnsInfo && (
-                <div style={techCardStyle}>
-                  <h3 style={techCardTitle}>DNS / E-Mail</h3>
-                  <TechRow label="SPF" value={result.dnsInfo.hasSPF ? '✓' : '✗'} ok={result.dnsInfo.hasSPF} />
-                  <TechRow label="DKIM" value={result.dnsInfo.hasDKIM ? '✓' : '✗'} ok={result.dnsInfo.hasDKIM} />
-                  <TechRow label="DMARC" value={result.dnsInfo.hasDMARC ? '✓' : '✗'} ok={result.dnsInfo.hasDMARC} />
-                  {result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0 && (
-                    <TechRow label="MX" value={result.dnsInfo.mxRecords[0]} ok={true} />
-                  )}
-                </div>
-              )}
+              {result.dnsInfo && (() => {
+                // SPF/DKIM/DMARC are only critical when the domain actually
+                // sends/receives mail (MX records present). Without MX they
+                // drop to warn — still nice to have for spoofing protection,
+                // but not a real risk vector.
+                const hasMx = !!(result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0);
+                const missingSev: TechSeverity = hasMx ? 'bad' : 'warn';
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>DNS / E-Mail</h3>
+                    <TechRow label="SPF" value={result.dnsInfo.hasSPF ? '✓' : '✗'} severity={result.dnsInfo.hasSPF ? 'good' : missingSev} />
+                    <TechRow label="DKIM" value={result.dnsInfo.hasDKIM ? '✓' : '✗'} severity={result.dnsInfo.hasDKIM ? 'good' : missingSev} />
+                    <TechRow label="DMARC" value={result.dnsInfo.hasDMARC ? '✓' : '✗'} severity={result.dnsInfo.hasDMARC ? 'good' : missingSev} />
+                    {hasMx && (
+                      <TechRow label="MX" value={result.dnsInfo.mxRecords![0]} severity="neutral" />
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* PageSpeed */}
               {result.pageSpeedData && !result.pageSpeedData.error && (
@@ -1196,16 +1229,29 @@ export default function AuditApp() {
               {result.aiReadiness && !result.aiReadiness.error && (
                 <div style={techCardStyle}>
                   <h3 style={techCardTitle}>{t('AI-Crawler-Readiness', 'AI Crawler Readiness')}</h3>
-                  <TechRow label="llms.txt" value={result.aiReadiness.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} ok={result.aiReadiness.hasLlmsTxt} />
-                  <TechRow label="llms-full.txt" value={result.aiReadiness.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} ok={result.aiReadiness.hasLlmsFullTxt} />
-                  {result.aiReadiness.bots.map(b => (
-                    <TechRow
-                      key={b.bot}
-                      label={`${b.bot} (${b.purpose})`}
-                      value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
-                      ok={b.status === 'allowed' || (b.purpose === 'training' && b.status === 'blocked')}
-                    />
-                  ))}
+                  <TechRow label="llms.txt" value={result.aiReadiness.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} severity={result.aiReadiness.hasLlmsTxt ? 'good' : 'warn'} />
+                  <TechRow label="llms-full.txt" value={result.aiReadiness.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} severity={result.aiReadiness.hasLlmsFullTxt ? 'good' : 'warn'} />
+                  {result.aiReadiness.bots.map(b => {
+                    // Severity rules:
+                    //   allowed                       → good
+                    //   training-bot blocked          → good (intentional opt-out)
+                    //   indexing/general-bot blocked  → warn (probably unintended)
+                    //   partial                       → warn
+                    //   unspecified                   → neutral (allowed by default, no rule = no opinion)
+                    const sev: TechSeverity =
+                      b.status === 'allowed' ? 'good'
+                      : b.status === 'blocked' ? (b.purpose === 'training' ? 'good' : 'warn')
+                      : b.status === 'partial' ? 'warn'
+                      : 'neutral';
+                    return (
+                      <TechRow
+                        key={b.bot}
+                        label={`${b.bot} (${b.purpose})`}
+                        value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
+                        severity={sev}
+                      />
+                    );
+                  })}
                 </div>
               )}
 
@@ -1240,20 +1286,20 @@ export default function AuditApp() {
               {result.sitemapInfo && !result.sitemapInfo.error && (
                 <div style={techCardStyle}>
                   <h3 style={techCardTitle}>{t('Sitemap Coverage', 'Sitemap Coverage')}</h3>
-                  <TechRow label={t('URLs in Sitemap', 'URLs in sitemap')} value={String(result.sitemapInfo.urls.length)} ok={result.sitemapInfo.urls.length > 0} />
-                  <TechRow label={t('Sitemap-Index', 'Sitemap index')} value={result.sitemapInfo.isIndex ? t('ja', 'yes') : t('nein', 'no')} ok={true} />
+                  <TechRow label={t('URLs in Sitemap', 'URLs in sitemap')} value={String(result.sitemapInfo.urls.length)} severity={result.sitemapInfo.urls.length > 0 ? 'good' : 'warn'} />
+                  <TechRow label={t('Sitemap-Index', 'Sitemap index')} value={result.sitemapInfo.isIndex ? t('ja', 'yes') : t('nein', 'no')} severity="neutral" />
                   {result.sitemapInfo.isIndex && (
-                    <TechRow label={t('Sub-Sitemaps', 'Sub-sitemaps')} value={String(result.sitemapInfo.subSitemaps.length)} ok={true} />
+                    <TechRow label={t('Sub-Sitemaps', 'Sub-sitemaps')} value={String(result.sitemapInfo.subSitemaps.length)} severity="neutral" />
                   )}
                   <TechRow
                     label={t('URLs mit lastmod', 'URLs with lastmod')}
                     value={`${result.sitemapInfo.urls.filter(e => !!e.lastmod).length}/${result.sitemapInfo.urls.length}`}
-                    ok={result.sitemapInfo.urls.some(e => !!e.lastmod)}
+                    severity={result.sitemapInfo.urls.some(e => !!e.lastmod) ? 'good' : 'warn'}
                   />
                   <TechRow
                     label={t('Mit Bildern', 'With images')}
                     value={String(result.sitemapInfo.urls.filter(e => e.imageCount > 0).length)}
-                    ok={true}
+                    severity="neutral"
                   />
                   {(() => {
                     const crawledSet = new Set(result.pages.map(p => p.url));
@@ -1262,8 +1308,8 @@ export default function AuditApp() {
                     const missingFromSitemap = [...crawledSet].filter(u => !sitemapSet.has(u)).length;
                     return (
                       <>
-                        <TechRow label={t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled')} value={String(missingFromCrawl)} ok={missingFromCrawl === 0} />
-                        <TechRow label={t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap')} value={String(missingFromSitemap)} ok={missingFromSitemap === 0} />
+                        <TechRow label={t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled')} value={String(missingFromCrawl)} severity={missingFromCrawl === 0 ? 'good' : 'warn'} />
+                        <TechRow label={t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap')} value={String(missingFromSitemap)} severity={missingFromSitemap === 0 ? 'good' : 'warn'} />
                       </>
                     );
                   })()}
@@ -1289,10 +1335,10 @@ export default function AuditApp() {
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>{t('Redirects', 'Redirects')}</h3>
-                    <TechRow label={t('Mit Redirect gecrawlt', 'Crawled via redirect')} value={String(redirected.length)} ok={redirected.length === 0} />
-                    <TechRow label={t('Ketten (>1 Hop)', 'Chains (>1 hop)')} value={String(chains.length)} ok={chains.length === 0} />
-                    <TechRow label={t('Schleifen', 'Loops')} value={String(loops.length)} ok={loops.length === 0} />
-                    <TechRow label={t('HTTPS → HTTP', 'HTTPS → HTTP')} value={String(downgrades.length)} ok={downgrades.length === 0} />
+                    <TechRow label={t('Mit Redirect gecrawlt', 'Crawled via redirect')} value={String(redirected.length)} severity={redirected.length === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Ketten (>1 Hop)', 'Chains (>1 hop)')} value={String(chains.length)} severity={chains.length === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Schleifen', 'Loops')} value={String(loops.length)} severity={loops.length === 0 ? 'good' : 'bad'} />
+                    <TechRow label={t('HTTPS → HTTP', 'HTTPS → HTTP')} value={String(downgrades.length)} severity={downgrades.length === 0 ? 'good' : 'bad'} />
                   </div>
                 );
               })()}
@@ -1307,10 +1353,10 @@ export default function AuditApp() {
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>{t('Link Quality', 'Link Quality')}</h3>
-                    <TechRow label={t('Generische Ankertexte', 'Generic anchor texts')} value={String(totalGeneric)} ok={totalGeneric === 0} />
-                    <TechRow label={t('Seiten davon betroffen', 'Pages affected')} value={String(genericPages)} ok={genericPages === 0} />
-                    <TechRow label={t('Links ohne Text', 'Links without text')} value={String(totalEmpty)} ok={totalEmpty === 0} />
-                    <TechRow label={t('Seiten mit noindex', 'Pages with noindex')} value={String(pagesWithNoindex)} ok={true} />
+                    <TechRow label={t('Generische Ankertexte', 'Generic anchor texts')} value={String(totalGeneric)} severity={totalGeneric === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Seiten davon betroffen', 'Pages affected')} value={String(genericPages)} severity={genericPages === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Links ohne Text', 'Links without text')} value={String(totalEmpty)} severity={totalEmpty === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Seiten mit noindex', 'Pages with noindex')} value={String(pagesWithNoindex)} severity="neutral" />
                   </div>
                 );
               })()}
@@ -1318,10 +1364,10 @@ export default function AuditApp() {
               {/* Crawl stats */}
               <div style={techCardStyle}>
                 <h3 style={techCardTitle}>{t('Crawl-Statistik', 'Crawl Statistics')}</h3>
-                <TechRow label={t('Seiten gecrawlt', 'Pages crawled')} value={String(result.crawlStats.crawledPages)} ok={true} />
-                <TechRow label={t('Defekte Links', 'Broken links')} value={String(result.crawlStats.brokenLinks.length)} ok={result.crawlStats.brokenLinks.length === 0} />
-                <TechRow label={t('Weiterleitungen', 'Redirects')} value={String(result.crawlStats.redirectChains.length)} ok={result.crawlStats.redirectChains.length < 3} />
-                <TechRow label={t('Externe Links', 'External links')} value={String(result.crawlStats.externalLinks)} ok={true} />
+                <TechRow label={t('Seiten gecrawlt', 'Pages crawled')} value={String(result.crawlStats.crawledPages)} severity="neutral" />
+                <TechRow label={t('Defekte Links', 'Broken links')} value={String(result.crawlStats.brokenLinks.length)} severity={result.crawlStats.brokenLinks.length === 0 ? 'good' : 'bad'} />
+                <TechRow label={t('Weiterleitungen', 'Redirects')} value={String(result.crawlStats.redirectChains.length)} severity={result.crawlStats.redirectChains.length === 0 ? 'good' : 'warn'} />
+                <TechRow label={t('Externe Links', 'External links')} value={String(result.crawlStats.externalLinks)} severity="neutral" />
               </div>
             </div>
           )}
@@ -1673,11 +1719,23 @@ export default function AuditApp() {
   );
 }
 
-function TechRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+type TechSeverity = 'good' | 'warn' | 'bad' | 'neutral';
+
+const SEVERITY_COLORS: Record<TechSeverity, string> = {
+  good: 'var(--pass)',
+  warn: 'var(--warn)',
+  bad: 'var(--fail)',
+  neutral: 'var(--text-strong)',
+};
+
+// Backwards-compatible: callers can pass severity for fine-grained
+// color semantics, or fall back to the legacy ok=boolean (good/bad).
+function TechRow({ label, value, ok, severity }: { label: string; value: string; ok?: boolean; severity?: TechSeverity }) {
+  const sev: TechSeverity = severity ?? (ok === undefined ? 'neutral' : ok ? 'good' : 'bad');
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border-soft)', fontSize: 12 }}>
       <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-      <span style={{ fontWeight: 600, color: ok ? 'var(--pass)' : 'var(--fail)' }}>{value}</span>
+      <span style={{ fontWeight: 600, color: SEVERITY_COLORS[sev] }}>{value}</span>
     </div>
   );
 }
