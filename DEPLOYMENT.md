@@ -418,11 +418,6 @@ ohne Basic Auth erreichbar — siehe §4.2.
 
 ### 5.3 Widget-Lead-Mailer (`seo-lead.php`)
 
-<!-- TODO E1.6: Konkrete Pfade + Existenz-Behauptungen unten wurden in
-     E1.5 nicht gegen die twb-consultancy-Realität verifiziert. Falls
-     der Lead-Flow nicht mehr funktioniert oder die seo-lead.php an
-     einen anderen Ort gewandert ist, hier nachziehen. -->
-
 Die Widget-Lead-Zuleitung läuft über eine PHP-Datei, **die nicht in diesem
 Repo liegt**. Hintergrund:
 
