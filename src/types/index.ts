@@ -99,6 +99,12 @@ export interface AuditConfig {
   // (when undefined) is 20 — enough to catch typical hero/listing
   // image weight without making the audit drag.
   imageHeadCheckLimit?: number;
+  // Opt-in deep image-format probe. For every legacy raster image
+  // (JPG/PNG) we HEAD-probe the hypothetical .webp + .avif sibling
+  // and flag the ones where neither modern variant exists. Adds up
+  // to MAX_DEEP_IMAGE_PROBES * 2 HEAD requests; fast in practice but
+  // off by default to keep audits predictable.
+  deepImageFormatCheck?: boolean;
   // Opt-in mobile-vs-desktop content-parity probe. Doubles fetch
   // count for the sampled pages — turn on when you suspect lazy-
   // loaded content or hidden-by-default mobile sections.

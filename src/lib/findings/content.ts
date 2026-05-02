@@ -1,5 +1,7 @@
 import type { Finding, PageSEOData } from '@/types';
 import type { ImageSizeResult } from '../external-image-sizes';
+import type { DeepImageFormatResult } from '../external-image-formats';
+import { classifyImageFormat, isModernFormat, isLegacyRasterFormat } from '../util/image-format';
 import { signatureJaccard, UnionFind } from '../util/text-similarity';
 import { readabilityThreshold } from '../util/readability';
 import { id } from './utils';
@@ -474,6 +476,125 @@ export function generateOversizedImageFindings(imageSizes?: { url: string; sizeB
     recommendation_de: 'In WebP/AVIF konvertieren (25-50% kleiner), responsive srcset/sizes nutzen, qualitätsbasierte Kompression (75-85 statt 100). Lazy-Loading für Below-the-Fold-Bilder. Cloudinary, imgix, Next/Image automatisieren das.',
     recommendation_en: 'Convert to WebP/AVIF (25-50% smaller), use responsive srcset/sizes, quality-based compression (75-85 instead of 100). Lazy-load below-the-fold images. Cloudinary, imgix, Next/Image automate this.',
     affectedUrl: oversized[0].url,
+  });
+
+  return findings;
+}
+
+// ============================================================
+//  I1 — Modern image format audit (Awareness + Deep mode)
+// ============================================================
+// Awareness mode (always on): tally raster-image format adoption across
+// the crawled pages and flag when legacy JPG/PNG dominate. Deep mode is
+// opt-in (config.deepImageFormatCheck) and HEAD-probes hypothetical
+// .webp/.avif siblings of every legacy URL — those results land in
+// `generateDeepImageFormatFindings`. SVG/GIF are excluded throughout:
+// SVG is already vector/modern and GIF is animation-specific, so neither
+// belongs in a "convert to WebP" recommendation.
+
+const LEGACY_FORMAT_THRESHOLD_RATIO = 0.7;
+const LEGACY_FORMAT_MIN_TOTAL = 5;
+
+export function generateLegacyImageFormatFindings(
+  pages: PageSEOData[],
+  imageSizes?: ImageSizeResult[],
+): Finding[] {
+  const findings: Finding[] = [];
+  if (pages.length === 0) return findings;
+
+  let total = 0;
+  let legacy = 0;
+  const seen = new Set<string>();
+  for (const page of pages) {
+    for (const img of page.imageDetails) {
+      const raw = img.src;
+      if (!raw || raw.startsWith('data:')) continue;
+      let abs: string;
+      try {
+        abs = new URL(raw, page.url).href;
+      } catch {
+        continue;
+      }
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      const fmt = classifyImageFormat(abs);
+      if (isLegacyRasterFormat(fmt)) {
+        total++;
+        legacy++;
+      } else if (isModernFormat(fmt)) {
+        total++;
+      }
+      // SVG / GIF / other: deliberately ignored (see header comment)
+    }
+  }
+
+  if (total < LEGACY_FORMAT_MIN_TOTAL) return findings;
+  const ratio = legacy / total;
+  if (ratio <= LEGACY_FORMAT_THRESHOLD_RATIO) return findings;
+
+  const pct = Math.round(ratio * 100);
+
+  let largestDe = '';
+  let largestEn = '';
+  if (imageSizes && imageSizes.length > 0) {
+    const legacyWithSize = imageSizes
+      .filter(i => isLegacyRasterFormat(classifyImageFormat(i.url)))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes)
+      .slice(0, 3);
+    if (legacyWithSize.length > 0) {
+      const sample = legacyWithSize.map(i =>
+        `${i.url} (${(i.sizeBytes / 1024).toFixed(0)} KB)`,
+      ).join(', ');
+      largestDe = ` Größte: ${sample}.`;
+      largestEn = ` Largest: ${sample}.`;
+    }
+  }
+
+  findings.push({
+    id: id(), priority: 'recommended', module: 'content', effort: 'medium', impact: 'medium',
+    title_de: `${pct}% der Bilder im veralteten Format (JPG/PNG)`,
+    title_en: `${pct}% of images in legacy formats (JPG/PNG)`,
+    description_de: `Von ${total} Bildern (Raster-Formate, ohne SVG/GIF) sind ${legacy} im Legacy-Format JPG oder PNG. Moderne Formate WebP und AVIF reduzieren die Datei-Größe bei gleicher visueller Qualität um 25-50% — direkter LCP- und Bandbreiten-Win, besonders auf Mobile.${largestDe}`,
+    description_en: `Of ${total} images (raster formats, excluding SVG/GIF), ${legacy} are in legacy JPG or PNG. Modern formats WebP and AVIF reduce file size by 25-50% at the same visual quality — a direct LCP and bandwidth win, especially on mobile.${largestEn}`,
+    recommendation_de: 'WebP- oder AVIF-Variante der Bilder generieren und mit `<picture>`-Element ausspielen, oder ein Image-CDN wie Cloudflare/imgix nutzen, das automatisch konvertiert. Next.js `<Image>`, Cloudinary und Image-Optimisation-Plugins liefern das out-of-the-box.',
+    recommendation_en: 'Generate a WebP or AVIF variant for each image and serve via the `<picture>` element, or use an image CDN like Cloudflare/imgix that converts automatically. Next.js `<Image>`, Cloudinary, and image-optimisation plugins provide this out of the box.',
+    affectedUrl: pages[0].url,
+  });
+
+  return findings;
+}
+
+export function generateDeepImageFormatFindings(
+  deepResults?: DeepImageFormatResult[],
+  imageSizes?: ImageSizeResult[],
+): Finding[] {
+  const findings: Finding[] = [];
+  if (!deepResults || deepResults.length === 0) return findings;
+
+  const missingBoth = deepResults.filter(r => !r.hasWebpVariant && !r.hasAvifVariant);
+  if (missingBoth.length === 0) return findings;
+
+  const sizeMap = new Map<string, number>();
+  if (imageSizes) {
+    for (const i of imageSizes) sizeMap.set(i.url, i.sizeBytes);
+  }
+  const sortedSamples = [...missingBoth].sort(
+    (a, b) => (sizeMap.get(b.url) ?? 0) - (sizeMap.get(a.url) ?? 0),
+  );
+  const sample = sortedSamples.slice(0, 5).map(r => {
+    const size = sizeMap.get(r.url);
+    return size != null ? `${r.url} (${(size / 1024).toFixed(0)} KB)` : r.url;
+  }).join(', ');
+
+  findings.push({
+    id: id(), priority: 'recommended', module: 'content', effort: 'medium', impact: 'medium',
+    title_de: `${missingBoth.length} Bild(er) ohne moderne Format-Variante`,
+    title_en: `${missingBoth.length} image(s) without modern format variant`,
+    description_de: `Deep-Probe: für diese Legacy-Bilder existiert weder eine WebP- noch eine AVIF-Variante (HEAD-Request liefert 4xx oder Timeout). Bei den größten Treffern lassen sich durch Konvertierung 25-50% pro Bild sparen. Top-5: ${sample}`,
+    description_en: `Deep probe: neither a WebP nor an AVIF variant exists for these legacy images (HEAD request returns 4xx or timeout). For the largest hits, conversion saves 25-50% per image. Top-5: ${sample}`,
+    recommendation_de: 'Konkret pro Bild eine WebP- (kompatibler) oder AVIF-Variante (kleinere Datei, etwas schwächerer Browser-Support) erzeugen. Build-Tool-Konvertierung (Sharp, ImageMin, Next/Image) oder serverseitig per CDN/Plugin. Mit `<picture><source type="image/webp" srcset="...">` die moderne Variante zuerst anbieten und JPG/PNG als Fallback.',
+    recommendation_en: 'For each image, generate a WebP (more compatible) or AVIF variant (smaller file, slightly weaker browser support). Use a build-tool converter (Sharp, ImageMin, Next/Image) or server-side via CDN/plugin. Use `<picture><source type="image/webp" srcset="...">` to offer the modern variant first with JPG/PNG fallback.',
+    affectedUrl: missingBoth[0].url,
   });
 
   return findings;

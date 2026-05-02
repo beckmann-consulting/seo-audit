@@ -130,6 +130,7 @@ export default function AuditApp() {
   // true = PSI runs once (faster, less stable). Power-user toggle.
   const [quickMode, setQuickMode] = useState<boolean>(false);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
+  const [deepImageFormatCheck, setDeepImageFormatCheck] = useState(false);
   const [rendering, setRendering] = useState<'static' | 'js' | 'auto'>('auto');
   const [includeScreenshots, setIncludeScreenshots] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -342,6 +343,7 @@ export default function AuditApp() {
         : undefined,
       customHeaders: parseHeaders(customHeadersText),
       imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
+      deepImageFormatCheck,
       mobileDesktopParityCheck: mobileDesktopParity,
       rendering,
       includeScreenshots: rendering === 'js' ? includeScreenshots : undefined,
@@ -632,6 +634,20 @@ export default function AuditApp() {
                     style={{ ...inputStyle, maxWidth: 120 }}
                   />
                 </div>
+
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={deepImageFormatCheck}
+                    onChange={e => setDeepImageFormatCheck(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>
+                    {t('Deep-Bildformat-Check', 'Deep image format check')}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    ({t('HEAD-Probe pro Legacy-Bild — langsamer, pro-Bild-Empfehlungen', 'HEAD probe per legacy image — slower, per-image recommendations')})
+                  </span>
+                </label>
 
                 <div>
                   <label style={labelStyle}>

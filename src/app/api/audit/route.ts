@@ -7,6 +7,7 @@ import {
   checkAIReadiness, fetchSitemap, checkWwwConsistency,
 } from '@/lib/external-checks';
 import { checkImageSizes } from '@/lib/external-image-sizes';
+import { checkDeepImageFormats } from '@/lib/external-image-formats';
 import { checkMobileDesktopParity } from '@/lib/external-mobile-desktop-parity';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
@@ -22,6 +23,7 @@ import {
   generateRichResultsFindings, generateImageDetailFindings,
   generateBodyDuplicateFindings, generateTextHtmlRatioFindings,
   generateReadabilityFindings, generateOversizedImageFindings,
+  generateLegacyImageFormatFindings, generateDeepImageFormatFindings,
   generateAccessibilityFindings, generateGscFindings, generateBingFindings,
   generateFontLoadingFindings, generateThirdPartyScriptFindings,
   generateFaviconFindings, generateURLQualityFindings,
@@ -204,6 +206,11 @@ async function runAudit(
     ? await checkImageSizes(pages, imageProbeLimit, userAgent, authHeader, customHeaders)
     : undefined;
 
+  // Opt-in deep image-format probe — fires up to 30*2 HEAD requests.
+  const deepImageFormatResults = (config.deepImageFormatCheck && config.modules.includes('content'))
+    ? await checkDeepImageFormats(pages, userAgent, authHeader, customHeaders)
+    : undefined;
+
   // ---- STEP 8c: Mobile/Desktop parity (opt-in, doubles fetch cost) ----
   const paritySampleSize = config.mobileDesktopParitySampleSize ?? 10;
   const mobileDesktopParity = config.mobileDesktopParityCheck
@@ -280,6 +287,8 @@ async function runAudit(
     allFindings.push(...generateTextHtmlRatioFindings(pages));
     allFindings.push(...generateReadabilityFindings(pages));
     allFindings.push(...generateOversizedImageFindings(imageSizes));
+    allFindings.push(...generateLegacyImageFormatFindings(pages, imageSizes));
+    allFindings.push(...generateDeepImageFormatFindings(deepImageFormatResults, imageSizes));
   }
   if (config.modules.includes('tech')) {
     allFindings.push(...generateTechFindings(pages, crawlStats, sslInfo, dnsInfo));
