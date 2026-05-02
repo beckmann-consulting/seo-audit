@@ -954,6 +954,34 @@ export default function AuditApp() {
             {isDE ? result.summary_de : result.summary_en}
           </p>
 
+          {/* Global setup hint for disabled search-engine integrations.
+              Combined into one banner so the per-tab banners can be terse
+              instead of repeating the same env-var setup instructions. */}
+          {(() => {
+            const gscDisabled = result.gscResult?.state === 'disabled' || !result.gscResult;
+            const bingDisabled = result.bingResult?.state === 'disabled' || !result.bingResult;
+            if (!gscDisabled && !bingDisabled) return null;
+            const both = gscDisabled && bingDisabled;
+            const title = both
+              ? t('Search Console & Bing Webmaster Tools nicht aktiviert', 'Search Console & Bing Webmaster Tools not enabled')
+              : gscDisabled
+                ? t('Google Search Console nicht aktiviert', 'Google Search Console not enabled')
+                : t('Bing Webmaster Tools nicht aktiviert', 'Bing Webmaster Tools not enabled');
+            const envHints: string[] = [];
+            if (gscDisabled) envHints.push('GSC_REFRESH_TOKEN');
+            if (bingDisabled) envHints.push('BING_WMT_API_KEY');
+            return (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <StatusBanner variant="info" title={title}>
+                  {t(
+                    `Setze ${envHints.join(' und ')} in deiner Umgebung, um Such-Performance-Daten in den entsprechenden Tabs zu sehen.`,
+                    `Set ${envHints.join(' and ')} in your environment to see search-performance data in the corresponding tabs.`,
+                  )}
+                </StatusBanner>
+              </div>
+            );
+          })()}
+
           {/* Stats row */}
           <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
             {[
@@ -1377,15 +1405,18 @@ export default function AuditApp() {
             {(() => {
             const r = result.gscResult;
             if (!r || r.state === 'disabled') {
+              // The full setup hint lives in the global banner above
+              // the tabs — here we just acknowledge that no data was
+              // fetched for this audit, no env-var howto to repeat.
               return (
                 <div style={{ marginBottom: '1.5rem' }}>
                   <StatusBanner
                     variant="info"
-                    title={t('Google Search Console nicht aktiviert', 'Google Search Console not enabled')}
+                    title={t('Kein Search-Console-Datensatz für dieses Audit', 'No Search Console data for this audit')}
                   >
                     {t(
-                      'Setze GSC_REFRESH_TOKEN in deiner Umgebung, um Indexabdeckung und Top-Queries dieses Audits zu sehen.',
-                      'Set GSC_REFRESH_TOKEN in your environment to see indexing coverage and top queries for this audit.',
+                      'Siehe Setup-Hinweis oben.',
+                      'See setup hint above.',
                     )}
                   </StatusBanner>
                 </div>
@@ -1532,15 +1563,16 @@ export default function AuditApp() {
             {(() => {
               const r = result.bingResult;
               if (!r || r.state === 'disabled') {
+                // Setup hint lives in the global banner above the tabs.
                 return (
                   <div style={{ marginBottom: '1.5rem' }}>
                     <StatusBanner
                       variant="info"
-                      title={t('Bing Webmaster Tools nicht aktiviert', 'Bing Webmaster Tools not enabled')}
+                      title={t('Kein Bing-Datensatz für dieses Audit', 'No Bing data for this audit')}
                     >
                       {t(
-                        'Setze BING_WMT_API_KEY in deiner Umgebung, um Bing-Suchdaten dieses Audits zu sehen.',
-                        'Set BING_WMT_API_KEY in your environment to see Bing search data for this audit.',
+                        'Siehe Setup-Hinweis oben.',
+                        'See setup hint above.',
                       )}
                     </StatusBanner>
                   </div>
