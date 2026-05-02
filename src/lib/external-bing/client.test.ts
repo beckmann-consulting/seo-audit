@@ -101,3 +101,53 @@ describe('BingApiError classification', () => {
     await expect(getQueryStats('KEY', 'https://example.com/')).rejects.toBeInstanceOf(BingApiError);
   });
 });
+
+describe('Bing in-body ErrorCode envelope', () => {
+  it('maps top-level ErrorCode 14 NotAuthorized → userError=true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      ErrorCode: 14,
+      Message: 'NotAuthorized',
+    }));
+    await expect(getQueryStats('KEY', 'https://unverified.example/')).rejects.toMatchObject({
+      name: 'BingApiError',
+      userError: true,
+      errorCode: 14,
+    });
+  });
+
+  it('maps wrapped d.ErrorCode 14 NotAuthorized → userError=true', async () => {
+    // Some BWT endpoints return the error wrapped inside the `d`
+    // envelope — must classify the same way as the top-level form.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      d: { ErrorCode: 14, Message: 'NotAuthorized' },
+    }));
+    await expect(getPageStats('KEY', 'https://unverified.example/')).rejects.toMatchObject({
+      userError: true,
+      errorCode: 14,
+    });
+  });
+
+  it('maps ErrorCode 1 (InvalidApiKey) → userError=true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      ErrorCode: 1,
+      Message: 'InvalidApiKey',
+    }));
+    await expect(getQueryStats('badkey', 'https://example.com/')).rejects.toMatchObject({
+      userError: true,
+      errorCode: 1,
+    });
+  });
+
+  it('keeps ErrorCode 9 (InternalError) as userError=false', async () => {
+    // Operator-side transient — should still trigger the retry hint
+    // in the UI, not the site-not-found path.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      ErrorCode: 9,
+      Message: 'InternalError',
+    }));
+    await expect(getPageStats('KEY', 'https://example.com/')).rejects.toMatchObject({
+      userError: false,
+      errorCode: 9,
+    });
+  });
+});

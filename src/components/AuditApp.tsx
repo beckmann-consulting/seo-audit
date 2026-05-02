@@ -1597,6 +1597,11 @@ export default function AuditApp() {
                 );
               }
               if (r.state === 'api-error') {
+                // Auth failures (HTTP 401/403/404 and in-body BWT
+                // ErrorCodes 1/3/4/8/13/14) are mapped to site-not-found
+                // upstream — anything that lands here is transport-level
+                // (5xx, network blip, malformed body), so a retry hint
+                // is genuinely useful.
                 return (
                   <div style={{ marginBottom: '1.5rem' }}>
                     <StatusBanner
@@ -1606,8 +1611,8 @@ export default function AuditApp() {
                       {r.message}
                       <div style={{ marginTop: 6 }}>
                         {t(
-                          'Bitte ein neues Audit starten, um aktuelle Daten zu laden.',
-                          'Please start a new audit to fetch current data.',
+                          'Wahrscheinlich vorübergehend — neues Audit starten, falls das Problem bestehen bleibt das Setup prüfen.',
+                          'Likely transient — start a new audit; if it persists, check the setup.',
                         )}
                       </div>
                     </StatusBanner>
