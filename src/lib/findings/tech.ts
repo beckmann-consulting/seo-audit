@@ -41,16 +41,52 @@ export function generateTechFindings(
     });
   }
 
-  // Broken links
-  if (crawlStats.brokenLinks.length > 0) {
+  // (The single "N broken links" finding that used to live here was
+  // removed when CrawlStats split brokenLinks into three buckets:
+  // httpErrors (covered by the dedicated 4xx + 5xx findings below),
+  // unreachable (new finding immediately below), and renderFailed
+  // (new optional finding further down). The single-bucket version
+  // was the false-positive class identified during the
+  // beckmanndigital.com review — JS-render failures showed up as
+  // "broken links" even when curl confirmed the URLs returned 200.)
+
+  // Unreachable URLs — network-layer failure (DNS, timeout, connection
+  // reset). Real defect, but distinct from a 4xx/5xx response: the
+  // origin couldn't be reached at all.
+  if (crawlStats.unreachable.length > 0) {
+    const sample = crawlStats.unreachable
+      .slice(0, 5)
+      .map(u => `${u.url} (${u.reason})`)
+      .join(', ');
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
-      title_de: `${crawlStats.brokenLinks.length} defekte Links gefunden`,
-      title_en: `${crawlStats.brokenLinks.length} broken links found`,
-      description_de: `Defekte URLs: ${crawlStats.brokenLinks.slice(0, 5).join(', ')}`,
-      description_en: `Broken URLs: ${crawlStats.brokenLinks.slice(0, 5).join(', ')}`,
-      recommendation_de: 'Alle defekten Links korrigieren oder entfernen. 404-Fehler schaden dem Crawl-Budget.',
-      recommendation_en: 'Fix or remove all broken links. 404 errors harm the crawl budget.',
+      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'high',
+      title_de: `${crawlStats.unreachable.length} nicht erreichbare URL(s)`,
+      title_en: `${crawlStats.unreachable.length} unreachable URL(s)`,
+      description_de: `Diese URLs lieferten beim Crawl keine Antwort — typische Ursachen: DNS-Auflösung gescheitert, Verbindungsabbruch, Server-Timeout. Betroffen: ${sample}`,
+      description_en: `These URLs gave no response during the crawl — typical causes: DNS resolution failure, connection reset, server timeout. Affected: ${sample}`,
+      recommendation_de: 'Domain- und Server-Verfügbarkeit prüfen. Falls einzelne URLs betroffen sind: Routing/Redirect-Konfiguration und Web-Server-Logs prüfen.',
+      recommendation_en: 'Verify domain and server availability. For individual URLs: check routing/redirect configuration and web-server logs.',
+    });
+  }
+
+  // JS render failed but the URL itself is reachable (HEAD probe in
+  // the crawler confirmed 200/3xx). The static fallback was used to
+  // populate the page data — no SEO checks were skipped, only the
+  // JS-rendered DOM is missing for these pages. Optional, gray —
+  // not a defect, just a probing limitation.
+  if (crawlStats.renderFailed.length > 0) {
+    const sample = crawlStats.renderFailed
+      .slice(0, 5)
+      .map(r => `${r.url} (${r.reason})`)
+      .join(', ');
+    findings.push({
+      id: id(), priority: 'optional', module: 'tech', effort: 'low', impact: 'low',
+      title_de: `${crawlStats.renderFailed.length} Seite(n) konnten nicht JS-gerendert werden (Seiten sind erreichbar)`,
+      title_en: `${crawlStats.renderFailed.length} page(s) couldn't be JS-rendered (pages are reachable)`,
+      description_de: `Diese Seiten antworten mit HTTP 200, aber der Headless-Browser konnte den JS-Render nicht abschliessen — typischerweise wegen langsam ladender 3rd-Party-Scripts (Tracker, Chat-Widgets, Animationen). Statische Analyse wurde als Fallback verwendet, alle nicht-JS-abhängigen Checks sind also vollständig. Informativ, kein Defekt. Betroffen: ${sample}`,
+      description_en: `These pages respond with HTTP 200, but the headless browser couldn't complete the JS render — typically due to slow-loading 3rd-party scripts (trackers, chat widgets, animations). Static analysis was used as fallback, so all non-JS-dependent checks are complete. Informational, not a defect. Affected: ${sample}`,
+      recommendation_de: 'Falls diese Seiten kritisch für SEO-Crawling (z. B. Googlebot via JS-Render) sind: 3rd-Party-Scripts oder Animations-Runtimes prüfen, die die Seite über die 30-Sekunden-Render-Timeout-Schwelle hinaus beschäftigen.',
+      recommendation_en: 'If these pages are critical for SEO crawling (e.g. Googlebot via JS render): review 3rd-party scripts or animation runtimes that keep the page busy past the 30-second render timeout.',
     });
   }
 
