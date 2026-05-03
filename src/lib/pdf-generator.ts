@@ -19,15 +19,27 @@ const COLOR_GOOD: [number, number, number] = [74, 155, 142]; // #4A9B8E — soft
 // ============================================================
 //  Glyph holes in the embedded font
 // ============================================================
-// Inter latin+ext covers everything we put into finding text EXCEPT a
-// handful of symbol codepoints (Dingbats, Arrows, Geometric Shapes).
-// The two we actually emit are:
+// We embed Inter's "latin + latin-ext" subset (~140 KB / weight) instead
+// of the full TTF (~330 KB / weight) to keep the lazy-loaded PDF chunk
+// inside the agreed bundle budget. That subset covers Basic Latin +
+// Latin-1 Supplement + Latin Extended A/B + General Punctuation +
+// Currency — everything Western-European audit reports normally need
+// EXCEPT a handful of symbol codepoints:
 //   ✓ U+2713 / ✗ U+2717  — only in pdf-generator's hard-coded TechRow
 //                          values; rendered via vector primitives below.
 //   → U+2192             — appears in some finding texts (gsc, bing,
 //                          tech, seo). Substituted to ASCII at PDF
 //                          render time so the HTML view keeps the
 //                          typographic arrow.
+//
+// The sanitizer is also a defensive guardrail: if a future paste-in (a
+// Mac-editor curly char, a stray emoji, anything outside latin+ext) ever
+// reaches finding text, the affected codepoint either renders natively
+// (Inter has the common typographic chars: ' ' " " — – … € · • all
+// covered) or falls through to the silent-drop class of bug that
+// triggered Package A. Removing or no-op-ing this function would
+// re-introduce that risk for zero runtime gain, so it stays even though
+// today only → would actually mojibake.
 function sanitizeForPdf(text: string): string {
   return text.replace(/→/g, '->');
 }
