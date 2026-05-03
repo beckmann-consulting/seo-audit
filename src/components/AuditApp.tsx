@@ -1511,14 +1511,29 @@ export default function AuditApp() {
                 );
               })()}
 
-              {/* Crawl stats */}
-              <div style={techCardStyle}>
-                <h3 style={techCardTitle}>{t('Crawl-Statistik', 'Crawl Statistics')}</h3>
-                <TechRow label={t('Seiten gecrawlt', 'Pages crawled')} value={String(result.crawlStats.crawledPages)} severity="neutral" />
-                <TechRow label={t('Defekte Links', 'Broken links')} value={String(result.crawlStats.brokenLinks.length)} severity={result.crawlStats.brokenLinks.length === 0 ? 'good' : 'bad'} />
-                <TechRow label={t('Weiterleitungen', 'Redirects')} value={String(result.crawlStats.redirectChains.length)} severity={result.crawlStats.redirectChains.length === 0 ? 'good' : 'warn'} />
-                <TechRow label={t('Externe Links', 'External links')} value={String(result.crawlStats.externalLinks)} severity="neutral" />
-              </div>
+              {/* Crawl stats — three split rows for the formerly-single
+                  broken-link bucket: HTTP errors (red), Unreachable (red),
+                  Render failed (gray "(optional)" — pages are reachable,
+                  only the JS render didn't complete). Mirrors the PDF
+                  Crawl Statistics table. */}
+              {(() => {
+                const cs = result.crawlStats;
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>{t('Crawl-Statistik', 'Crawl Statistics')}</h3>
+                    <TechRow label={t('Seiten gecrawlt', 'Pages crawled')} value={String(cs.crawledPages)} severity="neutral" />
+                    <TechRow label={t('HTTP-Fehler', 'HTTP errors')} value={String(cs.httpErrors.length)} severity={cs.httpErrors.length === 0 ? 'good' : 'bad'} />
+                    <TechRow label={t('Nicht erreichbar', 'Unreachable')} value={String(cs.unreachable.length)} severity={cs.unreachable.length === 0 ? 'good' : 'bad'} />
+                    <TechRow
+                      label={t('Render fehlgeschlagen', 'Render failed') + (cs.renderFailed.length > 0 ? ' (optional)' : '')}
+                      value={String(cs.renderFailed.length)}
+                      severity={cs.renderFailed.length === 0 ? 'good' : 'neutral'}
+                    />
+                    <TechRow label={t('Weiterleitungen', 'Redirects')} value={String(cs.redirectChains.length)} severity={cs.redirectChains.length === 0 ? 'good' : 'warn'} />
+                    <TechRow label={t('Externe Links', 'External links')} value={String(cs.externalLinks)} severity="neutral" />
+                  </div>
+                );
+              })()}
             </div>
           )}
 

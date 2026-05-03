@@ -1079,12 +1079,18 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       renderTechTable(t('Google Safe Browsing', 'Google Safe Browsing'), sbRows);
     }
 
-    // Crawl Statistics
+    // Crawl Statistics — three rows for the formerly-single broken
+    // bucket so HTTP errors, network unreachable, and JS-render
+    // limitations are visually distinguishable.
+    const cs = result.crawlStats;
+    const renderFailedSuffix = cs.renderFailed.length > 0 ? ` ${t('(optional)', '(optional)')}` : '';
     renderTechTable(t('Crawl-Statistik', 'Crawl Statistics'), [
-      { label: t('Seiten gecrawlt', 'Pages crawled'), value: String(result.crawlStats.crawledPages) },
-      { label: t('Defekte Links', 'Broken links'), value: String(result.crawlStats.brokenLinks.length), severity: result.crawlStats.brokenLinks.length === 0 ? 'good' : 'bad' },
-      { label: t('Weiterleitungen', 'Redirects'), value: String(result.crawlStats.redirectChains.length), severity: result.crawlStats.redirectChains.length < 3 ? 'good' : 'warn' },
-      { label: t('Externe Links', 'External links'), value: String(result.crawlStats.externalLinks) },
+      { label: t('Seiten gecrawlt', 'Pages crawled'), value: String(cs.crawledPages) },
+      { label: t('HTTP-Fehler', 'HTTP errors'), value: String(cs.httpErrors.length), severity: cs.httpErrors.length === 0 ? 'good' : 'bad' },
+      { label: t('Nicht erreichbar', 'Unreachable'), value: String(cs.unreachable.length), severity: cs.unreachable.length === 0 ? 'good' : 'bad' },
+      { label: t('Render fehlgeschlagen', 'Render failed') + renderFailedSuffix, value: String(cs.renderFailed.length), severity: cs.renderFailed.length === 0 ? 'good' : 'neutral' },
+      { label: t('Weiterleitungen', 'Redirects'), value: String(cs.redirectChains.length), severity: cs.redirectChains.length < 3 ? 'good' : 'warn' },
+      { label: t('Externe Links', 'External links'), value: String(cs.externalLinks) },
     ]);
     y += 4;
   }
