@@ -39,8 +39,8 @@ import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
 import { compileFilterPatterns, FilterPatternError } from '@/lib/util/url-filter';
 import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
 import { StaticRenderer } from '@/lib/renderer';
-import type { JsRenderer, Renderer } from '@/lib/renderer';
-import { captureScreenshotsForAudit } from '@/lib/screenshots';
+import type { Renderer } from '@/lib/renderer';
+import { captureScreenshotsForAudit, type ScreenshotCapableRenderer } from '@/lib/screenshots';
 import { resolveGscResult, emitGscWarning } from '@/lib/external-gsc/route-helper';
 import { resolveBingResult, emitBingWarning } from '@/lib/external-bing/route-helper';
 import { getBingApiKey } from '@/lib/external-bing/auth';
@@ -230,8 +230,12 @@ async function runAudit(
   // static-mode audits skip silently because there's no Chromium to
   // drive. Failures are tolerated — we don't want a flaky screenshot
   // pass to invalidate an otherwise-completed audit.
-  const screenshots = (config.includeScreenshots && config.rendering === 'js')
-    ? await captureScreenshotsForAudit(renderer as JsRenderer, pages)
+  // Both 'js' and 'auto' provide a screenshot-capable renderer:
+  // JsRenderer directly, AutoRenderer via its captureScreenshot
+  // delegation to the inner JS renderer.
+  const jsCapable = config.rendering === 'js' || config.rendering === 'auto';
+  const screenshots = (config.includeScreenshots && jsCapable)
+    ? await captureScreenshotsForAudit(renderer as unknown as ScreenshotCapableRenderer, pages)
     : undefined;
 
   // ---- STEP 8e: Google Search Console ----

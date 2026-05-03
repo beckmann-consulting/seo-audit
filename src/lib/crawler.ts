@@ -43,6 +43,57 @@ function normalizeUrl(url: string, base: string): string | null {
   }
 }
 
+// Canonical key for visited-set / queue dedup. The crawler used to key
+// on the raw request URL, which let the same logical page get crawled
+// twice when:
+//   - a redirect rewrites the URL  (apex deepcyte.bio → www.deepcyte.bio/)
+//   - a self-link uses a different variant (trailing slash, www, port)
+// dedupKey collapses those variants so the second discovery hits visited.
+//
+// What it normalises:
+//   - host: lowercased; the apex and www subdomain of the BASE host
+//     are coalesced (other subdomains stay distinct)
+//   - port: default ports (80 for http, 443 for https) are stripped
+//   - path: trailing slash removed except for the bare "/" (root)
+//   - fragment: dropped
+//
+// What it deliberately does NOT do:
+//   - case-fold the path: nginx is case-sensitive by default; folding
+//     would cause real false-dedup hits on those servers
+//   - reorder query parameters: signed URLs and some auth schemes
+//     depend on parameter order
+//   - drop tracking parameters (utm_*): sometimes intentionally part
+//     of the page-vs-page distinction (campaign landing pages)
+export function dedupKey(url: string, baseHost: string): string {
+  try {
+    const u = new URL(url);
+
+    let host = u.hostname.toLowerCase();
+    const baseApex = baseHost.replace(/^www\./i, '').toLowerCase();
+    if (host === `www.${baseApex}` || host === baseApex) {
+      host = baseApex;
+    }
+
+    let port = u.port;
+    if ((u.protocol === 'http:' && port === '80') ||
+        (u.protocol === 'https:' && port === '443')) {
+      port = '';
+    }
+
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+    if (path === '') path = '/';
+
+    const query = u.search;
+
+    return `${u.protocol}//${host}${port ? ':' + port : ''}${path}${query}`;
+  } catch {
+    return url;
+  }
+}
+
 // Build a PageData from a successful RenderResult. Preserves the
 // fields the rest of the audit pipeline already depends on.
 function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number): PageData {
@@ -134,8 +185,9 @@ export async function crawlSite(
       if (maxPages > 0 && pages.length >= maxPages) break;
 
       const { url, depth } = queue.shift()!;
-      if (visited.has(url)) continue;
-      visited.add(url);
+      const requestKey = dedupKey(url, baseDomain);
+      if (visited.has(requestKey)) continue;
+      visited.add(requestKey);
 
       onProgress?.(pages.length, queue.length + pages.length + 1, url);
 
@@ -173,6 +225,18 @@ export async function crawlSite(
           renderFailed.push({ url, reason: result.jsRenderFailed.reason });
         }
 
+        // Mark every URL involved in this fetch as visited — request
+        // URL, every redirect hop, and the final URL — so subsequent
+        // discovery of any variant (e.g. a self-link to the apex when
+        // the request URL was the www form, or vice versa) hits the
+        // visited set and doesn't re-crawl. Without this the crawler
+        // produced duplicate page entries on every site with an apex
+        // <-> www redirect plus a self-link.
+        visited.add(dedupKey(result.finalUrl, baseDomain));
+        for (const hop of result.redirectChain) {
+          visited.add(dedupKey(hop, baseDomain));
+        }
+
         pages.push(pageDataFromRender(result, url, depth));
 
         // Extract links from this page (resolve against the FINAL url after redirects)
@@ -184,7 +248,8 @@ export async function crawlSite(
             const fullUrl = new URL(href, result.finalUrl);
             if (sameHostnameWithWww(fullUrl.hostname, baseDomain)) {
               const normalized = normalizeUrl(href, result.finalUrl);
-              if (normalized && !visited.has(normalized) && !queue.some(q => q.url === normalized)) {
+              const normalizedKey = normalized ? dedupKey(normalized, baseDomain) : null;
+              if (normalized && normalizedKey && !visited.has(normalizedKey) && !queue.some(q => dedupKey(q.url, baseDomain) === normalizedKey)) {
                 // Discovered URL — apply user filter. The start URL itself
                 // bypasses this check (handled by being seeded directly into
                 // the queue before the loop), so users who set a narrow

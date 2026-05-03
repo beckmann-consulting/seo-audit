@@ -211,3 +211,30 @@ describe('AutoRenderer — close() lifecycle', () => {
     expect(auto.mode).toBe('auto');
   });
 });
+
+describe('AutoRenderer.captureScreenshot — delegation', () => {
+  it('delegates to the inner JS renderer when it has captureScreenshot', async () => {
+    const staticStub = stubRenderer('static', { html: '' });
+    // Extend the JS stub with a captureScreenshot spy.
+    const captureSpy = vi.fn(async () => 'base64data');
+    const jsStub: Renderer & { captureScreenshot: typeof captureSpy } = {
+      ...stubRenderer('js', { html: '' }),
+      captureScreenshot: captureSpy,
+    };
+    const auto = new AutoRenderer(staticStub, jsStub);
+
+    const result = await auto.captureScreenshot('https://example.com/', { width: 375, height: 667 });
+    expect(result).toBe('base64data');
+    expect(captureSpy).toHaveBeenCalledWith('https://example.com/', { width: 375, height: 667 });
+  });
+
+  it('returns undefined when the inner JS renderer has no captureScreenshot (test-stub case)', async () => {
+    // Plain Renderer-interface stub — no captureScreenshot method.
+    const staticStub = stubRenderer('static', { html: '' });
+    const jsStub = stubRenderer('js', { html: '' });
+    const auto = new AutoRenderer(staticStub, jsStub);
+
+    const result = await auto.captureScreenshot('https://example.com/', { width: 375, height: 667 });
+    expect(result).toBeUndefined();
+  });
+});

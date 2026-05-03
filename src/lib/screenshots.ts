@@ -9,7 +9,6 @@
 // tail of an audit with most of the timeout budget already spent;
 // staying sequential keeps wall-time predictable.
 
-import type { JsRenderer } from './renderer';
 import type { PageSEOData } from '@/types';
 
 export const SCREENSHOT_VIEWPORTS = {
@@ -25,8 +24,20 @@ export interface ScreenshotResult {
   desktopBase64?: string;
 }
 
+// Structural type so both JsRenderer (direct) and AutoRenderer
+// (delegating) satisfy the contract — see auto.ts for AutoRenderer's
+// captureScreenshot delegation. Avoids a hard import on JsRenderer
+// here and lets the Tobias-mode `rendering: 'auto'` path also produce
+// screenshots.
+export interface ScreenshotCapableRenderer {
+  captureScreenshot(
+    url: string,
+    viewport: { width: number; height: number },
+  ): Promise<string | undefined>;
+}
+
 export async function captureScreenshotsForAudit(
-  renderer: JsRenderer,
+  renderer: ScreenshotCapableRenderer,
   pages: PageSEOData[],
   limit: number = DEFAULT_SCREENSHOT_PAGES,
 ): Promise<ScreenshotResult[]> {

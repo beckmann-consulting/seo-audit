@@ -265,8 +265,13 @@ export class JsRenderer implements Renderer {
       const page = await ctx.newPage();
       try {
         await page.setViewportSize(viewport);
+        // 'load' (not 'networkidle') for the same reason the main fetch
+        // path uses it (commit b36d1e3): heavy 3rd-party trackers /
+        // animation runtimes never let the page reach 'networkidle'
+        // within the timeout, so screenshots silently failed for
+        // entire JS-mode runs against Webflow / Shopify-style sites.
         await page.goto(url, {
-          waitUntil: 'networkidle',
+          waitUntil: 'load',
           timeout: this.pageTimeoutMs,
         });
         const buffer = await page.screenshot({ fullPage: false, type: 'png' });

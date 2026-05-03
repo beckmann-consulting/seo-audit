@@ -49,4 +49,21 @@ export class AutoRenderer implements Renderer {
       this.jsRenderer.close(),
     ]);
   }
+
+  // Delegate screenshots to the inner JS renderer. Auto-mode always
+  // wraps a real JsRenderer at runtime; the constructor's `Renderer`-
+  // interface typing for jsRenderer is purely for test-stub flexibility.
+  // Feature-detect rather than tighten the type so the stubbed tests
+  // for AutoRenderer.fetch keep working without each gaining a no-op
+  // captureScreenshot method.
+  async captureScreenshot(
+    url: string,
+    viewport: { width: number; height: number },
+  ): Promise<string | undefined> {
+    const inner = this.jsRenderer as Renderer & {
+      captureScreenshot?: (u: string, v: { width: number; height: number }) => Promise<string | undefined>;
+    };
+    if (typeof inner.captureScreenshot !== 'function') return undefined;
+    return inner.captureScreenshot(url, viewport);
+  }
 }
