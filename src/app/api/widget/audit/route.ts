@@ -202,7 +202,9 @@ export async function POST(req: NextRequest) {
       brokenLinks: [],
       redirectChains: [],
       externalLinks: 0,
-      errorPages: [],
+      httpErrors: [],
+      unreachable: [],
+      renderFailed: [],
     };
     allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
     allFindings.push(...generateContentFindings(pages));

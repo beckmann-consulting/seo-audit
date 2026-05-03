@@ -274,7 +274,7 @@ async function runAudit(
 
   if (config.modules.includes('seo')) {
     allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
-    allFindings.push(...generateCanonicalTargetFindings(pages, crawlStats.errorPages));
+    allFindings.push(...generateCanonicalTargetFindings(pages, crawlStats.httpErrors));
     allFindings.push(...generateHreflangFindings(pages));
     allFindings.push(...generateAIReadinessFindings(aiReadiness));
     allFindings.push(...generateStructuredDataFindings(pages));

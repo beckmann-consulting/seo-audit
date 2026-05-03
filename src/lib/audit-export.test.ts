@@ -26,7 +26,7 @@ function makeResult(overrides: Partial<AuditResult> = {}): AuditResult {
     strengths_en: [],
     crawlStats: {
       totalPages: 1, crawledPages: 1, brokenLinks: [], redirectChains: [],
-      externalLinks: 0, errorPages: [],
+      externalLinks: 0, httpErrors: [], unreachable: [], renderFailed: [],
     },
     pages: [],
     topFindings: [],

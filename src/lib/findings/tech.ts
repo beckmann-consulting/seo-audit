@@ -61,7 +61,7 @@ export function generateTechFindings(
   // when both checks were active.
 
   // Pages with 4xx status
-  const pages4xx = crawlStats.errorPages.filter(e => e.status >= 400 && e.status < 500);
+  const pages4xx = crawlStats.httpErrors.filter(e => e.status >= 400 && e.status < 500);
   if (pages4xx.length > 0) {
     findings.push({
       id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
@@ -75,7 +75,7 @@ export function generateTechFindings(
   }
 
   // Pages with 5xx status
-  const pages5xx = crawlStats.errorPages.filter(e => e.status >= 500);
+  const pages5xx = crawlStats.httpErrors.filter(e => e.status >= 500);
   if (pages5xx.length > 0) {
     findings.push({
       id: id(), priority: 'critical', module: 'tech', effort: 'high', impact: 'high',

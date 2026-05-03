@@ -673,7 +673,7 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
 //      out. Google ignores the canonical signal in this case. Subtle
 //      because both directives can look correct in isolation.
 //
-// 4xx targets are matched against errorPages (crawler-side), since
+// 4xx targets are matched against httpErrors (crawler-side), since
 // 4xx pages are filtered out of the main `pages` array. Redirect
 // targets and noindex targets are matched against `pages` directly.
 //
@@ -682,7 +682,7 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
 // and we only have crawled data for own-domain URLs anyway.
 export function generateCanonicalTargetFindings(
   pages: PageSEOData[],
-  errorPages: { url: string; status: number }[],
+  httpErrors: { url: string; status: number }[],
 ): Finding[] {
   if (pages.length === 0) return [];
 
@@ -694,7 +694,7 @@ export function generateCanonicalTargetFindings(
     for (const src of p.redirectChain) pageMap.set(normalizeUrl(src), p);
   }
   const errorMap = new Map<string, number>();
-  for (const e of errorPages) errorMap.set(normalizeUrl(e.url), e.status);
+  for (const e of httpErrors) errorMap.set(normalizeUrl(e.url), e.status);
 
   type BrokenRef = {
     source: string;

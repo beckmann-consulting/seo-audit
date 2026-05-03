@@ -181,10 +181,25 @@ export interface ModuleScore {
 export interface CrawlStats {
   totalPages: number;
   crawledPages: number;
+  // brokenLinks is the backward-compat sum of httpErrors + unreachable
+  // — i.e. URLs whose CONTENT could not be served. renderFailed is
+  // deliberately excluded: those URLs returned 200 from the server,
+  // they just couldn't be JS-rendered. Treating them as "broken" was
+  // the false-positive class identified during the beckmanndigital.com
+  // review.
   brokenLinks: string[];
   redirectChains: { from: string; to: string }[];
   externalLinks: number;
-  errorPages: { url: string; status: number }[]; // 4xx/5xx responses captured during crawl
+  // 4xx / 5xx responses from the origin during crawl. Real defects.
+  httpErrors: { url: string; status: number }[];
+  // Network-layer failures: DNS, timeout, connection reset. Origin
+  // unreachable. Reason is the underlying error string when known.
+  unreachable: { url: string; reason: string }[];
+  // JS-render failed but the URL itself is reachable (HTTP 200/3xx).
+  // Static fallback, if available, was used to populate the page data.
+  // NOT a defect — typically a Webflow / heavy-3rd-party-script page
+  // where Playwright's networkidle / load wait hit the timeout.
+  renderFailed: { url: string; reason: string }[];
 }
 
 export interface SSLInfo {

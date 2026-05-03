@@ -60,7 +60,7 @@ function makeResult(o: Partial<AuditResult> = {}): AuditResult {
     moduleScores: [],
     findings: [],
     strengths_de: [], strengths_en: [],
-    crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: [], redirectChains: [], externalLinks: 0, errorPages: [] },
+    crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: [], redirectChains: [], externalLinks: 0, httpErrors: [], unreachable: [], renderFailed: [] },
     pages: [],
     topFindings: [],
     claudePrompt: '',
@@ -153,7 +153,7 @@ describe('Per-table content', () => {
 
   it('broken-links: one row per URL', () => {
     const result = makeResult({
-      crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: ['https://x.com/a', 'https://x.com/b'], redirectChains: [], externalLinks: 0, errorPages: [] },
+      crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: ['https://x.com/a', 'https://x.com/b'], redirectChains: [], externalLinks: 0, httpErrors: [], unreachable: [], renderFailed: [] },
     });
     const csv = buildCsvExport(result, 'broken-links');
     const lines = csv.replace(UTF8_BOM, '').split('\r\n').filter(Boolean);
@@ -162,7 +162,7 @@ describe('Per-table content', () => {
 
   it('error-pages: url + status', () => {
     const result = makeResult({
-      crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: [], redirectChains: [], externalLinks: 0, errorPages: [{ url: 'https://x.com/a', status: 404 }] },
+      crawlStats: { totalPages: 0, crawledPages: 0, brokenLinks: [], redirectChains: [], externalLinks: 0, httpErrors: [{ url: 'https://x.com/a', status: 404 }], unreachable: [], renderFailed: [] },
     });
     const csv = buildCsvExport(result, 'error-pages');
     expect(csv).toContain('url,status');

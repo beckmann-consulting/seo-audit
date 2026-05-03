@@ -93,8 +93,12 @@ export async function crawlSite(
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
   const pages: PageData[] = [];
-  const brokenLinks: string[] = [];
-  const errorPages: { url: string; status: number }[] = [];
+  // Split bucket model — see CrawlStats comment in @/types. brokenLinks
+  // gets reassembled at the end as httpErrors ∪ unreachable so existing
+  // consumers continue to work; renderFailed is a separate signal.
+  const httpErrors: { url: string; status: number }[] = [];
+  const unreachable: { url: string; reason: string }[] = [];
+  const renderFailed: { url: string; reason: string }[] = [];
   const redirectChains: { from: string; to: string }[] = [];
   let externalLinkCount = 0;
 
@@ -137,9 +141,9 @@ export async function crawlSite(
       try {
         const result = await activeRenderer.fetch(url);
 
-        // Network error / no response
+        // Network error / no response — origin unreachable.
         if (result.status === 0) {
-          brokenLinks.push(url);
+          unreachable.push({ url, reason: 'network error or timeout' });
           continue;
         }
 
@@ -153,10 +157,9 @@ export async function crawlSite(
           continue;
         }
 
-        // 4xx / 5xx
+        // 4xx / 5xx — real HTTP error from the origin.
         if (result.status < 200 || result.status >= 400) {
-          brokenLinks.push(url);
-          errorPages.push({ url, status: result.status });
+          httpErrors.push({ url, status: result.status });
           continue;
         }
 
@@ -185,8 +188,15 @@ export async function crawlSite(
             }
           } catch {}
         }
-      } catch {
-        brokenLinks.push(url);
+      } catch (err) {
+        // Renderer threw — typically a JS-render timeout (page.goto
+        // with waitUntil: 'networkidle' / 'load' on a heavy site).
+        // Classified as renderFailed because the URL itself was likely
+        // reachable; the upstream commits add a HEAD-probe step here
+        // to verify and reclassify into httpErrors / unreachable when
+        // appropriate. For now: record the reason and keep crawling.
+        const reason = err instanceof Error ? err.message : String(err);
+        renderFailed.push({ url, reason });
       }
 
       // Small delay to be polite
@@ -196,6 +206,13 @@ export async function crawlSite(
     if (ownsRenderer) await activeRenderer.close();
   }
 
+  // brokenLinks excludes renderFailed deliberately — see CrawlStats
+  // comment in @/types. Render failures aren't broken URLs.
+  const brokenLinks: string[] = [
+    ...httpErrors.map(e => e.url),
+    ...unreachable.map(u => u.url),
+  ];
+
   return {
     pages,
     stats: {
@@ -204,7 +221,9 @@ export async function crawlSite(
       brokenLinks,
       redirectChains,
       externalLinks: externalLinkCount,
-      errorPages,
+      httpErrors,
+      unreachable,
+      renderFailed,
     },
   };
 }

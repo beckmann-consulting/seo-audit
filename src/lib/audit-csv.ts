@@ -107,7 +107,7 @@ function buildBrokenLinksCsv(result: AuditResult): string {
 
 function buildErrorPagesCsv(result: AuditResult): string {
   const headers = ['url', 'status'];
-  const rows = result.crawlStats.errorPages.map(e => [e.url, e.status]);
+  const rows = result.crawlStats.httpErrors.map(e => [e.url, e.status]);
   return rowsToCsv(headers, rows);
 }
 
