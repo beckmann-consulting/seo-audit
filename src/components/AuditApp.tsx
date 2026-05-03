@@ -865,7 +865,6 @@ export default function AuditApp() {
                 {t('Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung', 'The 5 most impactful actions for immediate score improvement')}
               </p>
               {result.topFindings.map((f, idx) => {
-                const gain = f.priority === 'critical' ? 25 : f.priority === 'important' ? 12 : f.priority === 'recommended' ? 5 : 2;
                 const rec = isDE ? f.recommendation_de : f.recommendation_en;
                 const recTrim = rec.length > 100 ? rec.slice(0, 100) + '…' : rec;
                 return (
@@ -886,12 +885,6 @@ export default function AuditApp() {
                       </span>
                       <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
                         {isDE ? f.title_de : f.title_en}
-                      </span>
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-                        background: 'var(--pass-bg)', color: 'var(--pass)', whiteSpace: 'nowrap',
-                      }}>
-                        +{gain} {t('Pkt.', 'pts')}
                       </span>
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>

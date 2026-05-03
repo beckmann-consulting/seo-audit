@@ -370,13 +370,13 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     result.topFindings.forEach((f, idx) => {
       const title = sanitizeForPdf(isDE ? f.title_de : f.title_en);
       const rec = sanitizeForPdf(isDE ? f.recommendation_de : f.recommendation_en);
-      const gain = f.priority === 'critical' ? 25 : f.priority === 'important' ? 12 : f.priority === 'recommended' ? 5 : 2;
       const pLabel = priorityLabelEs[f.priority][lang];
-      const gainLabel = `+${gain} ${t('Pkt.', 'pts')}`;
 
-      // Reserve right-hand column for the gain badge
-      const gainBoxW = 22;
-      const textW = CONTENT_W - gainBoxW - 4 - 8; // 4mm gap, 8mm left indent for number
+      // Title + recommendation use the full content width (minus the
+      // 8mm left indent that lines up with the orange index number).
+      // The previous "+N pts" badge is gone — see the commit that
+      // introduced this change for rationale.
+      const textW = CONTENT_W - 8;
       const titleLines = doc.splitTextToSize(title, textW);
       const recLines = doc.splitTextToSize(rec, textW);
 
@@ -411,12 +411,6 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       doc.setFontSize(8.5);
       doc.text(recLines, CONTENT_LEFT + 8, cursor);
       cursor += recLines.length * 4;
-
-      // Score gain badge right-aligned on the entry's title row
-      setText(COLOR_GOOD);
-      doc.setFont(INTER_FONT_FAMILY, 'bold');
-      doc.setFontSize(10);
-      doc.text(gainLabel, CONTENT_RIGHT, entryTop + 4, { align: 'right' });
 
       // Divider line between entries (not after the last one)
       if (idx < result.topFindings.length - 1) {
