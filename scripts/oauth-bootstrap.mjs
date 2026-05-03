@@ -42,6 +42,10 @@ const SCOPES = {
 
 const ENV_VAR_NAMES = {
   gsc: 'GSC_REFRESH_TOKEN',
+  // TODO(GA4): refresh token captured by this bootstrap, but no consumer
+  // exists in src/ yet — verified by `grep -RIn "GA4_REFRESH_TOKEN" src`.
+  // Wiring through to the audit pipeline is on the roadmap; until then
+  // the token sits unused in .env.production.
   ga4: 'GA4_REFRESH_TOKEN',
 };
 
