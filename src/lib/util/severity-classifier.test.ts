@@ -28,8 +28,8 @@ describe('classifyAIBotRow', () => {
 });
 
 describe('classifyLlmsTxt', () => {
-  it('returns info when missing (emerging standard, not defect)', () => {
-    expect(classifyLlmsTxt(false)).toBe('info');
+  it('returns neutral when missing (emerging standard, rendered gray)', () => {
+    expect(classifyLlmsTxt(false)).toBe('neutral');
     expect(classifyLlmsTxt(true)).toBe('good');
   });
 });
@@ -75,8 +75,8 @@ describe('classifyCsp', () => {
 });
 
 describe('classifyPermissionsPolicy', () => {
-  it('returns info when missing (emerging baseline)', () => {
-    expect(classifyPermissionsPolicy({})).toBe('info');
+  it('returns neutral when missing (emerging baseline, rendered gray)', () => {
+    expect(classifyPermissionsPolicy({})).toBe('neutral');
     expect(classifyPermissionsPolicy({ permissionsPolicy: 'camera=()' })).toBe('good');
   });
 });

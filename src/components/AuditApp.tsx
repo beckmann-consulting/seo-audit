@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { AuditResult, AuditDiff, Finding, Module, AuditConfig, Lang, UserAgentPreset, StreamEvent } from '@/types';
 import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
@@ -11,7 +11,7 @@ import { getVisibleGscWarnings } from './gsc-warnings';
 import { BingRowsTable } from './BingRowsTable';
 import { getVisibleBingWarnings } from './bing-warnings';
 import { checkPatterns, type PatternError } from './audit-form-validation';
-import { rateMetric, formatComparator, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
+import { formatMetricRow, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
 import {
   classifyAIBotRow, classifyLlmsTxt,
   classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
@@ -26,6 +26,18 @@ import { findingImpactScore } from '@/lib/findings/utils';
 // callers don't repeat the ternary.
 function severityFor(rating: MetricRating): 'good' | 'warn' | 'bad' {
   return rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
+}
+
+// Parse a string with **bold** markers into a list of React nodes for
+// inline rendering. Mirrors the PDF's renderRichText so the audited
+// domain, score, and weakest-module names stay bold in both views.
+function renderRichInline(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
 }
 
 const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
@@ -954,9 +966,11 @@ export default function AuditApp() {
             <DiffView diff={diff} isDE={isDE} t={t} onClose={closeDiff} />
           )}
 
-          {/* Summary */}
+          {/* Summary — same prose as the PDF cover page, with **bold**
+              markers parsed into <strong> for the audited domain, the
+              score, and the weakest-module names. */}
           <p style={{ color: 'var(--text-strong)', fontSize: 13, lineHeight: 1.7, marginBottom: '1.5rem', padding: '12px 16px', background: 'var(--bg)', borderRadius: 8, borderLeft: '3px solid var(--border)' }}>
-            {isDE ? result.summary_de : result.summary_en}
+            {renderRichInline(isDE ? result.summary_de : result.summary_en)}
           </p>
 
           {/* Global setup hint for disabled search-engine integrations.
@@ -1274,24 +1288,29 @@ export default function AuditApp() {
                   per metric. Single source of truth in metric-thresholds.ts. */}
               {result.pageSpeedData && !result.pageSpeedData.error && (() => {
                 const ps = result.pageSpeedData;
-                const locale = isDE ? 'de' : 'en';
-                const psiRow = (label: string, raw: number, key: MetricKey, display: string) => (
-                  <TechRow
-                    label={label}
-                    value={display}
-                    severity={severityFor(rateMetric(raw, key))}
-                    note={formatComparator(key, locale)}
-                  />
-                );
+                const locale: 'de' | 'en' = isDE ? 'de' : 'en';
+                // formatMetricRow picks one unit per row for both value
+                // and threshold comparator — see metric-thresholds.ts.
+                const psiRow = (label: string, raw: number, key: MetricKey) => {
+                  const f = formatMetricRow(raw, key, locale);
+                  return (
+                    <TechRow
+                      label={label}
+                      value={f.display}
+                      severity={severityFor(f.rating)}
+                      note={f.comparator}
+                    />
+                  );
+                };
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>PageSpeed (Mobile)</h3>
-                    {ps.performanceScore !== undefined && psiRow('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`)}
-                    {ps.seoScore !== undefined && psiRow('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`)}
-                    {ps.accessibilityScore !== undefined && psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`)}
-                    {ps.lcp !== undefined && psiRow('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`)}
-                    {ps.cls !== undefined && psiRow('CLS', ps.cls, 'cls', ps.cls.toFixed(3))}
-                    {ps.inp !== undefined && psiRow('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`)}
+                    {ps.performanceScore !== undefined && psiRow('Performance', ps.performanceScore, 'score')}
+                    {ps.seoScore !== undefined && psiRow('SEO', ps.seoScore, 'score')}
+                    {ps.accessibilityScore !== undefined && psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score')}
+                    {ps.lcp !== undefined && psiRow('LCP', ps.lcp, 'lcp')}
+                    {ps.cls !== undefined && psiRow('CLS', ps.cls, 'cls')}
+                    {ps.inp !== undefined && psiRow('INP', ps.inp, 'inp')}
                     {/* FID is the legacy metric INP replaced in March 2024 — kept
                         for sites that still publish it in CrUX. No threshold
                         comparator since web.dev no longer publishes one. */}
@@ -1320,7 +1339,7 @@ export default function AuditApp() {
                     <TechRow
                       key={b.bot}
                       label={`${b.bot} (${b.purpose})`}
-                      value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
+                      value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt (optional)', 'unspecified (optional)')}
                       severity={classifyAIBotRow(b.status)}
                     />
                   ))}
@@ -1365,7 +1384,7 @@ export default function AuditApp() {
                     />
                     <TechRow
                       label="Permissions-Policy"
-                      value={sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing')}
+                      value={sh.permissionsPolicy ? t('gesetzt', 'set') : t('nicht konfiguriert (optional)', 'not configured (optional)')}
                       severity={classifyPermissionsPolicy(sh)}
                     />
                     {sh.hasMixedContent && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rateMetric, formatComparator, METRIC_THRESHOLDS } from './metric-thresholds';
+import { rateMetric, formatComparator, formatMetricRow, METRIC_THRESHOLDS } from './metric-thresholds';
 
 describe('rateMetric — lower-is-better metrics', () => {
   it('rates LCP at boundary as good (≤ good)', () => {
@@ -62,5 +62,43 @@ describe('METRIC_THRESHOLDS — sanity', () => {
     expect(METRIC_THRESHOLDS.inp.good).toBe(200);
     expect(METRIC_THRESHOLDS.cls.poor).toBe(0.25);
     expect(METRIC_THRESHOLDS.score.good).toBe(90);
+  });
+});
+
+describe('formatMetricRow — unit consistency between value and threshold', () => {
+  it('renders LCP value AND thresholds in seconds when value >= 1000ms', () => {
+    const f = formatMetricRow(20300, 'lcp', 'en');
+    expect(f.display).toBe('20.3s');
+    expect(f.comparator).toBe('good: <2.5s · poor: >4s · web.dev');
+    expect(f.rating).toBe('poor');
+  });
+  it('renders TTFB value AND thresholds in ms when value < 1000ms', () => {
+    const f = formatMetricRow(540, 'ttfb', 'en');
+    expect(f.display).toBe('540ms');
+    expect(f.comparator).toBe('good: <800ms · poor: >1800ms · web.dev');
+    expect(f.rating).toBe('good');
+  });
+  it('boundary: 999ms stays in ms, 1000ms switches to seconds', () => {
+    expect(formatMetricRow(999, 'fcp', 'en').display).toBe('999ms');
+    expect(formatMetricRow(999, 'fcp', 'en').comparator).toContain('ms');
+    expect(formatMetricRow(1000, 'fcp', 'en').display).toBe('1s');
+    expect(formatMetricRow(1000, 'fcp', 'en').comparator).toContain('s ');
+  });
+  it('CLS unaffected by ms rule (unitless, three decimals)', () => {
+    const f = formatMetricRow(0.021, 'cls', 'en');
+    expect(f.display).toBe('0.021');
+    expect(f.comparator).toBe('good: <0.10 · poor: >0.25 · web.dev');
+  });
+  it('score uses /100 in both display and comparator', () => {
+    const f = formatMetricRow(61, 'score', 'en');
+    expect(f.display).toBe('61/100');
+    expect(f.comparator).toBe('good: ≥90/100 · poor: <50/100 · Lighthouse');
+  });
+  it('localises to DE labels', () => {
+    expect(formatMetricRow(20300, 'lcp', 'de').comparator).toBe('gut: <2.5s · schlecht: >4s · web.dev');
+  });
+  it('TBT inherits the same rule (Lighthouse source)', () => {
+    expect(formatMetricRow(180, 'tbt', 'en').comparator).toBe('good: <200ms · poor: >600ms · Lighthouse');
+    expect(formatMetricRow(2400, 'tbt', 'en').comparator).toBe('good: <0.2s · poor: >0.6s · Lighthouse');
   });
 });

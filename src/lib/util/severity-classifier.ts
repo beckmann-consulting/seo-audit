@@ -37,9 +37,12 @@ export function classifyAIBotRow(status: AIBotStatus): Severity {
 }
 
 // llms.txt + llms-full.txt: ~10% adoption, no major LLM provider has
-// committed to honouring them. Missing is informational, not a defect.
+// committed to honouring them. Missing is treated as neutral (not a
+// defect) — visually the same gray as `optional` so adjacent table
+// rows don't read as four warnings + one info-blue (which Tobias
+// flagged as confusing in the deepcyte.bio review).
 export function classifyLlmsTxt(present: boolean): Severity {
-  return present ? 'good' : 'info';
+  return present ? 'good' : 'neutral';
 }
 
 // ============================================================
@@ -98,10 +101,13 @@ export function classifyReferrerPolicy(inp: SecurityHeaderInputs): Severity {
   return inp.referrerPolicy ? 'good' : 'warn';
 }
 
-// Permissions-Policy is still emerging as a baseline expectation —
-// flagging as info, not warn.
+// Permissions-Policy is still emerging as a baseline expectation. We
+// no longer mark it info-blue — within Security Headers, four orange
+// "missing" rows + one blue one read as visually inconsistent. Render
+// missing as neutral with an explicit "(optional)" suffix at the
+// caller's value-string level.
 export function classifyPermissionsPolicy(inp: SecurityHeaderInputs): Severity {
-  return inp.permissionsPolicy ? 'good' : 'info';
+  return inp.permissionsPolicy ? 'good' : 'neutral';
 }
 
 // Mixed content on an HTTPS site IS a real defect: every browser flags

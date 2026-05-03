@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { checkSSL } from './external-checks';
+import { checkSSL, checkPageSpeed } from './external-checks';
 
 // SSL Labs polling tests. The function uses real setTimeout for the
 // 10s inter-poll wait — we install fake timers so each test runs in
@@ -145,5 +145,59 @@ describe('checkSSL — DNS status loop', () => {
     const result = await promise;
     expect(result.grade).toBe('A+');
     expect(result.valid).toBe(true);
+  });
+});
+
+// ============================================================
+//  checkPageSpeed — TTFB source preference
+// ============================================================
+// PSI's lab `server-response-time` audit is measured from a Google
+// datacenter and routinely returns sub-10ms values for any origin
+// behind a CDN — not what a user actually experiences. CrUX field
+// data (EXPERIMENTAL_TIME_TO_FIRST_BYTE.percentile) is the canonical
+// real-user TTFB. The parser prefers field over lab; tests below
+// pin both halves of that contract.
+describe('checkPageSpeed — TTFB source preference', () => {
+  function psiBody(opts: { labTtfb?: number; cruxTtfb?: number }) {
+    const audits: Record<string, { numericValue: number }> = {
+      'largest-contentful-paint': { numericValue: 2400 },
+      'cumulative-layout-shift': { numericValue: 0.05 },
+      'first-contentful-paint': { numericValue: 1200 },
+      'total-blocking-time': { numericValue: 150 },
+      'max-potential-fid': { numericValue: 100 },
+      'speed-index': { numericValue: 2000 },
+    };
+    if (opts.labTtfb !== undefined) {
+      audits['server-response-time'] = { numericValue: opts.labTtfb };
+    }
+    const metrics: Record<string, { percentile: number }> = {};
+    if (opts.cruxTtfb !== undefined) {
+      metrics.EXPERIMENTAL_TIME_TO_FIRST_BYTE = { percentile: opts.cruxTtfb };
+    }
+    return jsonResponse({
+      lighthouseResult: {
+        categories: { performance: { score: 0.8 } },
+        audits,
+      },
+      loadingExperience: { metrics },
+    });
+  }
+
+  it('prefers CrUX field TTFB over the lab server-response-time', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({ labTtfb: 3, cruxTtfb: 540 })));
+    const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.ttfb).toBe(540);
+  });
+
+  it('falls back to lab server-response-time when CrUX field is absent', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({ labTtfb: 320 })));
+    const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.ttfb).toBe(320);
+  });
+
+  it('returns undefined when neither field nor lab TTFB is in the response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({})));
+    const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.ttfb).toBeUndefined();
   });
 });

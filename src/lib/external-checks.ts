@@ -350,7 +350,16 @@ async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<Pag
       fid: audits?.['max-potential-fid']?.numericValue,
       inp: cruxMetrics?.INTERACTION_TO_NEXT_PAINT_MS?.percentile,
       fidField: cruxMetrics?.FIRST_INPUT_DELAY_MS?.percentile,
-      ttfb: audits?.['server-response-time']?.numericValue,
+      // TTFB: prefer the CrUX field-data percentile (real-user p75 from
+       // Chrome traffic) when available — Lighthouse's lab-side
+       // 'server-response-time' is measured from a Google datacenter
+       // adjacent to the origin and routinely returns sub-10ms values
+       // that don't reflect end-user reality (Tobias flagged "TTFB 3ms"
+       // on deepcyte.bio's audit; verified against PSI v5 docs that the
+       // value really was what PSI returned, just from the wrong
+       // metric source). Field data is the canonical SEO TTFB.
+      ttfb: cruxMetrics?.EXPERIMENTAL_TIME_TO_FIRST_BYTE?.percentile
+        ?? audits?.['server-response-time']?.numericValue,
       fcp: audits?.['first-contentful-paint']?.numericValue,
       si: audits?.['speed-index']?.numericValue,
       tbt: audits?.['total-blocking-time']?.numericValue,

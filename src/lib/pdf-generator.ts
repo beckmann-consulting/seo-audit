@@ -4,7 +4,7 @@ import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
-import { rateMetric, formatComparator, type MetricKey } from './util/metric-thresholds';
+import { formatMetricRow, type MetricKey } from './util/metric-thresholds';
 import {
   classifyAIBotRow, classifyLlmsTxt,
   classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
@@ -193,6 +193,55 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // now flows through renderTechTable below, which renders a bordered
   // header+body table per section. drawCheckmark is still used for the
   // strengths bullets; sanitizeForPdf is shared with finding rendering.)
+
+  // ============================================================
+  //  Rich-text inline renderer for **bold** segments
+  // ============================================================
+  // Used on the cover page to render the executive-summary prose with
+  // the audited domain, the overall score, and the weakest-module
+  // names in bold. jsPDF has no native rich-text API; we tokenise the
+  // input on **...** markers and switch font weight per word, with
+  // greedy word-wrap.
+  //
+  // Returns the y cursor AFTER the last rendered line.
+  const renderRichText = (text: string, x: number, startY: number, maxWidth: number, fontSize = 9): number => {
+    const lineHeight = fontSize * 0.5;  // matches the existing summary spacing (4.5 for 9pt)
+    doc.setFontSize(fontSize);
+
+    // Tokenise into {word, bold, isSpace} units, preserving runs of
+    // whitespace so word-wrap can treat them as soft break points.
+    const tokens: { text: string; bold: boolean; isSpace: boolean }[] = [];
+    const segs = text.split(/(\*\*[^*]+\*\*)/g);
+    for (const seg of segs) {
+      if (!seg) continue;
+      const bold = seg.startsWith('**') && seg.endsWith('**');
+      const inner = bold ? seg.slice(2, -2) : seg;
+      for (const part of inner.split(/(\s+)/)) {
+        if (!part) continue;
+        tokens.push({ text: part, bold, isSpace: /^\s+$/.test(part) });
+      }
+    }
+
+    let cx = x;
+    let cy = startY;
+    for (const tok of tokens) {
+      doc.setFont(INTER_FONT_FAMILY, tok.bold ? 'bold' : 'normal');
+      const wWidth = doc.getTextWidth(tok.text);
+      if (!tok.isSpace && cx + wWidth > x + maxWidth && cx > x) {
+        cy += lineHeight;
+        cx = x;
+      }
+      // Drop leading whitespace at line starts so wrapping doesn't
+      // produce ragged left margins.
+      if (tok.isSpace && cx === x) continue;
+      doc.text(tok.text, cx, cy);
+      cx += wWidth;
+    }
+    // Reset to normal so subsequent doc.text() outside this helper
+    // doesn't accidentally inherit bold weight.
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
+    return cy + lineHeight;
+  };
 
   // ============================================================
   //  Tech-details table renderer (jspdf-autotable)
@@ -445,17 +494,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   );
 
   // Executive summary prose immediately after the score block — short
-  // 2-3 line synopsis (totalScore, crawled count, critical/important
-  // findings, headline recommendation pointer). Lives on the cover
-  // page so the reader gets the verbal context next to the visual.
+  // 3-4 line synopsis with all four severity counts, the two weakest
+  // modules, and the audited domain rendered in bold. renderRichText
+  // parses the **bold** markers from the prose; the same string is
+  // rendered in the HTML view via a parallel parser.
   y = authorY + 12;
   setText(COLOR_TEXT);
-  doc.setFont(INTER_FONT_FAMILY, 'normal');
-  doc.setFontSize(9);
   const summaryProse = sanitizeForPdf(isDE ? result.summary_de : result.summary_en);
-  const summaryProseLines = doc.splitTextToSize(summaryProse, CONTENT_W);
-  doc.text(summaryProseLines, CONTENT_LEFT, y);
-  y += summaryProseLines.length * 4.5 + 6;
+  y = renderRichText(summaryProse, CONTENT_LEFT, y, CONTENT_W, 9) + 2;
 
   // Module overview on the cover. The previous quick-stats row
   // (crawled / findings / critical / important) was redundant with the
@@ -802,28 +848,26 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       renderTechTable(t('DNS & E-Mail', 'DNS & Email'), dnsRows);
     }
 
-    // PageSpeed — comparator note in column 3, severity colors the value.
+    // PageSpeed — formatMetricRow picks one unit (ms vs seconds) per row
+    // for both the value and the threshold comparator, so a reader never
+    // sees "20.3s" next to "good: <2500ms" in the same line.
     if (result.pageSpeedData && !result.pageSpeedData.error) {
       const ps = result.pageSpeedData;
       const locale: 'de' | 'en' = isDE ? 'de' : 'en';
-      const psiSeverity = (rating: ReturnType<typeof rateMetric>): Severity =>
-        rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
       const psiRows: TechTableRow[] = [];
-      const pushPsi = (label: string, raw: number, key: MetricKey, display: string) => {
-        psiRows.push({
-          label,
-          value: display,
-          severity: psiSeverity(rateMetric(raw, key)),
-          note: formatComparator(key, locale),
-        });
+      const ratingToSeverity = (rating: 'good' | 'needs-improvement' | 'poor'): Severity =>
+        rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
+      const pushPsi = (label: string, raw: number, key: MetricKey) => {
+        const f = formatMetricRow(raw, key, locale);
+        psiRows.push({ label, value: f.display, severity: ratingToSeverity(f.rating), note: f.comparator });
       };
-      if (ps.performanceScore !== undefined) pushPsi('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`);
-      if (ps.seoScore !== undefined) pushPsi('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`);
-      if (ps.accessibilityScore !== undefined) pushPsi(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`);
-      if (ps.bestPracticesScore !== undefined) pushPsi(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score', `${ps.bestPracticesScore}/100`);
-      if (ps.lcp !== undefined) pushPsi('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`);
-      if (ps.cls !== undefined) pushPsi('CLS', ps.cls, 'cls', ps.cls.toFixed(3));
-      if (ps.inp !== undefined) pushPsi('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`);
+      if (ps.performanceScore !== undefined) pushPsi('Performance', ps.performanceScore, 'score');
+      if (ps.seoScore !== undefined) pushPsi('SEO', ps.seoScore, 'score');
+      if (ps.accessibilityScore !== undefined) pushPsi(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score');
+      if (ps.bestPracticesScore !== undefined) pushPsi(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score');
+      if (ps.lcp !== undefined) pushPsi('LCP', ps.lcp, 'lcp');
+      if (ps.cls !== undefined) pushPsi('CLS', ps.cls, 'cls');
+      if (ps.inp !== undefined) pushPsi('INP', ps.inp, 'inp');
       // FID: legacy metric INP replaced in March 2024. No web.dev
       // comparator any more; falls back to the historical 100ms cutoff.
       if (ps.fidField !== undefined) {
@@ -833,9 +877,9 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
           severity: ps.fidField < 100 ? 'good' : 'warn',
         });
       }
-      if (ps.fcp !== undefined) pushPsi('FCP', ps.fcp, 'fcp', `${Math.round(ps.fcp / 100) / 10}s`);
-      if (ps.ttfb !== undefined) pushPsi('TTFB', ps.ttfb, 'ttfb', `${Math.round(ps.ttfb)}ms`);
-      if (ps.tbt !== undefined) pushPsi('TBT', ps.tbt, 'tbt', `${Math.round(ps.tbt)}ms`);
+      if (ps.fcp !== undefined) pushPsi('FCP', ps.fcp, 'fcp');
+      if (ps.ttfb !== undefined) pushPsi('TTFB', ps.ttfb, 'ttfb');
+      if (ps.tbt !== undefined) pushPsi('TBT', ps.tbt, 'tbt');
       renderTechTable(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'), psiRows);
     }
 
@@ -876,7 +920,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
         },
         {
           label: 'Permissions-Policy',
-          value: sh.permissionsPolicy || t('fehlt', 'missing'),
+          value: sh.permissionsPolicy || t('nicht konfiguriert (optional)', 'not configured (optional)'),
           mono: !!sh.permissionsPolicy,
           severity: classifyPermissionsPolicy(sh),
         },
@@ -910,7 +954,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
         const valueText = b.status === 'allowed' ? t('erlaubt', 'allowed')
           : b.status === 'blocked' ? t('blockiert', 'blocked')
           : b.status === 'partial' ? t('teilweise', 'partial')
-          : t('nicht geregelt', 'unspecified');
+          : t('nicht geregelt (optional)', 'unspecified (optional)');
         aiRows.push({ label: `${b.bot} (${b.purpose})`, value: valueText, severity: classifyAIBotRow(b.status) });
       }
       renderTechTable(t('AI Crawler Readiness', 'AI Crawler Readiness'), aiRows);
@@ -1023,68 +1067,72 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   }
 
   // ============================================================
-  //  Page-by-page appendix
+  //  Page-by-page appendix — bordered tables for visual consistency
+  //  with the Tech Details section (same renderTechTable helper).
   // ============================================================
   if (result.pages.length > 1) {
     y += 4;
     h1(t('Seitenanalyse', 'Page Analysis'));
 
     result.pages.forEach((p, i) => {
-      checkPage(30);
-      setText(COLOR_TEXT);
-      doc.setFont(INTER_FONT_FAMILY, 'bold');
-      doc.setFontSize(8.5);
-      const urlLines = doc.splitTextToSize(`${i + 1}. ${p.url}`, CONTENT_W);
-      doc.text(urlLines, CONTENT_LEFT, y);
-      y += urlLines.length * 4.5;
-
-      const rows: [string, string][] = [
-        [t('Title', 'Title'), p.title ? `"${p.title}" (${p.titleLength} ${t('Zeichen', 'chars')})` : t('FEHLT', 'MISSING')],
-        [t('Meta Description', 'Meta Description'), p.metaDescription ? `${p.metaDescriptionLength} ${t('Zeichen', 'chars')}` : t('FEHLT', 'MISSING')],
-        ['H1', p.h1s.length > 0 ? `"${p.h1s[0].substring(0, 60)}"${p.h1s.length > 1 ? ` (+${p.h1s.length - 1})` : ''}` : t('FEHLT', 'MISSING')],
-        [t('Schema', 'Schema'), p.schemaTypes.length > 0 ? p.schemaTypes.join(', ') : t('keines', 'none')],
-        [t('Wörter', 'Words'), String(p.wordCount)],
-        [t('Bilder ohne Alt', 'Images missing alt'), `${p.imagesMissingAlt}/${p.totalImages}`],
-        [t('Klicktiefe', 'Click depth'), String(p.depth)],
+      const pageRows: TechTableRow[] = [
+        {
+          label: t('Title', 'Title'),
+          value: p.title ? `"${p.title}" (${p.titleLength} ${t('Zeichen', 'chars')})` : t('FEHLT', 'MISSING'),
+          severity: p.title ? 'neutral' : 'bad',
+        },
+        {
+          label: t('Meta Description', 'Meta Description'),
+          value: p.metaDescription ? `${p.metaDescriptionLength} ${t('Zeichen', 'chars')}` : t('FEHLT', 'MISSING'),
+          severity: p.metaDescription ? 'neutral' : 'bad',
+        },
+        {
+          label: 'H1',
+          value: p.h1s.length > 0
+            ? `"${p.h1s[0].substring(0, 60)}"${p.h1s.length > 1 ? ` (+${p.h1s.length - 1})` : ''}`
+            : t('FEHLT', 'MISSING'),
+          severity: p.h1s.length > 0 ? 'neutral' : 'bad',
+        },
+        { label: t('Schema', 'Schema'), value: p.schemaTypes.length > 0 ? p.schemaTypes.join(', ') : t('keines', 'none') },
+        { label: t('Wörter', 'Words'), value: String(p.wordCount) },
+        { label: t('Bilder ohne Alt', 'Images missing alt'), value: `${p.imagesMissingAlt}/${p.totalImages}`,
+          severity: p.imagesMissingAlt === 0 ? 'good' : p.imagesMissingAlt < p.totalImages ? 'warn' : 'bad' },
+        { label: t('Klicktiefe', 'Click depth'), value: String(p.depth) },
       ];
 
       if (p.inlinkCount !== undefined) {
-        rows.push([t('Interne Inlinks', 'Internal inlinks'), String(p.inlinkCount)]);
+        pageRows.push({ label: t('Interne Inlinks', 'Internal inlinks'), value: String(p.inlinkCount) });
       }
-      if (p.hasNoindex) rows.push([t('Robots', 'Robots'), 'noindex']);
+      if (p.hasNoindex) pageRows.push({ label: t('Robots', 'Robots'), value: 'noindex', severity: 'warn' });
       if (p.redirectChain && p.redirectChain.length > 0) {
         const chainStr = p.redirectChain.concat(p.finalUrl).join(' -> ');
-        rows.push([t('Redirect-Kette', 'Redirect chain'), chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr]);
+        pageRows.push({
+          label: t('Redirect-Kette', 'Redirect chain'),
+          value: chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr,
+          mono: true,
+        });
       }
       if (p.genericAnchors && p.genericAnchors.length > 0) {
-        rows.push([
-          t('Generische Anker', 'Generic anchors'),
-          `${p.genericAnchors.length} (${p.genericAnchors.slice(0, 2).map(a => `"${a.text}"`).join(', ')}${p.genericAnchors.length > 2 ? '...' : ''})`,
-        ]);
+        pageRows.push({
+          label: t('Generische Anker', 'Generic anchors'),
+          value: `${p.genericAnchors.length} (${p.genericAnchors.slice(0, 2).map(a => `"${a.text}"`).join(', ')}${p.genericAnchors.length > 2 ? '...' : ''})`,
+        });
       }
       if (p.hreflangs && p.hreflangs.length > 0) {
-        rows.push(['Hreflang', p.hreflangs.map(h => h.hreflang).join(', ')]);
+        pageRows.push({ label: 'Hreflang', value: p.hreflangs.map(h => h.hreflang).join(', ') });
       }
       if (p.likelyClientRendered) {
-        rows.push([t('JS-Rendering', 'JS rendering'), p.clientRenderSignal || t('clientseitig gerendert', 'client-side rendered')]);
+        pageRows.push({
+          label: t('JS-Rendering', 'JS rendering'),
+          value: p.clientRenderSignal || t('clientseitig gerendert', 'client-side rendered'),
+          severity: 'warn',
+        });
       }
 
-      rows.forEach(([label, value]) => {
-        checkPage(5);
-        setText(COLOR_SUBTEXT);
-        doc.setFont(INTER_FONT_FAMILY, 'normal');
-        doc.setFontSize(8);
-        doc.text(label + ':', CONTENT_LEFT + 2, y);
-        setText(COLOR_TEXT);
-        const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 45);
-        doc.text(valueLines, CONTENT_LEFT + 40, y);
-        y += valueLines.length * 4 + 0.8;
-      });
-      y += 2;
-      setDraw(COLOR_BORDER);
-      doc.setLineWidth(0.2);
-      doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
-      y += 4;
+      // The URL goes into the table header row so each page's table is
+      // self-labelled. Long URLs wrap inside the header cell — same
+      // as a long Tech Details title would.
+      renderTechTable(`${i + 1}. ${p.url}`, pageRows);
     });
   }
 

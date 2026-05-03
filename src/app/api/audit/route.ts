@@ -393,13 +393,46 @@ async function runAudit(
   }
 
   // ---- Summary ----
+  // Lighthouse-aligned score buckets (≥90 good, 50-89 needs improvement,
+  // <50 poor) — same thresholds as METRIC_THRESHOLDS.score so the
+  // headline label and the per-metric ratings stay coherent.
   const criticalCount = allFindings.filter(f => f.priority === 'critical').length;
   const importantCount = allFindings.filter(f => f.priority === 'important').length;
-  const scoreLabel_de = totalScore >= 75 ? 'gut' : totalScore >= 50 ? 'verbesserungswürdig' : 'kritisch';
-  const scoreLabel_en = totalScore >= 75 ? 'good' : totalScore >= 50 ? 'needs improvement' : 'critical';
+  const recommendedCount = allFindings.filter(f => f.priority === 'recommended').length;
+  const optionalCount = allFindings.filter(f => f.priority === 'optional').length;
+  const scoreLabel_de = totalScore >= 90 ? 'gut' : totalScore >= 50 ? 'verbesserungswürdig' : 'schlecht';
+  const scoreLabel_en = totalScore >= 90 ? 'good' : totalScore >= 50 ? 'needs improvement' : 'poor';
 
-  const summary_de = `${domain} erreicht einen Gesamt-SEO-Score von ${totalScore}/100 (${scoreLabel_de}). Es wurden ${crawlStats.crawledPages} Seiten gecrawlt und ${allFindings.length} Findings identifiziert — davon ${criticalCount} kritische und ${importantCount} wichtige. ${criticalCount > 0 ? 'Die kritischen Punkte sollten sofort behoben werden.' : 'Die wichtigsten Verbesserungspotenziale liegen in den unten aufgeführten Empfehlungen.'}`;
-  const summary_en = `${domain} achieves an overall SEO score of ${totalScore}/100 (${scoreLabel_en}). ${crawlStats.crawledPages} pages were crawled and ${allFindings.length} findings were identified — ${criticalCount} critical and ${importantCount} important. ${criticalCount > 0 ? 'The critical issues should be addressed immediately.' : 'The main improvement potential lies in the recommendations listed below.'}`;
+  // Two weakest modules — lowest score wins, tie-broken by finding count
+  // (more findings → higher leverage opportunity). Restricted to scores
+  // < 90 so a uniformly excellent audit doesn't produce a misleading
+  // "biggest leverage" sentence.
+  const weakestModules = [...moduleScores]
+    .filter(m => m.score < 90)
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      const af = allFindings.filter(f => f.module === a.module).length;
+      const bf = allFindings.filter(f => f.module === b.module).length;
+      return bf - af;
+    })
+    .slice(0, 2);
+
+  const leverageDe = weakestModules.length === 0
+    ? 'Alle Module liegen über 90 Punkten — die folgenden Empfehlungen sind primär feinjustierungen.'
+    : weakestModules.length === 1
+      ? `Der größte Hebel liegt in **${weakestModules[0].label_de}**, dem Modul mit dem niedrigsten Score.`
+      : `Die größten Hebel liegen in **${weakestModules[0].label_de}** und **${weakestModules[1].label_de}**, wo die niedrigsten Modul-Scores festgestellt wurden.`;
+  const leverageEn = weakestModules.length === 0
+    ? 'All modules are above 90 — the recommendations that follow are primarily fine-tuning.'
+    : weakestModules.length === 1
+      ? `The greatest leverage lies in **${weakestModules[0].label_en}**, the module with the lowest score.`
+      : `The greatest leverage lies in **${weakestModules[0].label_en}** and **${weakestModules[1].label_en}**, where the lowest module scores were measured.`;
+
+  // Bold tokens are wrapped in **...** — both PDF and HTML render
+  // these inline. See pdf-generator.renderRichText / AuditApp summary
+  // panel for parsers.
+  const summary_de = `**${domain}** erreicht einen Gesamtscore von **${totalScore}/100** (${scoreLabel_de}). Bei ${crawlStats.crawledPages} gecrawlten Seiten wurden ${allFindings.length} Verbesserungsmöglichkeiten identifiziert: ${criticalCount} kritisch, ${importantCount} wichtig, ${recommendedCount} empfohlen und ${optionalCount} optional. ${leverageDe} Die priorisierten Empfehlungen folgen auf den nächsten Seiten.`;
+  const summary_en = `**${domain}** achieves an overall score of **${totalScore}/100** (${scoreLabel_en}). Across ${crawlStats.crawledPages} crawled pages, ${allFindings.length} improvement opportunities were identified: ${criticalCount} critical, ${importantCount} important, ${recommendedCount} recommended, and ${optionalCount} optional. ${leverageEn} The prioritized recommendations follow on the next pages.`;
 
   const auditResult: AuditResult = {
     // sanitizeConfigForClient strips basicAuth and masks googleApiKey
