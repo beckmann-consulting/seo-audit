@@ -1,6 +1,8 @@
 'use client';
 
+import type { jsPDF } from 'jspdf';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
+import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
 
 // ============================================================
 //  Brand palette
@@ -13,6 +15,50 @@ const COLOR_CRITICAL: [number, number, number] = [211, 47, 47];
 const COLOR_IMPORTANT: [number, number, number] = [245, 158, 11];
 const COLOR_OPTIONAL: [number, number, number] = [136, 136, 136]; // mid-grey — readable but not dominant
 const COLOR_GOOD: [number, number, number] = [74, 155, 142]; // #4A9B8E — softer teal-green
+
+// ============================================================
+//  Glyph holes in the embedded font
+// ============================================================
+// Inter latin+ext covers everything we put into finding text EXCEPT a
+// handful of symbol codepoints (Dingbats, Arrows, Geometric Shapes).
+// The two we actually emit are:
+//   ✓ U+2713 / ✗ U+2717  — only in pdf-generator's hard-coded TechRow
+//                          values; rendered via vector primitives below.
+//   → U+2192             — appears in some finding texts (gsc, bing,
+//                          tech, seo). Substituted to ASCII at PDF
+//                          render time so the HTML view keeps the
+//                          typographic arrow.
+function sanitizeForPdf(text: string): string {
+  return text.replace(/→/g, '->');
+}
+
+// Vector check / cross — anchored on the text baseline at (x, y), scaled
+// to roughly match the surrounding 8pt body text. Drawing the symbol as
+// strokes (not text) sidesteps both the WinAnsi-encoding bug in jsPDF's
+// built-in fonts AND the absence of these codepoints in Inter.
+function drawCheckmark(
+  doc: jsPDF, x: number, y: number, size: number, color: [number, number, number]
+): void {
+  doc.setDrawColor(color[0], color[1], color[2]);
+  doc.setLineWidth(size * 0.18);
+  doc.setLineCap('round');
+  doc.setLineJoin('round');
+  doc.line(x,                y - size * 0.30, x + size * 0.40, y);
+  doc.line(x + size * 0.40,  y,               x + size,         y - size * 0.95);
+  doc.setLineCap('butt');
+  doc.setLineJoin('miter');
+}
+
+function drawCrossmark(
+  doc: jsPDF, x: number, y: number, size: number, color: [number, number, number]
+): void {
+  doc.setDrawColor(color[0], color[1], color[2]);
+  doc.setLineWidth(size * 0.18);
+  doc.setLineCap('round');
+  doc.line(x,         y - size, x + size, y);
+  doc.line(x,         y,        x + size, y - size);
+  doc.setLineCap('butt');
+}
 
 // Recommended and optional share the same grey — muted, clearly secondary
 const PRIORITY_COLORS: Record<string, [number, number, number]> = {
@@ -64,6 +110,11 @@ async function loadLogoDataUrl(): Promise<string | undefined> {
 export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditDiff | null): Promise<void> {
   const { default: JsPDF } = await import('jspdf');
   const doc = new JsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+  // Embed Inter (Regular + Bold) as a real TTF font so jsPDF treats text
+  // as UTF-8. The default Helvetica is WinAnsi-only and silently drops
+  // or mojibakes anything outside CP1252 (em-dashes, smart quotes, ✓/✗,
+  // umlauts, …). registerInterFont also sets it as the default.
+  registerInterFont(doc);
 
   const isDE = lang === 'de';
   const t = (de: string, en: string) => isDE ? de : en;
@@ -80,7 +131,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // ============================================================
   const addPageHeader = () => {
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(9);
     doc.text(t('SEO Audit Report', 'SEO Audit Report'), CONTENT_LEFT, 8);
   };
@@ -100,7 +151,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   const h1 = (text: string) => {
     checkPage(12);
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(13);
     doc.text(text, CONTENT_LEFT, y + 5);
     y += 10;
@@ -111,23 +162,34 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     checkPage(9);
     y += 2;
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(11);
     doc.text(text, CONTENT_LEFT, y + 3);
     y += 7;
   };
 
-  // Tech row: grey label + value, red when ok === false
+  // Tech row: grey label + value, red when ok === false. The bare strings
+  // '✓' and '✗' are special-cased and drawn as vector primitives — Inter
+  // does not include the Dingbats block, and using a built-in font for
+  // these glyphs would re-trigger the WinAnsi encoding bug.
   const techRow = (label: string, value: string, ok: boolean = true) => {
     checkPage(5);
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(8);
     doc.text(label, CONTENT_LEFT + 2, y);
-    setText(ok ? COLOR_TEXT : COLOR_CRITICAL);
-    const valueLines = doc.splitTextToSize(value, CONTENT_W - 65);
-    doc.text(valueLines, CONTENT_LEFT + 60, y);
-    y += valueLines.length * 4 + 0.8;
+    if (value === '✓') {
+      drawCheckmark(doc, CONTENT_LEFT + 60, y, 2.6, COLOR_GOOD);
+      y += 5;
+    } else if (value === '✗') {
+      drawCrossmark(doc, CONTENT_LEFT + 60, y, 2.4, COLOR_CRITICAL);
+      y += 5;
+    } else {
+      setText(ok ? COLOR_TEXT : COLOR_CRITICAL);
+      const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 65);
+      doc.text(valueLines, CONTENT_LEFT + 60, y);
+      y += valueLines.length * 4 + 0.8;
+    }
   };
 
   // ============================================================
@@ -144,13 +206,13 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
 
   // Title in brand orange — shifted down so it never overlaps the logo
   setText(BRAND_ORANGE);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(INTER_FONT_FAMILY, 'bold');
   doc.setFontSize(28);
   doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 62, { align: 'center' });
 
   // URL in primary text colour
   setText(COLOR_TEXT);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(14);
   doc.text(result.domain, W / 2, 80, { align: 'center' });
 
@@ -166,7 +228,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   const mainScoreCol = scoreColorRgb(result.totalScore);
 
   setText(mainScoreCol);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(INTER_FONT_FAMILY, 'bold');
   doc.setFontSize(48);
   const scoreStr = String(result.totalScore);
   const scoreTextWidth = doc.getTextWidth(scoreStr);
@@ -174,7 +236,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   doc.text(scoreStr, scoreStartX, scoreY);
 
   setText(COLOR_SUBTEXT);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(20);
   doc.text('/100', scoreStartX + scoreTextWidth + 2, scoreY);
 
@@ -190,7 +252,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // Author — pushed down to share the newly freed space evenly with the
   // quick stats (the severity legend that used to live here is gone)
   setText(COLOR_SUBTEXT);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(10);
   const authorY = barY + 28;
   doc.text(
@@ -214,11 +276,11 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   quickStats.forEach((s, i) => {
     const cx = qsStartX + i * qsSpacing;
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(14);
     doc.text(s.value, cx, qsY, { align: 'center' });
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(8);
     doc.text(s.label, cx, qsY + 5, { align: 'center' });
   });
@@ -237,7 +299,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     h1(t('Executive Summary', 'Executive Summary'));
 
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(10);
     const subline = t(
       'Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung',
@@ -254,8 +316,8 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     };
 
     result.topFindings.forEach((f, idx) => {
-      const title = isDE ? f.title_de : f.title_en;
-      const rec = isDE ? f.recommendation_de : f.recommendation_en;
+      const title = sanitizeForPdf(isDE ? f.title_de : f.title_en);
+      const rec = sanitizeForPdf(isDE ? f.recommendation_de : f.recommendation_en);
       const gain = f.priority === 'critical' ? 25 : f.priority === 'important' ? 12 : f.priority === 'recommended' ? 5 : 2;
       const pLabel = priorityLabelEs[f.priority][lang];
       const gainLabel = `+${gain} ${t('Pkt.', 'pts')}`;
@@ -273,34 +335,34 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
 
       // Orange index number
       setText(BRAND_ORANGE);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(13);
       doc.text(`${idx + 1}.`, CONTENT_LEFT, entryTop + 4);
 
       // Title in bold black
       setText(COLOR_TEXT);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(9);
       doc.text(titleLines, CONTENT_LEFT + 8, entryTop + 4);
       let cursor = entryTop + 4 + titleLines.length * 4.8;
 
       // Module + severity subline in subtext grey
       setText(COLOR_SUBTEXT);
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(INTER_FONT_FAMILY, 'normal');
       doc.setFontSize(8);
       doc.text(`${f.module.toUpperCase()} · ${pLabel}`, CONTENT_LEFT + 8, cursor);
       cursor += 4;
 
       // Recommendation (full length, wrapped)
       setText(COLOR_TEXT);
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(INTER_FONT_FAMILY, 'normal');
       doc.setFontSize(8.5);
       doc.text(recLines, CONTENT_LEFT + 8, cursor);
       cursor += recLines.length * 4;
 
       // Score gain badge right-aligned on the entry's title row
       setText(COLOR_GOOD);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(10);
       doc.text(gainLabel, CONTENT_RIGHT, entryTop + 4, { align: 'right' });
 
@@ -336,10 +398,10 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     })();
 
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(10);
     doc.text(
-      t(`${diff.domain} — ${previousLabel} → heute`, `${diff.domain} — ${previousLabel} → today`),
+      t(`${diff.domain} — ${previousLabel} -> heute`, `${diff.domain} — ${previousLabel} -> today`),
       CONTENT_LEFT, y
     );
     y += 10;
@@ -348,13 +410,13 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     const deltaCol = diff.scoreDelta > 0 ? COLOR_GOOD : diff.scoreDelta < 0 ? COLOR_CRITICAL : COLOR_SUBTEXT;
     const deltaSign = diff.scoreDelta > 0 ? '+' : '';
     setText(deltaCol);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(24);
     doc.text(`${deltaSign}${diff.scoreDelta} ${t('Punkte', 'points')}`, CONTENT_LEFT, y);
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(11);
-    doc.text(`(${diff.previousAudit.totalScore} → ${diff.currentAudit.totalScore})`, CONTENT_LEFT + 60, y);
+    doc.text(`(${diff.previousAudit.totalScore} -> ${diff.currentAudit.totalScore})`, CONTENT_LEFT + 60, y);
     y += 12;
 
     const priorityLabelDiff: Record<string, { de: string; en: string }> = {
@@ -365,17 +427,17 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     };
 
     const renderDiffFinding = (f: Finding, accent: [number, number, number]) => {
-      const title = isDE ? f.title_de : f.title_en;
+      const title = sanitizeForPdf(isDE ? f.title_de : f.title_en);
       const label = priorityLabelDiff[f.priority][lang];
       const lines = doc.splitTextToSize(title, CONTENT_W - 40);
       const needed = lines.length * 4 + 2;
       checkPage(needed);
       setText(accent);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(7.5);
       doc.text(`${label.toUpperCase()}`, CONTENT_LEFT, y);
       setText(COLOR_SUBTEXT);
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(INTER_FONT_FAMILY, 'normal');
       doc.text(f.module.toUpperCase(), CONTENT_LEFT + 22, y);
       setText(COLOR_TEXT);
       doc.setFontSize(8.5);
@@ -386,7 +448,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     if (diff.resolved.length > 0) {
       checkPage(10);
       setText(COLOR_GOOD);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(11);
       doc.text(t(`Behoben (${diff.resolved.length})`, `Resolved (${diff.resolved.length})`), CONTENT_LEFT, y);
       y += 6;
@@ -397,7 +459,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     if (diff.new.length > 0) {
       checkPage(10);
       setText(COLOR_CRITICAL);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(11);
       doc.text(t(`Neu (${diff.new.length})`, `New (${diff.new.length})`), CONTENT_LEFT, y);
       y += 6;
@@ -408,14 +470,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     if (diff.moduleDeltas.length > 0) {
       checkPage(20);
       setText(COLOR_TEXT);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(11);
       doc.text(t('Modul-Scores', 'Module Scores'), CONTENT_LEFT, y);
       y += 6;
 
       // Table header
       setText(COLOR_SUBTEXT);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(8);
       doc.text(t('Modul', 'Module'), CONTENT_LEFT + 2, y);
       doc.text(t('Vorher', 'Before'), CONTENT_LEFT + 70, y, { align: 'right' });
@@ -434,13 +496,13 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
         const dColor = md.delta > 0 ? COLOR_GOOD : md.delta < 0 ? COLOR_CRITICAL : COLOR_SUBTEXT;
         const dSign = md.delta > 0 ? '+' : '';
         setText(COLOR_TEXT);
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(INTER_FONT_FAMILY, 'normal');
         doc.setFontSize(8.5);
         doc.text(md.module.toUpperCase(), CONTENT_LEFT + 2, y);
         doc.text(String(prev), CONTENT_LEFT + 70, y, { align: 'right' });
         doc.text(String(curr), CONTENT_LEFT + 105, y, { align: 'right' });
         setText(dColor);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(INTER_FONT_FAMILY, 'bold');
         doc.text(`${dSign}${md.delta}`, CONTENT_LEFT + 135, y, { align: 'right' });
         y += 5;
         setDraw(COLOR_BORDER);
@@ -519,13 +581,13 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
 
     // Score number centred inside the ring
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(10);
     doc.text(String(ms.score), cx, cy + 1.5, { align: 'center' });
 
     // Module label below the circle
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(7);
     doc.text(
       isDE ? ms.label_de : ms.label_en,
@@ -542,9 +604,9 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // ============================================================
   h1(t('Zusammenfassung', 'Executive Summary'));
   setText(COLOR_TEXT);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(9);
-  const summary = isDE ? result.summary_de : result.summary_en;
+  const summary = sanitizeForPdf(isDE ? result.summary_de : result.summary_en);
   const summaryLines = doc.splitTextToSize(summary, CONTENT_W);
   checkPage(summaryLines.length * 4.5 + 6);
   doc.text(summaryLines, CONTENT_LEFT, y);
@@ -567,9 +629,9 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   };
 
   const renderFinding = (f: Finding) => {
-    const title = isDE ? f.title_de : f.title_en;
-    const desc = isDE ? f.description_de : f.description_en;
-    const rec = isDE ? f.recommendation_de : f.recommendation_en;
+    const title = sanitizeForPdf(isDE ? f.title_de : f.title_en);
+    const desc = sanitizeForPdf(isDE ? f.description_de : f.description_en);
+    const rec = sanitizeForPdf(isDE ? f.recommendation_de : f.recommendation_en);
     const col = PRIORITY_COLORS[f.priority];
     const label = priorityLabels[f.priority][lang];
 
@@ -597,31 +659,31 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     // Severity label — text-only in the severity colour, no dot
     const labelY = cardTop + pad + 2;
     setText(col);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(7.5);
     doc.text(`${label.toUpperCase()} · ${f.module.toUpperCase()}`, cardInnerLeft, labelY);
     let cursor = cardTop + pad + 6.5;
 
     // Title
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(9);
     doc.text(titleLines, cardInnerLeft, cursor);
     cursor += titleLines.length * 4.5 + 0.5;
 
     // Description (subtext, max 2 lines)
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(8);
     doc.text(descLines, cardInnerLeft, cursor + 1);
     cursor += descLines.length * 4 + 4.5;
 
     // Todo line — bold "Todo:" label then recommendation with indent
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(INTER_FONT_FAMILY, 'bold');
     doc.setFontSize(8);
     doc.text(t('Todo:', 'Todo:'), cardInnerLeft, cursor);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.text(recLines, cardInnerLeft + 12, cursor);
     cursor += Math.max(4, recLines.length * 4);
 
@@ -646,14 +708,11 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   const strengths = isDE ? result.strengths_de : result.strengths_en;
   for (const s of strengths) {
     checkPage(7);
-    setText(COLOR_GOOD);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('✓', CONTENT_LEFT, y);
+    drawCheckmark(doc, CONTENT_LEFT, y, 3.4, COLOR_GOOD);
     setText(COLOR_TEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(9);
-    const lines = doc.splitTextToSize(s, CONTENT_W - 8);
+    const lines = doc.splitTextToSize(sanitizeForPdf(s), CONTENT_W - 8);
     doc.text(lines, CONTENT_LEFT + 6, y);
     y += lines.length * 4.5 + 1.5;
   }
@@ -796,7 +855,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       techRow(t('Mit Redirect gecrawlt', 'Crawled via redirect'), String(redirected.length), redirected.length === 0);
       techRow(t('Ketten (>1 Hop)', 'Chains (>1 hop)'), String(chainPages.length), chainPages.length === 0);
       techRow(t('Schleifen', 'Loops'), String(loopPages.length), loopPages.length === 0);
-      techRow('HTTPS → HTTP', String(downgradePages.length), downgradePages.length === 0);
+      techRow('HTTPS -> HTTP', String(downgradePages.length), downgradePages.length === 0);
     }
 
     // Link Quality
@@ -842,7 +901,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     result.pages.forEach((p, i) => {
       checkPage(30);
       setText(COLOR_TEXT);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(8.5);
       const urlLines = doc.splitTextToSize(`${i + 1}. ${p.url}`, CONTENT_W);
       doc.text(urlLines, CONTENT_LEFT, y);
@@ -863,7 +922,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       }
       if (p.hasNoindex) rows.push([t('Robots', 'Robots'), 'noindex']);
       if (p.redirectChain && p.redirectChain.length > 0) {
-        const chainStr = p.redirectChain.concat(p.finalUrl).join(' → ');
+        const chainStr = p.redirectChain.concat(p.finalUrl).join(' -> ');
         rows.push([t('Redirect-Kette', 'Redirect chain'), chainStr.length > 120 ? chainStr.slice(0, 120) + '…' : chainStr]);
       }
       if (p.genericAnchors && p.genericAnchors.length > 0) {
@@ -882,11 +941,11 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       rows.forEach(([label, value]) => {
         checkPage(5);
         setText(COLOR_SUBTEXT);
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(INTER_FONT_FAMILY, 'normal');
         doc.setFontSize(8);
         doc.text(label + ':', CONTENT_LEFT + 2, y);
         setText(COLOR_TEXT);
-        const valueLines = doc.splitTextToSize(value, CONTENT_W - 45);
+        const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 45);
         doc.text(valueLines, CONTENT_LEFT + 40, y);
         y += valueLines.length * 4 + 0.8;
       });
@@ -914,7 +973,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     for (const shot of result.screenshots) {
       checkPage(ROW_HEIGHT + 5);
       setText(COLOR_TEXT);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(INTER_FONT_FAMILY, 'bold');
       doc.setFontSize(10);
       const urlLines = doc.splitTextToSize(shot.url, CONTENT_W);
       doc.text(urlLines.slice(0, 1), CONTENT_LEFT, y + 4);
@@ -928,7 +987,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
             'PNG', CONTENT_LEFT, imgY, MOBILE_W, MOBILE_H,
           );
           setText(COLOR_SUBTEXT);
-          doc.setFont('helvetica', 'normal');
+          doc.setFont(INTER_FONT_FAMILY, 'normal');
           doc.setFontSize(8);
           doc.text(t('Mobile · 375×667', 'Mobile · 375×667'), CONTENT_LEFT, imgY + MOBILE_H + 4);
         } catch { /* malformed PNG — skip silently */ }
@@ -941,7 +1000,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
             'PNG', dx, imgY, DESKTOP_W, DESKTOP_H,
           );
           setText(COLOR_SUBTEXT);
-          doc.setFont('helvetica', 'normal');
+          doc.setFont(INTER_FONT_FAMILY, 'normal');
           doc.setFontSize(8);
           doc.text(t('Desktop · 1920×1080', 'Desktop · 1920×1080'), dx, imgY + DESKTOP_H + 4);
         } catch { /* malformed PNG — skip silently */ }
@@ -961,7 +1020,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     doc.setLineWidth(0.35);
     doc.line(CONTENT_LEFT, H - FOOTER_H, CONTENT_RIGHT, H - FOOTER_H);
     setText(COLOR_SUBTEXT);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(INTER_FONT_FAMILY, 'normal');
     doc.setFontSize(8);
     doc.text(
       `beckmanndigital.com · TW Beckmann Consultancy Services Ltd. · ${dateStr} · ${t('Seite', 'Page')} ${i}/${totalPages}`,
