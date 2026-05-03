@@ -12,8 +12,16 @@ import { BingRowsTable } from './BingRowsTable';
 import { getVisibleBingWarnings } from './bing-warnings';
 import { checkPatterns, type PatternError } from './audit-form-validation';
 import { rateMetric, formatComparator, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
+import {
+  classifyAIBotRow, classifyLlmsTxt,
+  classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
+  classifyCsp, classifyReferrerPolicy, classifyPermissionsPolicy, classifyMixedContent,
+  classifyRedirected, classifyChains, classifyLoops, classifyDowngrades,
+  moduleGridLayout,
+} from '@/lib/util/severity-classifier';
+import { findingImpactScore } from '@/lib/findings/utils';
 
-// Map a 3-bucket PSI rating onto our existing 4-bucket TechSeverity.
+// Map a 3-bucket PSI rating onto the canonical TechSeverity vocabulary.
 // good → good, needs-improvement → warn, poor → bad. Centralised so
 // callers don't repeat the ternary.
 function severityFor(rating: MetricRating): 'good' | 'warn' | 'bad' {
@@ -468,9 +476,15 @@ export default function AuditApp() {
     setTimeout(() => setCopied(false), 2500);
   }
 
+  // Two-key sort: priority bucket primary (critical → optional), then
+  // findingImpactScore descending within each bucket so the most
+  // impactful items in a bucket surface first. Mirrored in
+  // pdf-generator.ts — keep them in sync.
   const sortedFindings = result ? [...result.findings].sort((a, b) => {
     const o = { critical: 0, important: 1, recommended: 2, optional: 3 };
-    return o[a.priority] - o[b.priority];
+    const pdiff = o[a.priority] - o[b.priority];
+    if (pdiff !== 0) return pdiff;
+    return findingImpactScore(b) - findingImpactScore(a);
   }) : [];
 
   return (
@@ -855,47 +869,10 @@ export default function AuditApp() {
       {/* Results */}
       {result && (
         <>
-          {/* Top 5 Fixes — highest-impact actions, rendered above everything else */}
-          {result.topFindings && result.topFindings.length > 0 && (
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', marginBottom: '1.5rem' }}>
-              <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>
-                {t('Top 5 Fixes — Größter Impact auf deinen Score', 'Top 5 Fixes — Highest Impact on Your Score')}
-              </h2>
-              <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--text-muted)' }}>
-                {t('Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung', 'The 5 most impactful actions for immediate score improvement')}
-              </p>
-              {result.topFindings.map((f, idx) => {
-                const rec = isDE ? f.recommendation_de : f.recommendation_en;
-                const recTrim = rec.length > 100 ? rec.slice(0, 100) + '…' : rec;
-                return (
-                  <div key={f.id} style={{
-                    padding: idx === 0 ? '0 0 12px' : '12px 0',
-                    borderTop: idx === 0 ? 'none' : '1px solid var(--border-soft)',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-                        background: PRIORITY_BG[f.priority], color: PRIORITY_COLORS[f.priority],
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {isDE
-                          ? { critical: 'Kritisch', important: 'Wichtig', recommended: 'Empfohlen', optional: 'Optional' }[f.priority]
-                          : { critical: 'Critical', important: 'Important', recommended: 'Recommended', optional: 'Optional' }[f.priority]
-                        }
-                      </span>
-                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-                        {isDE ? f.title_de : f.title_en}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>
-                      <span style={{ textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>{f.module}</span>
-                      <span> · {recTrim}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {/* Top-5 Fixes panel removed — sortedFindings list below already
+              presents the same items in priority + impact order. The Pro
+              UI doesn't need the duplicate compact panel; result.topFindings
+              is still populated by the audit route for the public widget. */}
 
           {/* Score overview */}
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, marginBottom: '1.5rem' }}>
@@ -908,15 +885,42 @@ export default function AuditApp() {
               <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>/100</div>
             </div>
 
-            {/* Module scores */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8 }}>
-              {result.moduleScores.map(ms => (
-                <div key={ms.module} style={{ background: scoreBg(ms.score), borderRadius: 8, padding: '10px 8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: scoreColor(ms.score) }}>{ms.score}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{isDE ? ms.label_de : ms.label_en}</div>
+            {/* Module scores — adaptive grid via moduleGridLayout, so
+                7 modules render 4+3 with the bottom row centered, etc.
+                Mirrors the PDF cover-page layout. */}
+            {(() => {
+              const layout = moduleGridLayout(result.moduleScores.length);
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {layout.rows.map((row, rowIdx) => {
+                    const isShortAndCentered = layout.centerLast && rowIdx === layout.rows.length - 1;
+                    return (
+                      <div
+                        key={rowIdx}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: `repeat(${row.length}, minmax(80px, 1fr))`,
+                          gap: 8,
+                          justifyContent: isShortAndCentered ? 'center' : 'stretch',
+                          width: isShortAndCentered ? `${(row.length / Math.max(...layout.rows.map(r => r.length))) * 100}%` : '100%',
+                          marginInline: isShortAndCentered ? 'auto' : undefined,
+                        }}
+                      >
+                        {row.map(idx => {
+                          const ms = result.moduleScores[idx];
+                          return (
+                            <div key={ms.module} style={{ background: scoreBg(ms.score), borderRadius: 8, padding: '10px 8px', textAlign: 'center' }}>
+                              <div style={{ fontSize: 20, fontWeight: 700, color: scoreColor(ms.score) }}>{ms.score}</div>
+                              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{isDE ? ms.label_de : ms.label_en}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
           </div>
 
           {/* Diff trigger row */}
@@ -1296,51 +1300,84 @@ export default function AuditApp() {
                 );
               })()}
 
-              {/* AI Crawler Readiness */}
+              {/* AI Crawler Readiness — severity via classifier:
+                  unspecified is neutral (default for ~99% of sites),
+                  llms.txt missing is info-blue (emerging standard). */}
               {result.aiReadiness && !result.aiReadiness.error && (
                 <div style={techCardStyle}>
                   <h3 style={techCardTitle}>{t('AI-Crawler-Readiness', 'AI Crawler Readiness')}</h3>
-                  <TechRow label="llms.txt" value={result.aiReadiness.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} severity={result.aiReadiness.hasLlmsTxt ? 'good' : 'warn'} />
-                  <TechRow label="llms-full.txt" value={result.aiReadiness.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing')} severity={result.aiReadiness.hasLlmsFullTxt ? 'good' : 'warn'} />
-                  {result.aiReadiness.bots.map(b => {
-                    // Severity rules:
-                    //   allowed                       → good
-                    //   training-bot blocked          → good (intentional opt-out)
-                    //   indexing/general-bot blocked  → warn (probably unintended)
-                    //   partial                       → warn
-                    //   unspecified                   → neutral (allowed by default, no rule = no opinion)
-                    const sev: TechSeverity =
-                      b.status === 'allowed' ? 'good'
-                      : b.status === 'blocked' ? (b.purpose === 'training' ? 'good' : 'warn')
-                      : b.status === 'partial' ? 'warn'
-                      : 'neutral';
-                    return (
-                      <TechRow
-                        key={b.bot}
-                        label={`${b.bot} (${b.purpose})`}
-                        value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
-                        severity={sev}
-                      />
-                    );
-                  })}
+                  <TechRow
+                    label="llms.txt"
+                    value={result.aiReadiness.hasLlmsTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)')}
+                    severity={classifyLlmsTxt(result.aiReadiness.hasLlmsTxt)}
+                  />
+                  <TechRow
+                    label="llms-full.txt"
+                    value={result.aiReadiness.hasLlmsFullTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)')}
+                    severity={classifyLlmsTxt(result.aiReadiness.hasLlmsFullTxt)}
+                  />
+                  {result.aiReadiness.bots.map(b => (
+                    <TechRow
+                      key={b.bot}
+                      label={`${b.bot} (${b.purpose})`}
+                      value={b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : b.status === 'partial' ? t('teilweise', 'partial') : t('nicht geregelt', 'unspecified')}
+                      severity={classifyAIBotRow(b.status)}
+                    />
+                  ))}
                 </div>
               )}
 
-              {/* Security Headers */}
-              {result.securityHeaders && !result.securityHeaders.error && (
-                <div style={techCardStyle}>
-                  <h3 style={techCardTitle}>{t('Security Headers', 'Security Headers')}</h3>
-                  <TechRow label="HSTS" value={result.securityHeaders.hsts ? (result.securityHeaders.hstsMaxAge ? `max-age=${result.securityHeaders.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing')} ok={!!result.securityHeaders.hsts && (result.securityHeaders.hstsMaxAge ?? 0) >= 15552000} />
-                  <TechRow label="X-Content-Type-Options" value={result.securityHeaders.xContentTypeOptions || t('fehlt', 'missing')} ok={result.securityHeaders.xContentTypeOptions?.toLowerCase() === 'nosniff'} />
-                  <TechRow label="X-Frame-Options" value={result.securityHeaders.xFrameOptions || (/frame-ancestors/i.test(result.securityHeaders.csp || '') ? t('via CSP', 'via CSP') : t('fehlt', 'missing'))} ok={!!result.securityHeaders.xFrameOptions || /frame-ancestors/i.test(result.securityHeaders.csp || '')} />
-                  <TechRow label="CSP" value={result.securityHeaders.csp ? t('gesetzt', 'set') : t('fehlt', 'missing')} ok={!!result.securityHeaders.csp} />
-                  <TechRow label="Referrer-Policy" value={result.securityHeaders.referrerPolicy || t('fehlt', 'missing')} ok={!!result.securityHeaders.referrerPolicy} />
-                  <TechRow label="Permissions-Policy" value={result.securityHeaders.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing')} ok={!!result.securityHeaders.permissionsPolicy} />
-                  {result.securityHeaders.hasMixedContent && (
-                    <TechRow label="Mixed Content" value={t('erkannt', 'detected')} ok={false} />
-                  )}
-                </div>
-              )}
+              {/* Security Headers — per-header classifier so CSP missing
+                  is amber (not red), X-Frame-Options stays green when CSP
+                  frame-ancestors is set, Permissions-Policy missing is
+                  info-blue (emerging standard). See severity-classifier.ts
+                  for per-header rationale (OWASP/Mozilla aligned). */}
+              {result.securityHeaders && !result.securityHeaders.error && (() => {
+                const sh = result.securityHeaders;
+                const frameViaCsp = /frame-ancestors/i.test(sh.csp || '');
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>{t('Security Headers', 'Security Headers')}</h3>
+                    <TechRow
+                      label="HSTS"
+                      value={sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing')}
+                      severity={classifyHsts(sh)}
+                    />
+                    <TechRow
+                      label="X-Content-Type-Options"
+                      value={sh.xContentTypeOptions || t('fehlt', 'missing')}
+                      severity={classifyXContentTypeOptions(sh)}
+                    />
+                    <TechRow
+                      label="X-Frame-Options"
+                      value={sh.xFrameOptions || (frameViaCsp ? t('via CSP', 'via CSP') : t('fehlt', 'missing'))}
+                      severity={classifyXFrameOptions(sh)}
+                    />
+                    <TechRow
+                      label="CSP"
+                      value={sh.csp ? t('gesetzt', 'set') : t('fehlt', 'missing')}
+                      severity={classifyCsp(sh)}
+                    />
+                    <TechRow
+                      label="Referrer-Policy"
+                      value={sh.referrerPolicy || t('fehlt', 'missing')}
+                      severity={classifyReferrerPolicy(sh)}
+                    />
+                    <TechRow
+                      label="Permissions-Policy"
+                      value={sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing')}
+                      severity={classifyPermissionsPolicy(sh)}
+                    />
+                    {sh.hasMixedContent && (
+                      <TechRow
+                        label="Mixed Content"
+                        value={t('erkannt', 'detected')}
+                        severity={classifyMixedContent(true)}
+                      />
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Safe Browsing */}
               {result.safeBrowsingData && (
@@ -1403,13 +1440,22 @@ export default function AuditApp() {
                   p.redirectChain[0]?.startsWith('https://') && p.finalUrl.startsWith('http://')
                 );
                 if (redirected.length === 0 && result.crawlStats.redirectChains.length === 0) return null;
+                // Severity via classifier — single redirect from
+                // apex→www / http→https is normal and shouldn't read
+                // red. See severity-classifier.ts for the full rule set.
+                const redirectInputs = {
+                  redirectedCount: redirected.length,
+                  chainCount: chains.length,
+                  loopCount: loops.length,
+                  downgradeCount: downgrades.length,
+                };
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>{t('Redirects', 'Redirects')}</h3>
-                    <TechRow label={t('Mit Redirect gecrawlt', 'Crawled via redirect')} value={String(redirected.length)} severity={redirected.length === 0 ? 'good' : 'warn'} />
-                    <TechRow label={t('Ketten (>1 Hop)', 'Chains (>1 hop)')} value={String(chains.length)} severity={chains.length === 0 ? 'good' : 'warn'} />
-                    <TechRow label={t('Schleifen', 'Loops')} value={String(loops.length)} severity={loops.length === 0 ? 'good' : 'bad'} />
-                    <TechRow label={t('HTTPS → HTTP', 'HTTPS → HTTP')} value={String(downgrades.length)} severity={downgrades.length === 0 ? 'good' : 'bad'} />
+                    <TechRow label={t('Mit Redirect gecrawlt', 'Crawled via redirect')} value={String(redirected.length)} severity={classifyRedirected(redirectInputs)} />
+                    <TechRow label={t('Ketten (>1 Hop)', 'Chains (>1 hop)')} value={String(chains.length)} severity={classifyChains(chains.length)} />
+                    <TechRow label={t('Schleifen', 'Loops')} value={String(loops.length)} severity={classifyLoops(loops.length)} />
+                    <TechRow label={t('HTTPS → HTTP', 'HTTPS → HTTP')} value={String(downgrades.length)} severity={classifyDowngrades(downgrades.length)} />
                   </div>
                 );
               })()}
@@ -1799,12 +1845,13 @@ export default function AuditApp() {
   );
 }
 
-type TechSeverity = 'good' | 'warn' | 'bad' | 'neutral';
+type TechSeverity = 'good' | 'warn' | 'bad' | 'info' | 'neutral';
 
 const SEVERITY_COLORS: Record<TechSeverity, string> = {
   good: 'var(--pass)',
   warn: 'var(--warn)',
   bad: 'var(--fail)',
+  info: 'var(--info)',
   neutral: 'var(--text-strong)',
 };
 
@@ -1842,6 +1889,7 @@ function TechRow({ label, value, ok, severity, detail, note }: { label: string; 
           fontSize: 10.5,
           color: 'var(--text-muted)',
           lineHeight: 1.4,
+          textAlign: 'right',  // belongs to the value column, not the label
         }}>
           {note}
         </div>

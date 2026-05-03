@@ -4,6 +4,14 @@ import type { jsPDF } from 'jspdf';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
 import { rateMetric, formatComparator, type MetricKey } from './util/metric-thresholds';
+import {
+  classifyAIBotRow, classifyLlmsTxt,
+  classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
+  classifyCsp, classifyReferrerPolicy, classifyPermissionsPolicy, classifyMixedContent,
+  classifyRedirected, classifyChains, classifyLoops, classifyDowngrades,
+  moduleGridLayout, type Severity,
+} from './util/severity-classifier';
+import { findingImpactScore } from './findings/utils';
 
 // ============================================================
 //  Brand palette
@@ -16,6 +24,18 @@ const COLOR_CRITICAL: [number, number, number] = [211, 47, 47];
 const COLOR_IMPORTANT: [number, number, number] = [245, 158, 11];
 const COLOR_OPTIONAL: [number, number, number] = [136, 136, 136]; // mid-grey — readable but not dominant
 const COLOR_GOOD: [number, number, number] = [74, 155, 142]; // #4A9B8E — softer teal-green
+const COLOR_INFO: [number, number, number] = [24, 95, 165];  // #185fa5 — matches HTML --info
+
+// Maps the canonical Severity vocabulary (severity-classifier.ts) to
+// the PDF's RGB palette so techRow callers can hand in classifier
+// output directly without translating per call site.
+const SEVERITY_COLOR_RGB: Record<Severity, [number, number, number]> = {
+  good:    COLOR_GOOD,
+  warn:    COLOR_IMPORTANT,
+  bad:     COLOR_CRITICAL,
+  info:    COLOR_INFO,
+  neutral: COLOR_TEXT,
+};
 
 // ============================================================
 //  Glyph holes in the embedded font
@@ -181,19 +201,31 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     y += 7;
   };
 
-  // Tech row: grey label + value, red when ok === false. The bare strings
-  // '✓' and '✗' are special-cased and drawn as vector primitives — Inter
-  // does not include the Dingbats block, and using a built-in font for
-  // these glyphs would re-trigger the WinAnsi encoding bug.
-  //
-  // Two optional sub-line slots:
+  // Tech row: grey label + colored value, with two optional sub-lines:
   //   `detail` — Courier monospace, for raw data (DNS records). `\n` is a
   //              hard break; long strings wrap via splitTextToSize.
-  //   `note`   — Inter proportional, for muted annotations (PSI threshold
-  //              comparators). Single soft-wrapped paragraph.
+  //   `note`   — Inter proportional, right-aligned (belongs to the value
+  //              column, not the label). Used for PSI threshold
+  //              comparators in muted small text.
   // Both reset the font back to Inter normal afterwards so subsequent
   // direct doc.text() outside techRow stays in the expected state.
-  const techRow = (label: string, value: string, ok: boolean = true, detail?: string, note?: string) => {
+  //
+  // The third arg accepts either the canonical Severity vocabulary
+  // (good/warn/bad/info/neutral — preferred for new call sites) or the
+  // legacy boolean `ok` form (true → good, false → bad). The bare
+  // strings '✓' and '✗' are special-cased and drawn as vector primitives
+  // — Inter does not include the Dingbats block, and using a built-in
+  // font for these glyphs would re-trigger the WinAnsi encoding bug.
+  const techRow = (
+    label: string,
+    value: string,
+    sevOrOk: Severity | boolean = 'neutral',
+    detail?: string,
+    note?: string,
+  ) => {
+    const severity: Severity = typeof sevOrOk === 'string'
+      ? sevOrOk
+      : sevOrOk === true ? 'good' : 'bad';
     checkPage(5);
     setText(COLOR_SUBTEXT);
     doc.setFont(INTER_FONT_FAMILY, 'normal');
@@ -206,7 +238,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       drawCrossmark(doc, CONTENT_LEFT + 60, y, 2.4, COLOR_CRITICAL);
       y += 5;
     } else {
-      setText(ok ? COLOR_TEXT : COLOR_CRITICAL);
+      setText(SEVERITY_COLOR_RGB[severity]);
       const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 65);
       doc.text(valueLines, CONTENT_LEFT + 60, y);
       y += valueLines.length * 4 + 0.8;
@@ -230,13 +262,16 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       y += 1;
     }
     if (note) {
+      // Right-aligned: the note (PSI threshold comparator) is contextual
+      // information for the value, so it visually belongs under the
+      // value column, not under the label.
       setText(COLOR_SUBTEXT);
       doc.setFont(INTER_FONT_FAMILY, 'normal');
       doc.setFontSize(7);
-      const wrapped = doc.splitTextToSize(sanitizeForPdf(note), CONTENT_W - 8);
+      const wrapped = doc.splitTextToSize(sanitizeForPdf(note), CONTENT_W * 0.7);
       for (const line of wrapped) {
         checkPage(3);
-        doc.text(line, CONTENT_LEFT + 4, y);
+        doc.text(line, CONTENT_RIGHT, y, { align: 'right' });
         y += 2.8;
       }
       doc.setFontSize(8);
@@ -245,7 +280,93 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   };
 
   // ============================================================
-  //  COVER PAGE (page 1) — white background, accents only
+  //  Module overview gauges (used on the cover page and nowhere else)
+  // ============================================================
+  // Adaptive grid via moduleGridLayout — see severity-classifier.ts for
+  // the row breakdown rules. Tighter sizing than the previous standalone
+  // page block (radius 9, cellH 32) so the whole gauge grid fits below
+  // the score block on the cover page.
+  const renderModuleOverview = () => {
+    if (result.moduleScores.length === 0) return;
+    const layout = moduleGridLayout(result.moduleScores.length);
+    const gaugeRadius = 9;
+    const gaugeGapX = 6;
+    const widestRow = Math.max(1, ...layout.rows.map(r => r.length));
+    const cellW = (CONTENT_W - gaugeGapX * (widestRow - 1)) / widestRow;
+    const cellH = 32;
+    const gridTop = y;
+
+    layout.rows.forEach((row, rowIdx) => {
+      const rowWidth = row.length * cellW + (row.length - 1) * gaugeGapX;
+      const rowIsShort = row.length < widestRow;
+      const startX = (layout.centerLast && rowIsShort && rowIdx === layout.rows.length - 1)
+        ? CONTENT_LEFT + (CONTENT_W - rowWidth) / 2
+        : CONTENT_LEFT;
+
+      row.forEach((moduleIdx, colIdx) => {
+        const ms = result.moduleScores[moduleIdx];
+        const cellX = startX + colIdx * (cellW + gaugeGapX);
+        const cellY = gridTop + rowIdx * cellH;
+        const cx = cellX + cellW / 2;
+        const cy = cellY + gaugeRadius + 3;
+
+        // Background ring
+        setDraw(COLOR_BORDER);
+        doc.setLineWidth(2);
+        doc.circle(cx, cy, gaugeRadius, 'S');
+
+        // Score arc — clockwise from 12 o'clock
+        const mCol = scoreColorRgb(ms.score);
+        if (ms.score > 0) {
+          setDraw(mCol);
+          doc.setLineWidth(2);
+          doc.setLineCap('round');
+          doc.setLineJoin('round');
+          const steps = 60;
+          const startAngle = -Math.PI / 2;
+          const endAngle = startAngle + (ms.score / 100) * 2 * Math.PI;
+          const startX2 = cx + gaugeRadius * Math.cos(startAngle);
+          const startY2 = cy + gaugeRadius * Math.sin(startAngle);
+          const deltas: [number, number][] = [];
+          let prevX = startX2;
+          let prevY = startY2;
+          for (let i = 1; i <= steps; i++) {
+            const a = startAngle + (endAngle - startAngle) * (i / steps);
+            const px = cx + gaugeRadius * Math.cos(a);
+            const py = cy + gaugeRadius * Math.sin(a);
+            deltas.push([px - prevX, py - prevY]);
+            prevX = px;
+            prevY = py;
+          }
+          doc.lines(deltas, startX2, startY2, [1, 1], 'S', false);
+          doc.setLineCap('butt');
+          doc.setLineJoin('miter');
+        }
+
+        // Score number centred inside the ring
+        setText(COLOR_TEXT);
+        doc.setFont(INTER_FONT_FAMILY, 'bold');
+        doc.setFontSize(10);
+        doc.text(String(ms.score), cx, cy + 1.5, { align: 'center' });
+
+        // Module label below the circle
+        setText(COLOR_SUBTEXT);
+        doc.setFont(INTER_FONT_FAMILY, 'normal');
+        doc.setFontSize(7);
+        doc.text(
+          isDE ? ms.label_de : ms.label_en,
+          cx,
+          cellY + gaugeRadius * 2 + 8,
+          { align: 'center' }
+        );
+      });
+    });
+
+    y = gridTop + layout.rows.length * cellH + 4;
+  };
+
+  // ============================================================
+  //  COVER PAGE (page 1) — score + module overview, single A4 sheet
   // ============================================================
   // Logo — top of the page, centred horizontally
   const logoDataUrl = await loadLogoDataUrl();
@@ -256,27 +377,30 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     doc.addImage(logoDataUrl, 'PNG', (W - logoW) / 2, 20, logoW, logoH);
   }
 
-  // Title in brand orange — shifted down so it never overlaps the logo
+  // Title in brand orange — shifted up slightly to free vertical room
+  // for the module overview at the bottom of the page.
   setText(BRAND_ORANGE);
   doc.setFont(INTER_FONT_FAMILY, 'bold');
   doc.setFontSize(28);
-  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 62, { align: 'center' });
+  doc.text(t('SEO AUDIT REPORT', 'SEO AUDIT REPORT'), W / 2, 58, { align: 'center' });
 
   // URL in primary text colour
   setText(COLOR_TEXT);
   doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(14);
-  doc.text(result.domain, W / 2, 80, { align: 'center' });
+  doc.text(result.domain, W / 2, 76, { align: 'center' });
 
   // Date in subtext
   setText(COLOR_SUBTEXT);
   doc.setFontSize(11);
-  doc.text(dateStr, W / 2, 92, { align: 'center' });
+  doc.text(dateStr, W / 2, 88, { align: 'center' });
 
   // ------------------------------------------------------------
   //  Score — centred, big number + "/100" suffix
   // ------------------------------------------------------------
-  const scoreY = 155;
+  // Compressed from y=155 to y=130 to make room for the module overview
+  // grid at the bottom of the cover (was on its own page previously).
+  const scoreY = 130;
   const mainScoreCol = scoreColorRgb(result.totalScore);
 
   setText(mainScoreCol);
@@ -292,8 +416,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   doc.setFontSize(20);
   doc.text('/100', scoreStartX + scoreTextWidth + 2, scoreY);
 
-  // Horizontal score bar (grey track + coloured fill — track colour is OK,
-  // only orange fills were removed per the redesign spec)
+  // Horizontal score bar (grey track + coloured fill)
   const barY = scoreY + 12;
   const barH = 4;
   setFill(COLOR_BORDER);
@@ -301,12 +424,11 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   setFill(mainScoreCol);
   doc.roundedRect(CONTENT_LEFT, barY, (CONTENT_W * result.totalScore) / 100, barH, 2, 2, 'F');
 
-  // Author — pushed down to share the newly freed space evenly with the
-  // quick stats (the severity legend that used to live here is gone)
+  // Author line
   setText(COLOR_SUBTEXT);
   doc.setFont(INTER_FONT_FAMILY, 'normal');
   doc.setFontSize(10);
-  const authorY = barY + 28;
+  const authorY = barY + 18;
   doc.text(
     t(
       'Erstellt von der TW Beckmann Consultancy Services Ltd.',
@@ -315,115 +437,28 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     W / 2, authorY, { align: 'center' }
   );
 
-  // Quick stats row
-  const quickStats = [
-    { label: t('Gecrawlt', 'Crawled'), value: String(result.crawlStats.crawledPages) },
-    { label: t('Findings', 'Findings'), value: String(result.findings.length) },
-    { label: t('Kritisch', 'Critical'), value: String(result.findings.filter(f => f.priority === 'critical').length) },
-    { label: t('Wichtig', 'Important'), value: String(result.findings.filter(f => f.priority === 'important').length) },
-  ];
-  const qsY = authorY + 28;
-  const qsSpacing = 40;
-  const qsStartX = (W - (quickStats.length - 1) * qsSpacing) / 2;
-  quickStats.forEach((s, i) => {
-    const cx = qsStartX + i * qsSpacing;
-    setText(COLOR_TEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'bold');
-    doc.setFontSize(14);
-    doc.text(s.value, cx, qsY, { align: 'center' });
-    setText(COLOR_SUBTEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'normal');
-    doc.setFontSize(8);
-    doc.text(s.label, cx, qsY + 5, { align: 'center' });
-  });
+  // Module overview on the cover. The previous quick-stats row
+  // (crawled / findings / critical / important) was redundant with the
+  // executive-summary prose on the next page and is gone — the freed
+  // vertical space accommodates the module gauges here instead, so the
+  // CEO sees the score AND the per-module breakdown on page 1.
+  y = authorY + 14;
+  setText(COLOR_TEXT);
+  doc.setFont(INTER_FONT_FAMILY, 'bold');
+  doc.setFontSize(11);
+  doc.text(t('Modul-Übersicht', 'Module Overview'), CONTENT_LEFT, y);
+  y += 7;
+  renderModuleOverview();
 
   // Cover page footer is drawn by the unified footer loop at the end of
   // the document — no separate cover strip any more.
 
-  // ============================================================
-  //  PAGE 2 — Executive Summary (Top 5 Fixes)
-  // ============================================================
-  if (result.topFindings && result.topFindings.length > 0) {
-    doc.addPage();
-    addPageHeader();
-    y = CONTENT_TOP;
-
-    h1(t('Executive Summary', 'Executive Summary'));
-
-    setText(COLOR_SUBTEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'normal');
-    doc.setFontSize(10);
-    const subline = t(
-      'Die 5 wichtigsten Maßnahmen für sofortige Score-Verbesserung',
-      'The 5 most impactful actions for immediate score improvement'
-    );
-    doc.text(subline, CONTENT_LEFT, y);
-    y += 8;
-
-    const priorityLabelEs: Record<string, { de: string; en: string }> = {
-      critical: { de: 'Kritisch', en: 'Critical' },
-      important: { de: 'Wichtig', en: 'Important' },
-      recommended: { de: 'Empfohlen', en: 'Recommended' },
-      optional: { de: 'Optional', en: 'Optional' },
-    };
-
-    result.topFindings.forEach((f, idx) => {
-      const title = sanitizeForPdf(isDE ? f.title_de : f.title_en);
-      const rec = sanitizeForPdf(isDE ? f.recommendation_de : f.recommendation_en);
-      const pLabel = priorityLabelEs[f.priority][lang];
-
-      // Title + recommendation use the full content width (minus the
-      // 8mm left indent that lines up with the orange index number).
-      // The previous "+N pts" badge is gone — see the commit that
-      // introduced this change for rationale.
-      const textW = CONTENT_W - 8;
-      const titleLines = doc.splitTextToSize(title, textW);
-      const recLines = doc.splitTextToSize(rec, textW);
-
-      const entryH = titleLines.length * 4.8 + 4 + recLines.length * 4 + 6;
-      checkPage(entryH + 2);
-
-      const entryTop = y;
-
-      // Orange index number
-      setText(BRAND_ORANGE);
-      doc.setFont(INTER_FONT_FAMILY, 'bold');
-      doc.setFontSize(13);
-      doc.text(`${idx + 1}.`, CONTENT_LEFT, entryTop + 4);
-
-      // Title in bold black
-      setText(COLOR_TEXT);
-      doc.setFont(INTER_FONT_FAMILY, 'bold');
-      doc.setFontSize(9);
-      doc.text(titleLines, CONTENT_LEFT + 8, entryTop + 4);
-      let cursor = entryTop + 4 + titleLines.length * 4.8;
-
-      // Module + severity subline in subtext grey
-      setText(COLOR_SUBTEXT);
-      doc.setFont(INTER_FONT_FAMILY, 'normal');
-      doc.setFontSize(8);
-      doc.text(`${f.module.toUpperCase()} · ${pLabel}`, CONTENT_LEFT + 8, cursor);
-      cursor += 4;
-
-      // Recommendation (full length, wrapped)
-      setText(COLOR_TEXT);
-      doc.setFont(INTER_FONT_FAMILY, 'normal');
-      doc.setFontSize(8.5);
-      doc.text(recLines, CONTENT_LEFT + 8, cursor);
-      cursor += recLines.length * 4;
-
-      // Divider line between entries (not after the last one)
-      if (idx < result.topFindings.length - 1) {
-        y = cursor + 4;
-        setDraw(COLOR_BORDER);
-        doc.setLineWidth(0.2);
-        doc.line(CONTENT_LEFT, y, CONTENT_RIGHT, y);
-        y += 4;
-      } else {
-        y = cursor + 4;
-      }
-    });
-  }
+  // The dedicated "Top 5 Fixes" page that previously lived here was
+  // removed — the full Improvement Recommendations list (sorted by
+  // priority bucket then findingImpactScore) already serves the same
+  // purpose without the redundancy. result.topFindings is still
+  // populated by the audit route for the public widget; the Pro PDF
+  // simply doesn't render it any more.
 
   // ============================================================
   //  Diff section — rendered only when a comparison is provided.
@@ -558,96 +593,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   }
 
   // ============================================================
-  //  Module overview
+  //  Executive summary — first content page after the cover
   // ============================================================
+  // Module overview moved to the cover page; this section now starts
+  // a fresh page with the executive summary prose.
   doc.addPage();
   addPageHeader();
   y = CONTENT_TOP;
 
-  h1(t('Modul-Übersicht', 'Module Overview'));
-
-  // ----- Gauge circle grid (PageSpeed Insights style) -----
-  // Layout: a single row of N gauges when there are ≤6 modules, otherwise
-  // two rows with ceil(N/2) columns. Cell width is derived from the
-  // content width minus the gaps so the gauges distribute evenly.
-  const gaugeRadius = 10; // mm
-  const moduleCount = result.moduleScores.length;
-  const gaugeCols = moduleCount <= 6 ? Math.max(1, moduleCount) : Math.ceil(moduleCount / 2);
-  const gaugeGapX = 6;
-  const cellW = (CONTENT_W - gaugeGapX * (gaugeCols - 1)) / gaugeCols;
-  const cellH = 38; // 20mm circle + gap + label + padding
-  const gaugeRows = Math.ceil(moduleCount / gaugeCols);
-
-  checkPage(gaugeRows * cellH + 4);
-  const gridTop = y;
-
-  result.moduleScores.forEach((ms, idx) => {
-    const col = idx % gaugeCols;
-    const row = Math.floor(idx / gaugeCols);
-    const cellX = CONTENT_LEFT + col * (cellW + gaugeGapX);
-    const cellY = gridTop + row * cellH;
-    const cx = cellX + cellW / 2;
-    const cy = cellY + gaugeRadius + 3;
-
-    // Background ring — grey full circle
-    setDraw(COLOR_BORDER);
-    doc.setLineWidth(2);
-    doc.circle(cx, cy, gaugeRadius, 'S');
-
-    // Score arc — clockwise from 12 o'clock, approximated as a connected
-    // polyline drawn as a single stroked path so round caps/joins only
-    // appear at the arc endpoints, not at every segment boundary.
-    const mCol = scoreColorRgb(ms.score);
-    if (ms.score > 0) {
-      setDraw(mCol);
-      doc.setLineWidth(2);
-      doc.setLineCap('round');
-      doc.setLineJoin('round');
-      const steps = 60;
-      const startAngle = -Math.PI / 2;
-      const endAngle = startAngle + (ms.score / 100) * 2 * Math.PI;
-      const startX = cx + gaugeRadius * Math.cos(startAngle);
-      const startY = cy + gaugeRadius * Math.sin(startAngle);
-      const deltas: [number, number][] = [];
-      let prevX = startX;
-      let prevY = startY;
-      for (let i = 1; i <= steps; i++) {
-        const a = startAngle + (endAngle - startAngle) * (i / steps);
-        const px = cx + gaugeRadius * Math.cos(a);
-        const py = cy + gaugeRadius * Math.sin(a);
-        deltas.push([px - prevX, py - prevY]);
-        prevX = px;
-        prevY = py;
-      }
-      doc.lines(deltas, startX, startY, [1, 1], 'S', false);
-      // Reset line style for subsequent drawings
-      doc.setLineCap('butt');
-      doc.setLineJoin('miter');
-    }
-
-    // Score number centred inside the ring
-    setText(COLOR_TEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'bold');
-    doc.setFontSize(10);
-    doc.text(String(ms.score), cx, cy + 1.5, { align: 'center' });
-
-    // Module label below the circle
-    setText(COLOR_SUBTEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'normal');
-    doc.setFontSize(7);
-    doc.text(
-      isDE ? ms.label_de : ms.label_en,
-      cx,
-      cellY + gaugeRadius * 2 + 9,
-      { align: 'center' }
-    );
-  });
-
-  y = gridTop + gaugeRows * cellH + 6;
-
-  // ============================================================
-  //  Executive summary
-  // ============================================================
   h1(t('Zusammenfassung', 'Executive Summary'));
   setText(COLOR_TEXT);
   doc.setFont(INTER_FONT_FAMILY, 'normal');
@@ -663,10 +616,16 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // ============================================================
   h1(t('Verbesserungsempfehlungen', 'Improvement Recommendations'));
 
+  // Two-key sort: priority bucket primary (critical → optional), then
+  // findingImpactScore descending within each bucket so the most
+  // impactful items in a bucket surface first. Identical to the HTML
+  // findings tab in AuditApp.tsx — keep them in sync.
   const priorityOrder = { critical: 0, important: 1, recommended: 2, optional: 3 };
-  const sortedFindings = [...result.findings].sort(
-    (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
-  );
+  const sortedFindings = [...result.findings].sort((a, b) => {
+    const pdiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+    if (pdiff !== 0) return pdiff;
+    return findingImpactScore(b) - findingImpactScore(a);
+  });
   const priorityLabels: Record<string, { de: string; en: string }> = {
     critical: { de: 'Kritisch', en: 'Critical' },
     important: { de: 'Wichtig', en: 'Important' },
@@ -835,10 +794,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       h2(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'));
       const ps = result.pageSpeedData;
       const locale: 'de' | 'en' = isDE ? 'de' : 'en';
-      const psiOk = (rating: ReturnType<typeof rateMetric>) => rating !== 'poor';
+      // 3-bucket severity straight from rateMetric — good/warn/bad
+      // colour the value text directly, so a 3.1s LCP is amber, a 4.6s
+      // is red, and a 1.8s is green. Matches the HTML view.
+      const psiSeverity = (rating: ReturnType<typeof rateMetric>): Severity =>
+        rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
       const psiRow = (label: string, raw: number, key: MetricKey, display: string) => {
         const rating = rateMetric(raw, key);
-        techRow(label, display, psiOk(rating), undefined, formatComparator(key, locale));
+        techRow(label, display, psiSeverity(rating), undefined, formatComparator(key, locale));
       };
       if (ps.performanceScore !== undefined) psiRow('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`);
       if (ps.seoScore !== undefined) psiRow('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`);
@@ -856,35 +819,69 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       if (ps.tbt !== undefined) psiRow('TBT', ps.tbt, 'tbt', `${Math.round(ps.tbt)}ms`);
     }
 
-    // Security Headers
+    // Security Headers — severity per header via the classifier so the
+    // PDF and HTML views agree, and the per-feature rationale ("CSP
+    // missing is warn not bad", "X-Frame-Options redundant when CSP
+    // frame-ancestors set") lives in one place.
     if (result.securityHeaders && !result.securityHeaders.error) {
       h2(t('Security Headers', 'Security Headers'));
       const sh = result.securityHeaders;
       techRow(
         'HSTS',
         sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing'),
-        !!sh.hsts && (sh.hstsMaxAge ?? 0) >= 15552000
+        classifyHsts(sh),
       );
-      techRow('X-Content-Type-Options', sh.xContentTypeOptions || t('fehlt', 'missing'), sh.xContentTypeOptions?.toLowerCase() === 'nosniff');
-      const frameOk = !!sh.xFrameOptions || /frame-ancestors/i.test(sh.csp || '');
-      techRow('X-Frame-Options', sh.xFrameOptions || (frameOk ? t('via CSP', 'via CSP') : t('fehlt', 'missing')), frameOk);
-      techRow('CSP', sh.csp ? t('gesetzt', 'set') : t('fehlt', 'missing'), !!sh.csp);
-      techRow('Referrer-Policy', sh.referrerPolicy || t('fehlt', 'missing'), !!sh.referrerPolicy);
-      techRow('Permissions-Policy', sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing'), !!sh.permissionsPolicy);
+      techRow(
+        'X-Content-Type-Options',
+        sh.xContentTypeOptions || t('fehlt', 'missing'),
+        classifyXContentTypeOptions(sh),
+      );
+      const frameViaCsp = /frame-ancestors/i.test(sh.csp || '');
+      techRow(
+        'X-Frame-Options',
+        sh.xFrameOptions || (frameViaCsp ? t('via CSP', 'via CSP') : t('fehlt', 'missing')),
+        classifyXFrameOptions(sh),
+      );
+      techRow(
+        'CSP',
+        sh.csp ? t('gesetzt', 'set') : t('fehlt', 'missing'),
+        classifyCsp(sh),
+      );
+      techRow(
+        'Referrer-Policy',
+        sh.referrerPolicy || t('fehlt', 'missing'),
+        classifyReferrerPolicy(sh),
+      );
+      techRow(
+        'Permissions-Policy',
+        sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing'),
+        classifyPermissionsPolicy(sh),
+      );
       if (sh.hasCookieSecure === false) {
-        techRow(t('Cookie Secure-Flag', 'Cookie Secure flag'), t('fehlt', 'missing'), false);
+        techRow(t('Cookie Secure-Flag', 'Cookie Secure flag'), t('fehlt', 'missing'), 'warn');
       }
       if (sh.hasMixedContent) {
-        techRow('Mixed Content', t('erkannt', 'detected'), false);
+        techRow('Mixed Content', t('erkannt', 'detected'), classifyMixedContent(true));
       }
     }
 
-    // AI Crawler Readiness
+    // AI Crawler Readiness — `unspecified` is the default for ~99% of
+    // sites and is rendered neutral, never red. llms.txt is info-blue
+    // when missing (emerging standard, not defect). See classifier
+    // module for per-status rationale.
     if (result.aiReadiness && !result.aiReadiness.error) {
       h2(t('AI Crawler Readiness', 'AI Crawler Readiness'));
       const ai = result.aiReadiness;
-      techRow('llms.txt', ai.hasLlmsTxt ? t('vorhanden', 'present') : t('fehlt', 'missing'), ai.hasLlmsTxt);
-      techRow('llms-full.txt', ai.hasLlmsFullTxt ? t('vorhanden', 'present') : t('fehlt', 'missing'), ai.hasLlmsFullTxt);
+      techRow(
+        'llms.txt',
+        ai.hasLlmsTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
+        classifyLlmsTxt(ai.hasLlmsTxt),
+      );
+      techRow(
+        'llms-full.txt',
+        ai.hasLlmsFullTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
+        classifyLlmsTxt(ai.hasLlmsFullTxt),
+      );
       for (const b of ai.bots) {
         const valueText = b.status === 'allowed'
           ? t('erlaubt', 'allowed')
@@ -893,8 +890,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
             : b.status === 'partial'
               ? t('teilweise', 'partial')
               : t('nicht geregelt', 'unspecified');
-        const ok = b.status === 'allowed' || (b.purpose === 'training' && b.status === 'blocked');
-        techRow(`${b.bot} (${b.purpose})`, valueText, ok);
+        techRow(`${b.bot} (${b.purpose})`, valueText, classifyAIBotRow(b.status));
       }
     }
 
@@ -936,10 +932,16 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     );
     if (redirected.length > 0 || result.crawlStats.redirectChains.length > 0) {
       h2(t('Redirects', 'Redirects'));
-      techRow(t('Mit Redirect gecrawlt', 'Crawled via redirect'), String(redirected.length), redirected.length === 0);
-      techRow(t('Ketten (>1 Hop)', 'Chains (>1 hop)'), String(chainPages.length), chainPages.length === 0);
-      techRow(t('Schleifen', 'Loops'), String(loopPages.length), loopPages.length === 0);
-      techRow('HTTPS -> HTTP', String(downgradePages.length), downgradePages.length === 0);
+      const redirectInputs = {
+        redirectedCount: redirected.length,
+        chainCount: chainPages.length,
+        loopCount: loopPages.length,
+        downgradeCount: downgradePages.length,
+      };
+      techRow(t('Mit Redirect gecrawlt', 'Crawled via redirect'), String(redirected.length), classifyRedirected(redirectInputs));
+      techRow(t('Ketten (>1 Hop)', 'Chains (>1 hop)'), String(chainPages.length), classifyChains(chainPages.length));
+      techRow(t('Schleifen', 'Loops'), String(loopPages.length), classifyLoops(loopPages.length));
+      techRow('HTTPS -> HTTP', String(downgradePages.length), classifyDowngrades(downgradePages.length));
     }
 
     // Link Quality
