@@ -3,6 +3,7 @@
 import type { jsPDF } from 'jspdf';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
+import { rateMetric, formatComparator, type MetricKey } from './util/metric-thresholds';
 
 // ============================================================
 //  Brand palette
@@ -185,11 +186,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // does not include the Dingbats block, and using a built-in font for
   // these glyphs would re-trigger the WinAnsi encoding bug.
   //
-  // Optional `detail` renders below the row in the built-in Courier font
-  // (jsPDF Courier is WinAnsi-only but DNS records are ASCII, so safe).
-  // `\n` in detail is treated as a hard line break; long unwrappable
-  // strings get character-level wrapping via splitTextToSize.
-  const techRow = (label: string, value: string, ok: boolean = true, detail?: string) => {
+  // Two optional sub-line slots:
+  //   `detail` — Courier monospace, for raw data (DNS records). `\n` is a
+  //              hard break; long strings wrap via splitTextToSize.
+  //   `note`   — Inter proportional, for muted annotations (PSI threshold
+  //              comparators). Single soft-wrapped paragraph.
+  // Both reset the font back to Inter normal afterwards so subsequent
+  // direct doc.text() outside techRow stays in the expected state.
+  const techRow = (label: string, value: string, ok: boolean = true, detail?: string, note?: string) => {
     checkPage(5);
     setText(COLOR_SUBTEXT);
     doc.setFont(INTER_FONT_FAMILY, 'normal');
@@ -224,6 +228,19 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       doc.setFont(INTER_FONT_FAMILY, 'normal');
       doc.setFontSize(8);
       y += 1;
+    }
+    if (note) {
+      setText(COLOR_SUBTEXT);
+      doc.setFont(INTER_FONT_FAMILY, 'normal');
+      doc.setFontSize(7);
+      const wrapped = doc.splitTextToSize(sanitizeForPdf(note), CONTENT_W - 8);
+      for (const line of wrapped) {
+        checkPage(3);
+        doc.text(line, CONTENT_LEFT + 4, y);
+        y += 2.8;
+      }
+      doc.setFontSize(8);
+      y += 0.6;
     }
   };
 
@@ -802,21 +819,33 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       }
     }
 
-    // PageSpeed
+    // PageSpeed — every row carries the canonical web.dev / Lighthouse
+    // threshold below the value as a muted note (single source of truth
+    // in metric-thresholds.ts). Severity is the 3-bucket rating from
+    // those same thresholds, mapped to good/warn/bad COLOR_*.
     if (result.pageSpeedData && !result.pageSpeedData.error) {
       h2(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'));
       const ps = result.pageSpeedData;
-      if (ps.performanceScore !== undefined) techRow('Performance', `${ps.performanceScore}/100`, ps.performanceScore >= 50);
-      if (ps.seoScore !== undefined) techRow('SEO', `${ps.seoScore}/100`, ps.seoScore >= 75);
-      if (ps.accessibilityScore !== undefined) techRow(t('Zugänglichkeit', 'Accessibility'), `${ps.accessibilityScore}/100`, ps.accessibilityScore >= 75);
-      if (ps.bestPracticesScore !== undefined) techRow(t('Best Practices', 'Best Practices'), `${ps.bestPracticesScore}/100`, ps.bestPracticesScore >= 75);
-      if (ps.lcp !== undefined) techRow('LCP', `${Math.round(ps.lcp / 100) / 10}s`, ps.lcp < 2500);
-      if (ps.cls !== undefined) techRow('CLS', ps.cls.toFixed(3), ps.cls < 0.1);
-      if (ps.inp !== undefined) techRow('INP', `${Math.round(ps.inp)}ms`, ps.inp < 200);
+      const locale: 'de' | 'en' = isDE ? 'de' : 'en';
+      const psiOk = (rating: ReturnType<typeof rateMetric>) => rating !== 'poor';
+      const psiRow = (label: string, raw: number, key: MetricKey, display: string) => {
+        const rating = rateMetric(raw, key);
+        techRow(label, display, psiOk(rating), undefined, formatComparator(key, locale));
+      };
+      if (ps.performanceScore !== undefined) psiRow('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`);
+      if (ps.seoScore !== undefined) psiRow('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`);
+      if (ps.accessibilityScore !== undefined) psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`);
+      if (ps.bestPracticesScore !== undefined) psiRow(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score', `${ps.bestPracticesScore}/100`);
+      if (ps.lcp !== undefined) psiRow('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`);
+      if (ps.cls !== undefined) psiRow('CLS', ps.cls, 'cls', ps.cls.toFixed(3));
+      if (ps.inp !== undefined) psiRow('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`);
+      // FID: legacy metric INP replaced in March 2024 — kept for sites
+      // still surfacing it in CrUX. No comparator (web.dev no longer
+      // publishes one); falls back to the historical 100ms threshold.
       if (ps.fidField !== undefined) techRow(t('FID (Feld)', 'FID (field)'), `${Math.round(ps.fidField)}ms`, ps.fidField < 100);
-      if (ps.fcp !== undefined) techRow('FCP', `${Math.round(ps.fcp / 100) / 10}s`, ps.fcp < 1800);
-      if (ps.ttfb !== undefined) techRow('TTFB', `${Math.round(ps.ttfb)}ms`, ps.ttfb < 800);
-      if (ps.tbt !== undefined) techRow('TBT', `${Math.round(ps.tbt)}ms`, ps.tbt < 200);
+      if (ps.fcp !== undefined) psiRow('FCP', ps.fcp, 'fcp', `${Math.round(ps.fcp / 100) / 10}s`);
+      if (ps.ttfb !== undefined) psiRow('TTFB', ps.ttfb, 'ttfb', `${Math.round(ps.ttfb)}ms`);
+      if (ps.tbt !== undefined) psiRow('TBT', ps.tbt, 'tbt', `${Math.round(ps.tbt)}ms`);
     }
 
     // Security Headers

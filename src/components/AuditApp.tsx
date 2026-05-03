@@ -11,6 +11,14 @@ import { getVisibleGscWarnings } from './gsc-warnings';
 import { BingRowsTable } from './BingRowsTable';
 import { getVisibleBingWarnings } from './bing-warnings';
 import { checkPatterns, type PatternError } from './audit-form-validation';
+import { rateMetric, formatComparator, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
+
+// Map a 3-bucket PSI rating onto our existing 4-bucket TechSeverity.
+// good → good, needs-improvement → warn, poor → bad. Centralised so
+// callers don't repeat the ternary.
+function severityFor(rating: MetricRating): 'good' | 'warn' | 'bad' {
+  return rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
+}
 
 const USER_AGENT_OPTIONS: { value: UserAgentPreset; label: string }[] = [
   { value: 'default', label: 'SEO Audit Pro (Default)' },
@@ -1254,19 +1262,37 @@ export default function AuditApp() {
                 );
               })()}
 
-              {/* PageSpeed */}
-              {result.pageSpeedData && !result.pageSpeedData.error && (
-                <div style={techCardStyle}>
-                  <h3 style={techCardTitle}>PageSpeed (Mobile)</h3>
-                  {result.pageSpeedData.performanceScore !== undefined && <TechRow label="Performance" value={`${result.pageSpeedData.performanceScore}/100`} ok={result.pageSpeedData.performanceScore >= 50} />}
-                  {result.pageSpeedData.seoScore !== undefined && <TechRow label="SEO" value={`${result.pageSpeedData.seoScore}/100`} ok={result.pageSpeedData.seoScore >= 75} />}
-                  {result.pageSpeedData.accessibilityScore !== undefined && <TechRow label={t('Zugänglichkeit', 'Accessibility')} value={`${result.pageSpeedData.accessibilityScore}/100`} ok={result.pageSpeedData.accessibilityScore >= 75} />}
-                  {result.pageSpeedData.lcp && <TechRow label="LCP" value={`${Math.round(result.pageSpeedData.lcp / 100) / 10}s`} ok={result.pageSpeedData.lcp < 2500} />}
-                  {result.pageSpeedData.cls !== undefined && <TechRow label="CLS" value={result.pageSpeedData.cls.toFixed(3)} ok={result.pageSpeedData.cls < 0.1} />}
-                  {result.pageSpeedData.inp !== undefined && <TechRow label="INP" value={`${Math.round(result.pageSpeedData.inp)}ms`} ok={result.pageSpeedData.inp < 200} />}
-                  {result.pageSpeedData.fidField !== undefined && <TechRow label={t('FID (Legacy)', 'FID (legacy)')} value={`${Math.round(result.pageSpeedData.fidField)}ms`} ok={result.pageSpeedData.fidField < 100} />}
-                </div>
-              )}
+              {/* PageSpeed — every row shows the canonical web.dev /
+                  Lighthouse threshold below the value as a muted note,
+                  so readers don't need to memorise what 'good' means
+                  per metric. Single source of truth in metric-thresholds.ts. */}
+              {result.pageSpeedData && !result.pageSpeedData.error && (() => {
+                const ps = result.pageSpeedData;
+                const locale = isDE ? 'de' : 'en';
+                const psiRow = (label: string, raw: number, key: MetricKey, display: string) => (
+                  <TechRow
+                    label={label}
+                    value={display}
+                    severity={severityFor(rateMetric(raw, key))}
+                    note={formatComparator(key, locale)}
+                  />
+                );
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>PageSpeed (Mobile)</h3>
+                    {ps.performanceScore !== undefined && psiRow('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`)}
+                    {ps.seoScore !== undefined && psiRow('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`)}
+                    {ps.accessibilityScore !== undefined && psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`)}
+                    {ps.lcp !== undefined && psiRow('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`)}
+                    {ps.cls !== undefined && psiRow('CLS', ps.cls, 'cls', ps.cls.toFixed(3))}
+                    {ps.inp !== undefined && psiRow('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`)}
+                    {/* FID is the legacy metric INP replaced in March 2024 — kept
+                        for sites that still publish it in CrUX. No threshold
+                        comparator since web.dev no longer publishes one. */}
+                    {ps.fidField !== undefined && <TechRow label={t('FID (Legacy)', 'FID (legacy)')} value={`${Math.round(ps.fidField)}ms`} ok={ps.fidField < 100} />}
+                  </div>
+                );
+              })()}
 
               {/* AI Crawler Readiness */}
               {result.aiReadiness && !result.aiReadiness.error && (
@@ -1782,12 +1808,12 @@ const SEVERITY_COLORS: Record<TechSeverity, string> = {
 
 // Backwards-compatible: callers can pass severity for fine-grained
 // color semantics, or fall back to the legacy ok=boolean (good/bad).
-// `detail` is rendered as a monospace sub-line below the value row —
-// used for raw DNS records (SPF / DMARC / MX) where the actual string
-// is more useful than a tick. `\n` separators in detail are preserved
-// (whitespace: pre-wrap), and overlong strings break at any character
-// to prevent layout overflow.
-function TechRow({ label, value, ok, severity, detail }: { label: string; value: string; ok?: boolean; severity?: TechSeverity; detail?: string }) {
+// Two optional sub-line slots:
+//   `detail` — monospace, for raw data (DNS records, SPF/DMARC strings)
+//   `note`   — proportional, for annotations (PSI threshold comparators)
+// Both render in --text-muted below the value row. They can coexist;
+// detail draws first.
+function TechRow({ label, value, ok, severity, detail, note }: { label: string; value: string; ok?: boolean; severity?: TechSeverity; detail?: string; note?: string }) {
   const sev: TechSeverity = severity ?? (ok === undefined ? 'neutral' : ok ? 'good' : 'bad');
   return (
     <div style={{ padding: '4px 0', borderBottom: '1px solid var(--border-soft)' }}>
@@ -1806,6 +1832,16 @@ function TechRow({ label, value, ok, severity, detail }: { label: string; value:
           lineHeight: 1.45,
         }}>
           {detail}
+        </div>
+      )}
+      {note && (
+        <div style={{
+          marginTop: 3,
+          fontSize: 10.5,
+          color: 'var(--text-muted)',
+          lineHeight: 1.4,
+        }}>
+          {note}
         </div>
       )}
     </div>
