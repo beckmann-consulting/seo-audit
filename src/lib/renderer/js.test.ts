@@ -461,6 +461,9 @@ describe('JsRenderer.captureScreenshot', () => {
     const screenshot = vi.fn(async () => Buffer.from('FAKE_PNG_BYTES'));
     const goto = vi.fn(async () => {});
     const close = vi.fn(async () => {});
+    // waitForTimeout is the post-navigation paint-settle hook. Stub
+    // returns immediately so tests don't actually sleep 2s each.
+    const waitForTimeout = vi.fn(async () => {});
     const page = {
       on: vi.fn(),
       setViewportSize,
@@ -469,6 +472,7 @@ describe('JsRenderer.captureScreenshot', () => {
       url: vi.fn(() => ''),
       screenshot,
       close,
+      waitForTimeout,
     };
     const browser = {
       newContext: vi.fn(async () => ({
@@ -477,7 +481,7 @@ describe('JsRenderer.captureScreenshot', () => {
       })),
       close: vi.fn(async () => {}),
     };
-    return { page, browser, setViewportSize, screenshot, goto, close };
+    return { page, browser, setViewportSize, screenshot, goto, close, waitForTimeout };
   }
 
   it('sets the viewport before navigation and returns a base64 PNG', async () => {
@@ -490,16 +494,66 @@ describe('JsRenderer.captureScreenshot', () => {
     const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
 
     expect(setViewportSize).toHaveBeenCalledWith({ width: 375, height: 667 });
-    expect(goto).toHaveBeenCalledWith('https://x.com/', expect.any(Object));
+    expect(goto).toHaveBeenCalledWith('https://x.com/', expect.objectContaining({ waitUntil: 'domcontentloaded' }));
     expect(screenshot).toHaveBeenCalledWith({ fullPage: false, type: 'png' });
     // base64 of "FAKE_PNG_BYTES"
     expect(result).toBe(Buffer.from('FAKE_PNG_BYTES').toString('base64'));
     await r.close();
   });
 
-  it('returns undefined when navigation throws — never propagates the error', async () => {
-    const { browser, goto, close } = setupForScreenshot();
-    goto.mockRejectedValueOnce(new Error('Timeout'));
+  it('falls through to screenshot when goto times out — partial-capture fallback', async () => {
+    // Pre-fix this returned undefined. New behaviour: log a warning,
+    // then proceed to waitForTimeout + screenshot. The page DOM is
+    // whatever painted before goto rejected, which on heavy Webflow
+    // pages is typically the above-the-fold content.
+    const { browser, goto, screenshot, close } = setupForScreenshot();
+    goto.mockRejectedValueOnce(new Error('Timeout 15000ms exceeded'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    expect(result).toBe(Buffer.from('FAKE_PNG_BYTES').toString('base64'));
+    expect(screenshot).toHaveBeenCalled();              // screenshot still attempted
+    expect(close).toHaveBeenCalled();                   // page still closed
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[screenshot] goto timeout'));
+    expect(warnSpy.mock.calls[0][0]).toContain('https://x.com/');
+    await r.close();
+  });
+
+  it('logs and returns undefined when screenshot itself throws', async () => {
+    const { browser, screenshot, close } = setupForScreenshot();
+    screenshot.mockRejectedValueOnce(new Error('disconnected'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 1920, height: 1080 });
+    expect(result).toBeUndefined();
+    expect(close).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[screenshot] failed'));
+    expect(errorSpy.mock.calls[0][0]).toContain('1920x1080');
+    expect(errorSpy.mock.calls[0][0]).toContain('disconnected');
+    await r.close();
+  });
+
+  it('logs the URL + viewport + reason when newPage rejects (Browserless overload class)', async () => {
+    // Simulate Browserless rejecting newPage (e.g. queue full or
+    // session-killed). Reaches the OUTER catch — distinct error
+    // message from the goto-timeout case.
+    const screenshot = vi.fn(async () => Buffer.from(''));
+    const browser = {
+      newContext: vi.fn(async () => ({
+        newPage: vi.fn(async () => { throw new Error('Browserless: queue full'); }),
+        close: vi.fn(async () => {}),
+      })),
+      close: vi.fn(async () => {}),
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const r = new JsRenderer({
       endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
       connect: async () => browser as never,
@@ -507,20 +561,8 @@ describe('JsRenderer.captureScreenshot', () => {
 
     const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
     expect(result).toBeUndefined();
-    expect(close).toHaveBeenCalled(); // page is still closed cleanly
-    await r.close();
-  });
-
-  it('closes the page even when screenshot throws', async () => {
-    const { browser, screenshot, close } = setupForScreenshot();
-    screenshot.mockRejectedValueOnce(new Error('disconnected'));
-    const r = new JsRenderer({
-      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
-      connect: async () => browser as never,
-    });
-
-    await r.captureScreenshot('https://x.com/', { width: 1920, height: 1080 });
-    expect(close).toHaveBeenCalled();
+    expect(screenshot).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('queue full'));
     await r.close();
   });
 

@@ -53,6 +53,21 @@ export interface JsRendererOptions extends RendererOptions {
 
 const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
 
+// Tighter goto budget for the screenshot path. The crawl render needs
+// the longer timeout because it has to capture the actual content for
+// SEO analysis; a screenshot just needs whatever painted to disk, so
+// we cap navigation at 15s and fall through to the screenshot even if
+// goto throws (see captureScreenshot).
+const SCREENSHOT_GOTO_TIMEOUT_MS = 15_000;
+
+// Brief wait between DOMContentLoaded and the screenshot click so
+// fonts and above-the-fold async content (hero images, lazy-loaded
+// font swaps) get one chance to paint before the buffer is taken.
+// 2s is the empirical sweet spot — long enough for typical hero
+// content, short enough that 4 pages × 2 viewports adds ~16s total
+// even if every page hits this branch.
+const SCREENSHOT_PAINT_SETTLE_MS = 2_000;
+
 export class JsRenderer implements Renderer {
   readonly mode = 'js' as const;
   private readonly staticRenderer: StaticRenderer;
@@ -254,8 +269,21 @@ export class JsRenderer implements Renderer {
   // Capture a screenshot of `url` at the given viewport. Used by E2
   // for the optional PDF screenshot section. Returns a base64-encoded
   // PNG so the result can be embedded directly in jsPDF without
-  // extra round-trips. Returns undefined on any failure — the audit
-  // shouldn't break because Chromium hiccupped on a screenshot.
+  // extra round-trips. Returns undefined on context/page/screenshot
+  // failure — but a navigation timeout no longer aborts: we fall
+  // through and screenshot whatever the page rendered before the
+  // timeout, which on Webflow / Calendly-laden pages is typically
+  // a usable above-the-fold capture.
+  //
+  // Reasoning for waitUntil='domcontentloaded' vs the crawl's 'load':
+  // the crawl needs the actual page content for SEO analysis, so it
+  // waits for window.load. Screenshots only need the DOM rendered;
+  // 'domcontentloaded' fires after HTML+CSS+inline JS, typically
+  // 1-3s on real-world sites, vs window.load which on Webflow agency
+  // sites (Calendly/HubSpot iframes) regularly takes >30s or never
+  // fires. Combined with the partial-capture fallback below, this
+  // turns the failure mode from "no screenshot" into "approximate
+  // above-the-fold screenshot".
   async captureScreenshot(
     url: string,
     viewport: { width: number; height: number },
@@ -265,21 +293,34 @@ export class JsRenderer implements Renderer {
       const page = await ctx.newPage();
       try {
         await page.setViewportSize(viewport);
-        // 'load' (not 'networkidle') for the same reason the main fetch
-        // path uses it (commit b36d1e3): heavy 3rd-party trackers /
-        // animation runtimes never let the page reach 'networkidle'
-        // within the timeout, so screenshots silently failed for
-        // entire JS-mode runs against Webflow / Shopify-style sites.
-        await page.goto(url, {
-          waitUntil: 'load',
-          timeout: this.pageTimeoutMs,
-        });
+        // Inner try/catch around goto so a navigation timeout doesn't
+        // skip the screenshot — Playwright lets us capture whatever
+        // state the page reached. We log the timeout (warn level so
+        // it's visible in journalctl without flooding the log) but
+        // proceed to the paint-settle wait + screenshot.
+        try {
+          await page.goto(url, {
+            waitUntil: 'domcontentloaded',
+            timeout: SCREENSHOT_GOTO_TIMEOUT_MS,
+          });
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.warn(`[screenshot] goto timeout, attempting partial capture: url=${url} viewport=${viewport.width}x${viewport.height} reason=${reason}`);
+        }
+        await page.waitForTimeout(SCREENSHOT_PAINT_SETTLE_MS);
         const buffer = await page.screenshot({ fullPage: false, type: 'png' });
         return Buffer.from(buffer).toString('base64');
       } finally {
         await page.close().catch(() => { /* page may already be closed */ });
       }
-    } catch {
+    } catch (err) {
+      // Reaches here on context-creation failure, newPage rejection
+      // (Browserless overload), setViewportSize errors, or screenshot
+      // encoding failures. Log with enough info that journalctl
+      // immediately tells us which class — without this every
+      // Browserless instability was an invisible silent fail.
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[screenshot] failed: url=${url} viewport=${viewport.width}x${viewport.height} reason=${reason}`);
       return undefined;
     }
   }
