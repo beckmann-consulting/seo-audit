@@ -562,7 +562,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   const priorityLabels: Record<string, { de: string; en: string }> = {
     critical: { de: 'Kritisch', en: 'Critical' },
     important: { de: 'Wichtig', en: 'Important' },
-    recommended: { de: 'Optional', en: 'Optional' },
+    recommended: { de: 'Empfohlen', en: 'Recommended' },
     optional: { de: 'Optional', en: 'Optional' },
   };
 
