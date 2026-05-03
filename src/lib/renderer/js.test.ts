@@ -566,8 +566,7 @@ describe('JsRenderer.captureScreenshot', () => {
     await r.close();
   });
 
-  it('reuses the BrowserContext across screenshot + fetch calls', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+  it('reuses ONE screenshot context across multiple screenshot calls', async () => {
     const { browser } = setupForScreenshot();
     const r = new JsRenderer({
       endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
@@ -578,6 +577,146 @@ describe('JsRenderer.captureScreenshot', () => {
     await r.captureScreenshot('https://x.com/', { width: 1920, height: 1080 });
     expect(browser.newContext).toHaveBeenCalledTimes(1);
     await r.close();
+  });
+
+  it('uses a SEPARATE context for screenshots and crawl (each pass gets its own session)', async () => {
+    // Pre-fix the same context was reused for both. Browserless's
+    // CONNECTION_TIMEOUT killed the shared session during the gap
+    // between crawl and screenshots. Now: a fresh context is lazily
+    // created on the first screenshot call.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const { browser, goto } = setupForScreenshot();
+    // fetchWithBrowser expects goto to resolve to a non-null Response
+    // shape; the screenshot path doesn't care about the return value.
+    // One mock satisfies both.
+    goto.mockResolvedValue({
+      status: () => 200,
+      headers: () => ({ 'content-type': 'text/html' }),
+    } as never);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    await r.fetch('https://x.com/');                                                  // crawl context
+    await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });         // screenshot context
+    expect(browser.newContext).toHaveBeenCalledTimes(2);
+    await r.close();
+  });
+
+  it('retries exactly once after a "context closed" failure on the first attempt', async () => {
+    // Simulate the real-world Browserless symptom: first newPage()
+    // throws because the cached context is dead. The renderer should
+    // recreate the context and retry. Second attempt succeeds.
+    let pageCalls = 0;
+    const goodPage = {
+      on: vi.fn(),
+      setViewportSize: vi.fn(async () => {}),
+      goto: vi.fn(async () => {}),
+      content: vi.fn(async () => ''),
+      url: vi.fn(() => ''),
+      screenshot: vi.fn(async () => Buffer.from('OK')),
+      close: vi.fn(async () => {}),
+      waitForTimeout: vi.fn(async () => {}),
+    };
+    const deadContext = {
+      newPage: vi.fn(async () => {
+        throw new Error('browserContext.newPage: Target page, context or browser has been closed');
+      }),
+      close: vi.fn(async () => {}),
+    };
+    const liveContext = {
+      newPage: vi.fn(async () => {
+        pageCalls++;
+        return goodPage;
+      }),
+      close: vi.fn(async () => {}),
+    };
+    let ctxCalls = 0;
+    const browser = {
+      newContext: vi.fn(async () => {
+        ctxCalls++;
+        return ctxCalls === 1 ? deadContext : liveContext;
+      }),
+      close: vi.fn(async () => {}),
+    };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+
+    expect(result).toBe(Buffer.from('OK').toString('base64'));
+    expect(browser.newContext).toHaveBeenCalledTimes(2);  // dead + recreated
+    expect(pageCalls).toBe(1);                            // succeeded on the live context
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[screenshot] context closed, recreating'));
+    await r.close();
+  });
+
+  it('does NOT retry on goto-timeout (those use the partial-capture fallback path)', async () => {
+    const { browser, goto, screenshot } = setupForScreenshot();
+    goto.mockRejectedValueOnce(new Error('Timeout 15000ms exceeded'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    // Returns buffer from partial capture; context is NOT recreated.
+    expect(result).toBe(Buffer.from('FAKE_PNG_BYTES').toString('base64'));
+    expect(browser.newContext).toHaveBeenCalledTimes(1);
+    expect(screenshot).toHaveBeenCalledTimes(1);
+    await r.close();
+  });
+
+  it('does NOT retry on screenshot-encoding errors — fails clean', async () => {
+    const { browser, screenshot } = setupForScreenshot();
+    screenshot.mockRejectedValueOnce(new Error('PNG encoder broke'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    expect(result).toBeUndefined();
+    expect(browser.newContext).toHaveBeenCalledTimes(1);  // no retry
+    await r.close();
+  });
+
+  it('close() closes both crawl and screenshot contexts independently', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const closedCtxs: string[] = [];
+    const makeCtx = (label: string) => ({
+      newPage: vi.fn(async () => ({
+        on: vi.fn(),
+        setViewportSize: vi.fn(async () => {}),
+        goto: vi.fn(async () => ({ status: () => 200, headers: () => ({ 'content-type': 'text/html' }) })),
+        content: vi.fn(async () => '<html></html>'),
+        url: vi.fn(() => 'https://x.com/'),
+        screenshot: vi.fn(async () => Buffer.from('')),
+        close: vi.fn(async () => {}),
+        waitForTimeout: vi.fn(async () => {}),
+      })),
+      close: vi.fn(async () => { closedCtxs.push(label); }),
+    });
+    let ctxIdx = 0;
+    const browser = {
+      newContext: vi.fn(async () => (ctxIdx++ === 0 ? makeCtx('crawl') : makeCtx('screenshot'))),
+      close: vi.fn(async () => {}),
+    };
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+    await r.fetch('https://x.com/');
+    await r.captureScreenshot('https://x.com/', { width: 375, height: 667 });
+    await r.close();
+
+    expect(closedCtxs.sort()).toEqual(['crawl', 'screenshot']);
   });
 });
 

@@ -26,8 +26,14 @@ services:
       # Concurrency: validated against twb-server CPX32 (8 GiB, swap=0).
       MAX_CONCURRENT_SESSIONS: 2
       MAX_QUEUE_LENGTH: 4
-      # Aggressive timeouts because no swap = no OOM safety net.
-      CONNECTION_TIMEOUT: 30000
+      # 2 minutes — covers realistic idle gaps between crawl-end and
+      # screenshot-start filled by sequential PSI / SSL Labs / Bing
+      # API calls. Was 30000, which killed sessions on multi-page
+      # Webflow audits ("Target page, context or browser has been
+      # closed" in journalctl). Not raised higher to avoid keeping
+      # zombie sessions alive after an audit aborts; 120s is the
+      # tightest value that comfortably covers the worst observed gap.
+      CONNECTION_TIMEOUT: 120000
       DEFAULT_LAUNCH_ARGS: '["--no-sandbox"]'
       # Token must be set in .env (see .env.example). The seo-audit
       # service reads BROWSERLESS_TOKEN from its own env and connects

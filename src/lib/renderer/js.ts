@@ -73,18 +73,26 @@ export class JsRenderer implements Renderer {
   private readonly staticRenderer: StaticRenderer;
   private readonly pageTimeoutMs: number;
   private browserPromise?: Promise<Browser>;
-  private contextPromise?: Promise<BrowserContext>;
+  // Two distinct contexts — one for the crawl pass, one for screenshots.
+  // Pre-fix the renderer reused a single shared context for the entire
+  // audit. Browserless's CONNECTION_TIMEOUT (default 30s) tore down the
+  // session during the gap between crawl-end and screenshot-start
+  // (filled by sequential PSI / SSL Labs / Bing API calls). Every
+  // screenshot then failed with "browserContext.newPage: Target page,
+  // context or browser has been closed". By creating the screenshot
+  // context lazily on FIRST captureScreenshot call, we guarantee a
+  // fresh session at the moment screenshots actually run.
+  private crawlContext: BrowserContext | null = null;
+  private screenshotContext: BrowserContext | null = null;
 
   constructor(private readonly opts: JsRendererOptions) {
     this.staticRenderer = new StaticRenderer(opts);
     this.pageTimeoutMs = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
   }
 
-  // Lazy connect — only on the first fetch. Errors propagate so the
-  // caller can show a clear message ("Browserless not reachable").
-  private async getContext(): Promise<BrowserContext> {
-    if (this.contextPromise) return this.contextPromise;
-
+  // Connect lazily on the first context request. Errors propagate so
+  // the caller can show a clear message ("Browserless not reachable").
+  private async createContext(): Promise<BrowserContext> {
     if (!this.browserPromise) {
       const ws = `${this.opts.endpoint}?token=${encodeURIComponent(this.opts.token)}`;
       const connect = this.opts.connect ?? (async (target: string) => {
@@ -99,11 +107,22 @@ export class JsRenderer implements Renderer {
     if (this.opts.authHeader) extraHTTPHeaders['Authorization'] = this.opts.authHeader;
     if (this.opts.customHeaders) Object.assign(extraHTTPHeaders, this.opts.customHeaders);
 
-    this.contextPromise = browser.newContext({
+    return browser.newContext({
       userAgent: this.opts.userAgent,
       extraHTTPHeaders,
     });
-    return this.contextPromise;
+  }
+
+  private async getCrawlContext(): Promise<BrowserContext> {
+    if (this.crawlContext) return this.crawlContext;
+    this.crawlContext = await this.createContext();
+    return this.crawlContext;
+  }
+
+  private async getScreenshotContext(): Promise<BrowserContext> {
+    if (this.screenshotContext) return this.screenshotContext;
+    this.screenshotContext = await this.createContext();
+    return this.screenshotContext;
   }
 
   async fetch(url: string): Promise<RenderResult> {
@@ -154,7 +173,7 @@ export class JsRenderer implements Renderer {
 
   private async fetchWithBrowser(url: string): Promise<RenderResult> {
     const start = Date.now();
-    const ctx = await this.getContext();
+    const ctx = await this.getCrawlContext();
     const page = await ctx.newPage();
 
     const consoleErrors: string[] = [];
@@ -288,8 +307,11 @@ export class JsRenderer implements Renderer {
     url: string,
     viewport: { width: number; height: number },
   ): Promise<string | undefined> {
-    try {
-      const ctx = await this.getContext();
+    // Inner attempt: takes a context, runs the full goto + screenshot
+    // path against it. Used twice — once with the cached screenshot
+    // context, and (only if Browserless reports the context is dead)
+    // once more with a freshly-created replacement.
+    const attempt = async (ctx: BrowserContext): Promise<string> => {
       const page = await ctx.newPage();
       try {
         await page.setViewportSize(viewport);
@@ -313,13 +335,32 @@ export class JsRenderer implements Renderer {
       } finally {
         await page.close().catch(() => { /* page may already be closed */ });
       }
+    };
+
+    try {
+      const ctx = await this.getScreenshotContext();
+      return await attempt(ctx);
     } catch (err) {
-      // Reaches here on context-creation failure, newPage rejection
-      // (Browserless overload), setViewportSize errors, or screenshot
-      // encoding failures. Log with enough info that journalctl
-      // immediately tells us which class — without this every
-      // Browserless instability was an invisible silent fail.
       const reason = err instanceof Error ? err.message : String(err);
+      // Self-heal Browserless's "session timed out" failure mode: drop
+      // the cached screenshot context, recreate, retry exactly once.
+      // Other failures (encoding, real timeout) don't retry — they're
+      // not recoverable by another attempt.
+      if (reason.includes('Target page, context or browser has been closed')) {
+        console.warn(`[screenshot] context closed, recreating: url=${url}`);
+        this.screenshotContext = null;
+        try {
+          const ctx = await this.getScreenshotContext();
+          return await attempt(ctx);
+        } catch (retryErr) {
+          const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          console.error(`[screenshot] failed after retry: url=${url} viewport=${viewport.width}x${viewport.height} reason=${retryReason}`);
+          return undefined;
+        }
+      }
+      // Reaches here on context-creation failure, newPage rejection
+      // (Browserless overload non-context-closed), setViewportSize
+      // errors, or screenshot encoding failures.
       console.error(`[screenshot] failed: url=${url} viewport=${viewport.width}x${viewport.height} reason=${reason}`);
       return undefined;
     }
@@ -327,8 +368,15 @@ export class JsRenderer implements Renderer {
 
   async close(): Promise<void> {
     // Best-effort close — never let cleanup errors poison the audit.
-    if (this.contextPromise) {
-      try { await (await this.contextPromise).close(); } catch { /* ignore */ }
+    // Both contexts get closed independently (either may be null if
+    // its pass never ran for this audit).
+    if (this.crawlContext) {
+      try { await this.crawlContext.close(); } catch { /* ignore */ }
+      this.crawlContext = null;
+    }
+    if (this.screenshotContext) {
+      try { await this.screenshotContext.close(); } catch { /* ignore */ }
+      this.screenshotContext = null;
     }
     if (this.browserPromise) {
       try { await (await this.browserPromise).close(); } catch { /* ignore */ }
