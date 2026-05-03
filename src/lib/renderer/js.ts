@@ -162,8 +162,17 @@ export class JsRenderer implements Renderer {
       // whole fetch including axe so the two metrics measure
       // different things on purpose.
       const renderStart = Date.now();
+      // 'load' waits for window.load — primary HTML + main subresources
+      // settled. Switched away from 'networkidle' (= 500ms of network
+      // silence) because heavy 3rd-party trackers / Webflow animation
+      // runtimes / chat embeds keep firing background requests forever
+      // and the page never reached idle within the 30s budget. 'load'
+      // misses lazy-loaded below-the-fold content, but most SEO-relevant
+      // markup is above the fold or rendered synchronously, and the
+      // diff vs 'networkidle' is far less destructive than every
+      // such page being reported as broken.
       const navResp = await page.goto(url, {
-        waitUntil: 'networkidle',
+        waitUntil: 'load',
         timeout: this.pageTimeoutMs,
       });
 
