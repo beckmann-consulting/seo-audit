@@ -4,7 +4,7 @@ import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
-import { formatMetricRow, type MetricKey } from './util/metric-thresholds';
+import { formatMetricRow, formatComparator, type MetricKey } from './util/metric-thresholds';
 import {
   classifyAIBotRow, classifyLlmsTxt,
   classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
@@ -851,6 +851,12 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     // PageSpeed — formatMetricRow picks one unit (ms vs seconds) per row
     // for both the value and the threshold comparator, so a reader never
     // sees "20.3s" next to "good: <2500ms" in the same line.
+    //
+    // CrUX field-data metrics with source='unavailable' (no real-user
+    // data for this site) render as "not available (insufficient
+    // real-user data)" in neutral gray. The threshold comparator still
+    // shows so the reader still sees the target range — they just can't
+    // measure against it yet.
     if (result.pageSpeedData && !result.pageSpeedData.error) {
       const ps = result.pageSpeedData;
       const locale: 'de' | 'en' = isDE ? 'de' : 'en';
@@ -861,24 +867,41 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
         const f = formatMetricRow(raw, key, locale);
         psiRows.push({ label, value: f.display, severity: ratingToSeverity(f.rating), note: f.comparator });
       };
+      const pushPsiUnavailable = (label: string, key: MetricKey) => {
+        psiRows.push({
+          label,
+          value: t('nicht verfügbar (zu wenig Real-User-Daten)', 'not available (insufficient real-user data)'),
+          severity: 'neutral',
+          note: formatComparator(key, locale),
+        });
+      };
+      const pushCruxMetric = (label: string, key: MetricKey, value: number | undefined, source: typeof ps.lcpSource) => {
+        if (source === 'field' && value !== undefined) pushPsi(label, value, key);
+        else pushPsiUnavailable(label, key);
+      };
+      // Lab-only scores: always render directly.
       if (ps.performanceScore !== undefined) pushPsi('Performance', ps.performanceScore, 'score');
       if (ps.seoScore !== undefined) pushPsi('SEO', ps.seoScore, 'score');
       if (ps.accessibilityScore !== undefined) pushPsi(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score');
       if (ps.bestPracticesScore !== undefined) pushPsi(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score');
-      if (ps.lcp !== undefined) pushPsi('LCP', ps.lcp, 'lcp');
-      if (ps.cls !== undefined) pushPsi('CLS', ps.cls, 'cls');
-      if (ps.inp !== undefined) pushPsi('INP', ps.inp, 'inp');
-      // FID: legacy metric INP replaced in March 2024. No web.dev
-      // comparator any more; falls back to the historical 100ms cutoff.
-      if (ps.fidField !== undefined) {
+      // CrUX field metrics: render the row regardless of availability so
+      // readers see the metric exists; value cell shows availability.
+      pushCruxMetric('LCP', 'lcp', ps.lcp, ps.lcpSource);
+      pushCruxMetric('CLS', 'cls', ps.cls, ps.clsSource);
+      pushCruxMetric('INP', 'inp', ps.inp, ps.inpSource);
+      // FID is the legacy CrUX metric INP replaced in March 2024 — only
+      // render when present, no comparator since web.dev no longer
+      // publishes one.
+      if (ps.fidFieldSource === 'field' && ps.fidField !== undefined) {
         psiRows.push({
           label: t('FID (Feld)', 'FID (field)'),
           value: `${Math.round(ps.fidField)}ms`,
           severity: ps.fidField < 100 ? 'good' : 'warn',
         });
       }
-      if (ps.fcp !== undefined) pushPsi('FCP', ps.fcp, 'fcp');
-      if (ps.ttfb !== undefined) pushPsi('TTFB', ps.ttfb, 'ttfb');
+      pushCruxMetric('FCP', 'fcp', ps.fcp, ps.fcpSource);
+      pushCruxMetric('TTFB', 'ttfb', ps.ttfb, ps.ttfbSource);
+      // TBT is lab-only — always present and meaningful.
       if (ps.tbt !== undefined) pushPsi('TBT', ps.tbt, 'tbt');
       renderTechTable(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'), psiRows);
     }

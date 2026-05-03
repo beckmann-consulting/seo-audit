@@ -350,6 +350,26 @@ async function runAudit(
     }
   }
 
+  // Performance module score fallback when CrUX field data is sparse.
+  // Without enough field metrics we can't emit per-metric findings, so
+  // the findings-based score would be inflated (no findings = high
+  // score) and misleading. Use the Lighthouse Performance score
+  // directly as the module score in that case — lab perf score is a
+  // meaningful measurement on its own, even if the per-metric values
+  // shouldn't be shown to users. Mixed availability (≥2 CrUX metrics
+  // available) keeps the standard findings-based score.
+  const perfModule = moduleScores.find(m => m.module === 'performance');
+  if (perfModule && pageSpeedData?.performanceScore !== undefined) {
+    const cruxAvailableCount = (
+      [pageSpeedData.lcpSource, pageSpeedData.inpSource, pageSpeedData.clsSource,
+       pageSpeedData.fcpSource, pageSpeedData.ttfbSource]
+        .filter(s => s === 'field').length
+    );
+    if (cruxAvailableCount < 2) {
+      perfModule.score = pageSpeedData.performanceScore;
+    }
+  }
+
   const totalScore = moduleScores.length > 0
     ? Math.round(moduleScores.reduce((s, m) => s + m.score, 0) / moduleScores.length)
     : 50;

@@ -340,27 +340,51 @@ async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<Pag
       };
     }
 
+    // CrUX field-data metrics — read from loadingExperience.metrics.
+    // We deliberately do NOT fall back to lab values for any of these
+    // (LCP, CLS, FCP, INP, TTFB, FID-field). Lab measurements come
+    // from a Google datacenter adjacent to the origin and routinely
+    // return numbers that misrepresent end-user experience (e.g. TTFB
+    // 3ms for any CDN-fronted site). When a metric is missing from
+    // CrUX the renderer shows "not available (insufficient real-user
+    // data)" instead — see PsiMetricSource in @/types.
+    //
+    // Unit notes: LCP/FCP/INP/TTFB/FID percentiles are already in ms.
+    // CLS is stored as integer × 100 (so 5 means 0.05) — divide here
+    // so consumers compare against the canonical decimal threshold.
+    const cruxLcp = cruxMetrics?.LARGEST_CONTENTFUL_PAINT_MS?.percentile;
+    const cruxFcp = cruxMetrics?.FIRST_CONTENTFUL_PAINT_MS?.percentile;
+    const cruxClsRaw = cruxMetrics?.CUMULATIVE_LAYOUT_SHIFT_SCORE?.percentile;
+    const cruxInp = cruxMetrics?.INTERACTION_TO_NEXT_PAINT_MS?.percentile;
+    const cruxTtfb = cruxMetrics?.EXPERIMENTAL_TIME_TO_FIRST_BYTE?.percentile;
+    const cruxFid = cruxMetrics?.FIRST_INPUT_DELAY_MS?.percentile;
+
+    const lcp = typeof cruxLcp === 'number' ? cruxLcp : undefined;
+    const fcp = typeof cruxFcp === 'number' ? cruxFcp : undefined;
+    const cls = typeof cruxClsRaw === 'number' ? cruxClsRaw / 100 : undefined;
+    const inp = typeof cruxInp === 'number' ? cruxInp : undefined;
+    const ttfb = typeof cruxTtfb === 'number' ? cruxTtfb : undefined;
+    const fidField = typeof cruxFid === 'number' ? cruxFid : undefined;
+
     return {
       performanceScore: cats?.performance?.score != null ? Math.round(cats.performance.score * 100) : undefined,
       accessibilityScore: cats?.accessibility?.score != null ? Math.round(cats.accessibility.score * 100) : undefined,
       seoScore: cats?.seo?.score != null ? Math.round(cats.seo.score * 100) : undefined,
       bestPracticesScore: cats?.['best-practices']?.score != null ? Math.round(cats['best-practices'].score * 100) : undefined,
-      lcp: audits?.['largest-contentful-paint']?.numericValue,
-      cls: audits?.['cumulative-layout-shift']?.numericValue,
+      lcp,
+      lcpSource: lcp !== undefined ? 'field' : 'unavailable',
+      cls,
+      clsSource: cls !== undefined ? 'field' : 'unavailable',
+      fcp,
+      fcpSource: fcp !== undefined ? 'field' : 'unavailable',
+      inp,
+      inpSource: inp !== undefined ? 'field' : 'unavailable',
+      ttfb,
+      ttfbSource: ttfb !== undefined ? 'field' : 'unavailable',
+      fidField,
+      fidFieldSource: fidField !== undefined ? 'field' : 'unavailable',
+      // Lab-only metrics — always present when PSI ran successfully.
       fid: audits?.['max-potential-fid']?.numericValue,
-      inp: cruxMetrics?.INTERACTION_TO_NEXT_PAINT_MS?.percentile,
-      fidField: cruxMetrics?.FIRST_INPUT_DELAY_MS?.percentile,
-      // TTFB: prefer the CrUX field-data percentile (real-user p75 from
-       // Chrome traffic) when available — Lighthouse's lab-side
-       // 'server-response-time' is measured from a Google datacenter
-       // adjacent to the origin and routinely returns sub-10ms values
-       // that don't reflect end-user reality (Tobias flagged "TTFB 3ms"
-       // on deepcyte.bio's audit; verified against PSI v5 docs that the
-       // value really was what PSI returned, just from the wrong
-       // metric source). Field data is the canonical SEO TTFB.
-      ttfb: cruxMetrics?.EXPERIMENTAL_TIME_TO_FIRST_BYTE?.percentile
-        ?? audits?.['server-response-time']?.numericValue,
-      fcp: audits?.['first-contentful-paint']?.numericValue,
       si: audits?.['speed-index']?.numericValue,
       tbt: audits?.['total-blocking-time']?.numericValue,
       structuredDataAuditWarning,
@@ -385,21 +409,32 @@ function avgDefined(values: (number | undefined)[]): number | undefined {
 // the same page.
 function aggregatePageSpeedRuns(runs: PageSpeedData[]): PageSpeedData {
   const round = (v: number | undefined) => (v === undefined ? undefined : Math.round(v));
+  // Source flags are deterministic across same-day runs (CrUX coverage
+  // doesn't flip between two PSI calls a few seconds apart). Take from
+  // the first run so the aggregated PageSpeedData carries the same
+  // source semantics consumers see for single-run audits.
+  const first = runs[0];
   return {
     performanceScore: round(avgDefined(runs.map(r => r.performanceScore))),
     accessibilityScore: round(avgDefined(runs.map(r => r.accessibilityScore))),
     seoScore: round(avgDefined(runs.map(r => r.seoScore))),
     bestPracticesScore: round(avgDefined(runs.map(r => r.bestPracticesScore))),
+    // CrUX field metrics — averaging is a no-op (identical across same-day
+    // runs) but keeps the code shape uniform. Source preserved from run 1.
     lcp: avgDefined(runs.map(r => r.lcp)),
+    lcpSource: first?.lcpSource,
     cls: avgDefined(runs.map(r => r.cls)),
-    fid: avgDefined(runs.map(r => r.fid)),
-    // CrUX field data (inp, fidField) is already a 28-day p75 so it's
-    // identical across runs within the same day — averaging is a no-op
-    // but cheap, and keeps the code shape uniform.
+    clsSource: first?.clsSource,
     inp: avgDefined(runs.map(r => r.inp)),
+    inpSource: first?.inpSource,
     fidField: avgDefined(runs.map(r => r.fidField)),
+    fidFieldSource: first?.fidFieldSource,
     ttfb: avgDefined(runs.map(r => r.ttfb)),
+    ttfbSource: first?.ttfbSource,
     fcp: avgDefined(runs.map(r => r.fcp)),
+    fcpSource: first?.fcpSource,
+    // Lab-only metrics
+    fid: avgDefined(runs.map(r => r.fid)),
     si: avgDefined(runs.map(r => r.si)),
     tbt: avgDefined(runs.map(r => r.tbt)),
     structuredDataAuditWarning: runs[0]?.structuredDataAuditWarning,

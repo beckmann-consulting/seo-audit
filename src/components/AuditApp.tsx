@@ -11,7 +11,7 @@ import { getVisibleGscWarnings } from './gsc-warnings';
 import { BingRowsTable } from './BingRowsTable';
 import { getVisibleBingWarnings } from './bing-warnings';
 import { checkPatterns, type PatternError } from './audit-form-validation';
-import { formatMetricRow, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
+import { formatMetricRow, formatComparator, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
 import {
   classifyAIBotRow, classifyLlmsTxt,
   classifyHsts, classifyXContentTypeOptions, classifyXFrameOptions,
@@ -1290,7 +1290,9 @@ export default function AuditApp() {
                 const ps = result.pageSpeedData;
                 const locale: 'de' | 'en' = isDE ? 'de' : 'en';
                 // formatMetricRow picks one unit per row for both value
-                // and threshold comparator — see metric-thresholds.ts.
+                // and threshold comparator. CrUX field metrics with
+                // source='unavailable' render as "not available" in
+                // gray — same gating as the PDF, see pdf-generator.ts.
                 const psiRow = (label: string, raw: number, key: MetricKey) => {
                   const f = formatMetricRow(raw, key, locale);
                   return (
@@ -1302,19 +1304,31 @@ export default function AuditApp() {
                     />
                   );
                 };
+                const psiUnavailableRow = (label: string, key: MetricKey) => (
+                  <TechRow
+                    label={label}
+                    value={t('nicht verfügbar (zu wenig Real-User-Daten)', 'not available (insufficient real-user data)')}
+                    severity="neutral"
+                    note={formatComparator(key, locale)}
+                  />
+                );
+                const cruxRow = (label: string, key: MetricKey, value: number | undefined, source: typeof ps.lcpSource) =>
+                  source === 'field' && value !== undefined ? psiRow(label, value, key) : psiUnavailableRow(label, key);
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>PageSpeed (Mobile)</h3>
                     {ps.performanceScore !== undefined && psiRow('Performance', ps.performanceScore, 'score')}
                     {ps.seoScore !== undefined && psiRow('SEO', ps.seoScore, 'score')}
                     {ps.accessibilityScore !== undefined && psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score')}
-                    {ps.lcp !== undefined && psiRow('LCP', ps.lcp, 'lcp')}
-                    {ps.cls !== undefined && psiRow('CLS', ps.cls, 'cls')}
-                    {ps.inp !== undefined && psiRow('INP', ps.inp, 'inp')}
-                    {/* FID is the legacy metric INP replaced in March 2024 — kept
-                        for sites that still publish it in CrUX. No threshold
-                        comparator since web.dev no longer publishes one. */}
-                    {ps.fidField !== undefined && <TechRow label={t('FID (Legacy)', 'FID (legacy)')} value={`${Math.round(ps.fidField)}ms`} ok={ps.fidField < 100} />}
+                    {cruxRow('LCP', 'lcp', ps.lcp, ps.lcpSource)}
+                    {cruxRow('CLS', 'cls', ps.cls, ps.clsSource)}
+                    {cruxRow('INP', 'inp', ps.inp, ps.inpSource)}
+                    {/* FID is the legacy CrUX metric INP replaced in March 2024 —
+                        only show when present, no comparator since web.dev no
+                        longer publishes one. */}
+                    {ps.fidFieldSource === 'field' && ps.fidField !== undefined && (
+                      <TechRow label={t('FID (Legacy)', 'FID (legacy)')} value={`${Math.round(ps.fidField)}ms`} ok={ps.fidField < 100} />
+                    )}
                   </div>
                 );
               })()}

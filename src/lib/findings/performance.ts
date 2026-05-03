@@ -52,6 +52,27 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
 
   if (!pageSpeed || pageSpeed.error) return findings;
 
+  // CrUX field-data availability hint. When 2+ of the user-experience
+  // metrics (LCP, INP, CLS, FCP, TTFB) are 'unavailable' the site is
+  // probably too new or too low-traffic for CrUX coverage. Emit a
+  // single optional informational finding rather than letting the
+  // missing per-metric findings produce a misleadingly green
+  // performance module score.
+  const cruxKeys: ('lcpSource' | 'inpSource' | 'clsSource' | 'fcpSource' | 'ttfbSource')[] =
+    ['lcpSource', 'inpSource', 'clsSource', 'fcpSource', 'ttfbSource'];
+  const unavailableCount = cruxKeys.filter(k => pageSpeed[k] === 'unavailable').length;
+  if (unavailableCount >= 2) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'performance', effort: 'low', impact: 'low',
+      title_de: 'Real-User-Performance-Daten noch nicht verfügbar',
+      title_en: 'Real-user performance data not yet available',
+      description_de: `Für ${unavailableCount} von 5 Core Web Vitals (LCP, INP, CLS, FCP, TTFB) liegen aktuell keine CrUX-Field-Daten vor. Google's CrUX-Datensatz benötigt typischerweise einige tausend Chrome-User-Sessions im 28-Tage-Fenster, bevor Metriken sichtbar werden — bei neuen oder traffic-armen Sites ist das normal und kein Defekt. Lab-Daten werden bewusst NICHT als Ersatz gezeigt, weil Lighthouse aus einem Google-Datacenter neben dem Origin misst und Werte (z.B. TTFB 3ms) liefert, die nicht der Nutzererfahrung entsprechen.`,
+      description_en: `Field data is currently unavailable for ${unavailableCount} of 5 Core Web Vitals (LCP, INP, CLS, FCP, TTFB). Google's CrUX dataset typically needs several thousand Chrome user sessions within the 28-day window before metrics become measurable — for new or low-traffic sites this is normal and not a defect. Lab data is deliberately NOT shown as a substitute because Lighthouse measures from a Google datacenter adjacent to the origin and produces values (e.g. TTFB 3ms) that don't reflect end-user reality.`,
+      recommendation_de: 'Sobald die Site genügend Traffic hat (typisch: einige tausend monatliche Besucher), erscheinen CrUX-Werte automatisch. Bis dahin: Performance-Score von Lighthouse + manuelle Lab-Audits in DevTools nutzen, um die Größenordnung einzuschätzen.',
+      recommendation_en: 'Once the site has enough traffic (typically: several thousand monthly visitors), CrUX values appear automatically. Until then: use the Lighthouse Performance score + manual lab audits in DevTools to estimate the order of magnitude.',
+    });
+  }
+
   // Hysterese-Puffer: Lighthouse-Score variiert dokumentiert ±3-7 Punkte
   // zwischen Läufen selbst nach Multi-Run-Averaging. Schwellen wurden
   // von <50 auf <47 bzw. <75 auf <72 zurückgezogen, damit Scores im

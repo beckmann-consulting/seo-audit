@@ -149,55 +149,95 @@ describe('checkSSL — DNS status loop', () => {
 });
 
 // ============================================================
-//  checkPageSpeed — TTFB source preference
+//  checkPageSpeed — CrUX field-data source enforcement
 // ============================================================
-// PSI's lab `server-response-time` audit is measured from a Google
-// datacenter and routinely returns sub-10ms values for any origin
-// behind a CDN — not what a user actually experiences. CrUX field
-// data (EXPERIMENTAL_TIME_TO_FIRST_BYTE.percentile) is the canonical
-// real-user TTFB. The parser prefers field over lab; tests below
-// pin both halves of that contract.
-describe('checkPageSpeed — TTFB source preference', () => {
-  function psiBody(opts: { labTtfb?: number; cruxTtfb?: number }) {
-    const audits: Record<string, { numericValue: number }> = {
-      'largest-contentful-paint': { numericValue: 2400 },
-      'cumulative-layout-shift': { numericValue: 0.05 },
-      'first-contentful-paint': { numericValue: 1200 },
-      'total-blocking-time': { numericValue: 150 },
-      'max-potential-fid': { numericValue: 100 },
-      'speed-index': { numericValue: 2000 },
-    };
-    if (opts.labTtfb !== undefined) {
-      audits['server-response-time'] = { numericValue: opts.labTtfb };
-    }
-    const metrics: Record<string, { percentile: number }> = {};
-    if (opts.cruxTtfb !== undefined) {
-      metrics.EXPERIMENTAL_TIME_TO_FIRST_BYTE = { percentile: opts.cruxTtfb };
-    }
+// PSI's lab metrics for LCP/CLS/FCP/INP/TTFB are measured from a
+// Google datacenter adjacent to the origin and routinely return
+// numbers that misrepresent end-user experience (e.g. TTFB 3ms for
+// any CDN-fronted site). The parser deliberately reads ONLY CrUX
+// field-data percentiles for these metrics — when field data is
+// missing, the value is undefined and the matching *Source flag is
+// 'unavailable', so renderers can show "not available" instead of
+// silently falling back to the misleading lab value.
+describe('checkPageSpeed — CrUX field-data sources', () => {
+  function psiBody(metrics: Record<string, { percentile: number }>) {
     return jsonResponse({
       lighthouseResult: {
         categories: { performance: { score: 0.8 } },
-        audits,
+        audits: {
+          // lab values present so we can prove we DON'T fall back to them
+          'largest-contentful-paint': { numericValue: 99 },
+          'cumulative-layout-shift': { numericValue: 0.001 },
+          'first-contentful-paint': { numericValue: 99 },
+          'server-response-time': { numericValue: 3 },
+          'total-blocking-time': { numericValue: 150 },
+          'max-potential-fid': { numericValue: 50 },
+          'speed-index': { numericValue: 2000 },
+        },
       },
       loadingExperience: { metrics },
     });
   }
 
-  it('prefers CrUX field TTFB over the lab server-response-time', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({ labTtfb: 3, cruxTtfb: 540 })));
+  it('reads LCP/FCP/INP/TTFB/FID from CrUX field, never lab', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({
+      LARGEST_CONTENTFUL_PAINT_MS: { percentile: 2600 },
+      FIRST_CONTENTFUL_PAINT_MS: { percentile: 1700 },
+      INTERACTION_TO_NEXT_PAINT_MS: { percentile: 240 },
+      EXPERIMENTAL_TIME_TO_FIRST_BYTE: { percentile: 540 },
+      FIRST_INPUT_DELAY_MS: { percentile: 80 },
+    })));
     const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.lcp).toBe(2600);
+    expect(data.lcpSource).toBe('field');
+    expect(data.fcp).toBe(1700);
+    expect(data.fcpSource).toBe('field');
+    expect(data.inp).toBe(240);
+    expect(data.inpSource).toBe('field');
     expect(data.ttfb).toBe(540);
+    expect(data.ttfbSource).toBe('field');
+    expect(data.fidField).toBe(80);
+    expect(data.fidFieldSource).toBe('field');
   });
 
-  it('falls back to lab server-response-time when CrUX field is absent', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({ labTtfb: 320 })));
+  it('CLS percentile comes back as integer × 100 — divide to canonical decimal', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({
+      CUMULATIVE_LAYOUT_SHIFT_SCORE: { percentile: 5 },
+    })));
     const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
-    expect(data.ttfb).toBe(320);
+    expect(data.cls).toBeCloseTo(0.05, 5);
+    expect(data.clsSource).toBe('field');
   });
 
-  it('returns undefined when neither field nor lab TTFB is in the response', async () => {
+  it('marks every CrUX metric unavailable when no field data is present', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({})));
     const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.lcp).toBeUndefined();
+    expect(data.lcpSource).toBe('unavailable');
+    expect(data.cls).toBeUndefined();
+    expect(data.clsSource).toBe('unavailable');
+    expect(data.inp).toBeUndefined();
+    expect(data.inpSource).toBe('unavailable');
     expect(data.ttfb).toBeUndefined();
+    expect(data.ttfbSource).toBe('unavailable');
+    expect(data.fcp).toBeUndefined();
+    expect(data.fcpSource).toBe('unavailable');
+    // Lab-only metrics still come through — TBT and lab perf score are
+    // always meaningful regardless of CrUX coverage.
+    expect(data.tbt).toBe(150);
+    expect(data.performanceScore).toBe(80);
+  });
+
+  it('mixed availability: only the CrUX-present metrics get values', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(psiBody({
+      LARGEST_CONTENTFUL_PAINT_MS: { percentile: 2600 },
+      CUMULATIVE_LAYOUT_SHIFT_SCORE: { percentile: 8 },
+    })));
+    const data = await checkPageSpeed('https://example.com', 'fakeKey', 1);
+    expect(data.lcpSource).toBe('field');
+    expect(data.clsSource).toBe('field');
+    expect(data.inpSource).toBe('unavailable');
+    expect(data.ttfbSource).toBe('unavailable');
+    expect(data.fcpSource).toBe('unavailable');
   });
 });

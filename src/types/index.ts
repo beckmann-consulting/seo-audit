@@ -220,20 +220,44 @@ export interface DNSInfo {
   error?: string;
 }
 
+// Per-metric source for PSI values that PSI normally sources from CrUX
+// real-user field data. 'field' = the value comes from the 28-day p75
+// CrUX dataset and reflects actual user experience. 'unavailable' =
+// the site has insufficient CrUX coverage (typically too new or too
+// low traffic) and we deliberately do NOT fall back to lab values,
+// because lab measurements are taken from a Google datacenter
+// adjacent to the origin and routinely return single-digit ms for
+// CDN-fronted sites — misleading when shown as "your TTFB is 3ms".
+// Renderers gate on this enum to display "not available" instead.
+export type PsiMetricSource = 'field' | 'unavailable';
+
 export interface PageSpeedData {
+  // Lab-only — always present once PSI ran successfully.
   performanceScore?: number;
   accessibilityScore?: number;
   seoScore?: number;
   bestPracticesScore?: number;
-  lcp?: number;
-  cls?: number;
-  fid?: number; // Lab: max-potential-fid (legacy metric, replaced by INP)
-  inp?: number; // CrUX field data: Interaction to Next Paint (p75), replaces FID since March 2024
-  fidField?: number; // CrUX field data: real-user FID (p75), kept alongside INP
-  ttfb?: number;
-  fcp?: number;
-  si?: number;
   tbt?: number;
+  si?: number;
+  fid?: number; // Lab: max-potential-fid (legacy; kept for back-compat)
+
+  // CrUX field metrics — undefined when the site has no field coverage.
+  // Each carries a parallel *Source flag so renderers can distinguish
+  // "value not present" (PSI errored) from "field-unavailable for
+  // this metric specifically" (no CrUX coverage).
+  lcp?: number;
+  lcpSource?: PsiMetricSource;
+  cls?: number;
+  clsSource?: PsiMetricSource;
+  fcp?: number;
+  fcpSource?: PsiMetricSource;
+  inp?: number;            // CrUX p75 INP; replaced FID as Core Web Vital in 2024
+  inpSource?: PsiMetricSource;
+  ttfb?: number;
+  ttfbSource?: PsiMetricSource;
+  fidField?: number;       // CrUX p75 FID, legacy
+  fidFieldSource?: PsiMetricSource;
+
   structuredDataAuditWarning?: string; // Lighthouse 'structured-data' audit surfaces a warning
   // The DOM node Lighthouse identified as the largest contentful paint
   // target. snippet is the raw HTML, useful for showing the developer
