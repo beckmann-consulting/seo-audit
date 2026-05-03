@@ -9,6 +9,7 @@ import type { PageData, CrawlStats } from '@/types';
 import type { Renderer, RenderResult } from './renderer/types';
 import { StaticRenderer } from './renderer/static';
 import { urlMatches } from './util/url-filter';
+import { classifyAfterRendererThrow } from './util/crawl-classifier';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
@@ -198,14 +199,23 @@ export async function crawlSite(
           } catch {}
         }
       } catch (err) {
-        // Renderer threw — typically a JS-render timeout (page.goto
-        // with waitUntil: 'networkidle' / 'load' on a heavy site).
-        // Classified as renderFailed because the URL itself was likely
-        // reachable; the upstream commits add a HEAD-probe step here
-        // to verify and reclassify into httpErrors / unreachable when
-        // appropriate. For now: record the reason and keep crawling.
+        // Renderer threw — typically a JS-render timeout that even the
+        // static fallback couldn't recover from. HEAD-probe the URL
+        // with the same headers a real browser would send so we can
+        // tell apart "URL really 4xx/5xx" from "network unreachable"
+        // from "URL is fine, the JS render alone failed".
         const reason = err instanceof Error ? err.message : String(err);
-        renderFailed.push({ url, reason });
+        const probeHeaders: Record<string, string> = { 'User-Agent': userAgent };
+        if (authHeader) probeHeaders['Authorization'] = authHeader;
+        if (customHeaders) for (const [k, v] of Object.entries(customHeaders)) probeHeaders[k] = v;
+        const cls = await classifyAfterRendererThrow(url, reason, probeHeaders);
+        if (cls.bucket === 'httpErrors') {
+          httpErrors.push({ url, status: cls.status });
+        } else if (cls.bucket === 'unreachable') {
+          unreachable.push({ url, reason: cls.reason });
+        } else {
+          renderFailed.push({ url, reason: cls.reason });
+        }
       }
 
       // Small delay to be polite
