@@ -1229,11 +1229,26 @@ export default function AuditApp() {
                 return (
                   <div style={techCardStyle}>
                     <h3 style={techCardTitle}>DNS / E-Mail</h3>
-                    <TechRow label="SPF" value={result.dnsInfo.hasSPF ? '✓' : '✗'} severity={result.dnsInfo.hasSPF ? 'good' : missingSev} />
+                    <TechRow
+                      label="SPF"
+                      value={result.dnsInfo.hasSPF ? '✓' : '✗'}
+                      severity={result.dnsInfo.hasSPF ? 'good' : missingSev}
+                      detail={result.dnsInfo.hasSPF && result.dnsInfo.spfRecord ? result.dnsInfo.spfRecord : undefined}
+                    />
                     <TechRow label="DKIM" value={result.dnsInfo.hasDKIM ? '✓' : '✗'} severity={result.dnsInfo.hasDKIM ? 'good' : missingSev} />
-                    <TechRow label="DMARC" value={result.dnsInfo.hasDMARC ? '✓' : '✗'} severity={result.dnsInfo.hasDMARC ? 'good' : missingSev} />
+                    <TechRow
+                      label="DMARC"
+                      value={result.dnsInfo.hasDMARC ? '✓' : '✗'}
+                      severity={result.dnsInfo.hasDMARC ? 'good' : missingSev}
+                      detail={result.dnsInfo.hasDMARC && result.dnsInfo.dmarcRecord ? result.dnsInfo.dmarcRecord : undefined}
+                    />
                     {hasMx && (
-                      <TechRow label="MX" value={result.dnsInfo.mxRecords![0]} severity="neutral" />
+                      <TechRow
+                        label="MX"
+                        value={`${result.dnsInfo.mxRecords!.length} ${result.dnsInfo.mxRecords!.length === 1 ? t('Eintrag', 'record') : t('Einträge', 'records')}`}
+                        severity="neutral"
+                        detail={result.dnsInfo.mxRecords!.join('\n')}
+                      />
                     )}
                   </div>
                 );
@@ -1767,12 +1782,32 @@ const SEVERITY_COLORS: Record<TechSeverity, string> = {
 
 // Backwards-compatible: callers can pass severity for fine-grained
 // color semantics, or fall back to the legacy ok=boolean (good/bad).
-function TechRow({ label, value, ok, severity }: { label: string; value: string; ok?: boolean; severity?: TechSeverity }) {
+// `detail` is rendered as a monospace sub-line below the value row —
+// used for raw DNS records (SPF / DMARC / MX) where the actual string
+// is more useful than a tick. `\n` separators in detail are preserved
+// (whitespace: pre-wrap), and overlong strings break at any character
+// to prevent layout overflow.
+function TechRow({ label, value, ok, severity, detail }: { label: string; value: string; ok?: boolean; severity?: TechSeverity; detail?: string }) {
   const sev: TechSeverity = severity ?? (ok === undefined ? 'neutral' : ok ? 'good' : 'bad');
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border-soft)', fontSize: 12 }}>
-      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-      <span style={{ fontWeight: 600, color: SEVERITY_COLORS[sev] }}>{value}</span>
+    <div style={{ padding: '4px 0', borderBottom: '1px solid var(--border-soft)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+        <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ fontWeight: 600, color: SEVERITY_COLORS[sev] }}>{value}</span>
+      </div>
+      {detail && (
+        <div style={{
+          marginTop: 4,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          fontSize: 11,
+          color: 'var(--text-muted)',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          lineHeight: 1.45,
+        }}>
+          {detail}
+        </div>
+      )}
     </div>
   );
 }

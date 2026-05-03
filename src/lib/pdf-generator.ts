@@ -184,7 +184,12 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // '✓' and '✗' are special-cased and drawn as vector primitives — Inter
   // does not include the Dingbats block, and using a built-in font for
   // these glyphs would re-trigger the WinAnsi encoding bug.
-  const techRow = (label: string, value: string, ok: boolean = true) => {
+  //
+  // Optional `detail` renders below the row in the built-in Courier font
+  // (jsPDF Courier is WinAnsi-only but DNS records are ASCII, so safe).
+  // `\n` in detail is treated as a hard line break; long unwrappable
+  // strings get character-level wrapping via splitTextToSize.
+  const techRow = (label: string, value: string, ok: boolean = true, detail?: string) => {
     checkPage(5);
     setText(COLOR_SUBTEXT);
     doc.setFont(INTER_FONT_FAMILY, 'normal');
@@ -201,6 +206,24 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 65);
       doc.text(valueLines, CONTENT_LEFT + 60, y);
       y += valueLines.length * 4 + 0.8;
+    }
+    if (detail) {
+      setText(COLOR_SUBTEXT);
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(7.5);
+      for (const rawLine of detail.split('\n')) {
+        const wrapped = doc.splitTextToSize(rawLine, CONTENT_W - 8);
+        for (const line of wrapped) {
+          checkPage(3.5);
+          doc.text(line, CONTENT_LEFT + 4, y);
+          y += 3.2;
+        }
+      }
+      // Reset font so subsequent direct doc.text() calls outside techRow
+      // never accidentally render in Courier.
+      doc.setFont(INTER_FONT_FAMILY, 'normal');
+      doc.setFontSize(8);
+      y += 1;
     }
   };
 
@@ -759,11 +782,23 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     // DNS
     if (result.dnsInfo) {
       h2(t('DNS & E-Mail', 'DNS & Email'));
-      techRow('SPF', result.dnsInfo.hasSPF ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasSPF);
+      techRow(
+        'SPF',
+        result.dnsInfo.hasSPF ? '✓' : t('fehlt', 'missing'),
+        result.dnsInfo.hasSPF,
+        result.dnsInfo.hasSPF && result.dnsInfo.spfRecord ? result.dnsInfo.spfRecord : undefined,
+      );
       techRow('DKIM', result.dnsInfo.hasDKIM ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasDKIM);
-      techRow('DMARC', result.dnsInfo.hasDMARC ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasDMARC);
+      techRow(
+        'DMARC',
+        result.dnsInfo.hasDMARC ? '✓' : t('fehlt', 'missing'),
+        result.dnsInfo.hasDMARC,
+        result.dnsInfo.hasDMARC && result.dnsInfo.dmarcRecord ? result.dnsInfo.dmarcRecord : undefined,
+      );
       if (result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0) {
-        techRow('MX', result.dnsInfo.mxRecords.join(', '));
+        const mx = result.dnsInfo.mxRecords;
+        const label = mx.length === 1 ? t('Eintrag', 'record') : t('Einträge', 'records');
+        techRow('MX', `${mx.length} ${label}`, true, mx.join('\n'));
       }
     }
 
