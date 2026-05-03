@@ -101,30 +101,6 @@ body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; colo
 
 /* ---- Categories ---- */
 .categories { display: flex; flex-direction: column; gap: 10px; margin-bottom: 1.5rem; }
-.cat-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; cursor: pointer; user-select: none;
-}
-.cat-header:hover { background: var(--bg); }
-.cat-left { display: flex; align-items: center; gap: 10px; }
-.cat-title { font-weight: 600; font-size: 14px; }
-.cat-badge {
-  font-size: 11px; font-weight: 600; padding: 2px 8px;
-  border-radius: 20px; line-height: 1.6;
-}
-.cat-chevron { font-size: 11px; color: var(--text-faint); transition: transform 0.2s; display: inline-block; }
-.cat-chevron.open { transform: rotate(90deg); }
-
-.cat-bar { height: 2px; background: var(--border-light); }
-.cat-bar-fill { height: 100%; transition: width 0.4s; }
-
-.criteria-list { border-top: 1px solid var(--border-light); }
-
-.crit-body { flex: 1; min-width: 0; }
-.crit-name { font-size: 13px; font-weight: 600; }
-.crit-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
-
-.crit-pts { font-size: 11px; color: var(--text-faint); white-space: nowrap; padding-top: 2px; }
 
 /* ---- PDF row ---- */
 .pdf-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 0.5rem; }
