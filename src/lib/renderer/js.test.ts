@@ -331,7 +331,10 @@ describe('JsRenderer', () => {
     await r.close();
   });
 
-  it('rethrows when page.goto fails so the crawler can mark the URL broken', async () => {
+  it('rethrows when BOTH static and JS fail (static returned empty body)', async () => {
+    // Static probe returns an empty body — no useful fallback. JS render
+    // throws too. The renderer must propagate the error so the crawler
+    // can record the URL in unreachable / renderFailed via its catch.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
     const page = createStubPage({
       html: '', finalUrl: 'https://x.com/', status: 200,
@@ -344,6 +347,36 @@ describe('JsRenderer', () => {
     });
 
     await expect(r.fetch('https://x.com/')).rejects.toThrow(/Timeout/);
+    await r.close();
+  });
+
+  it('falls back to static when JS render throws but static returned usable HTML', async () => {
+    // Static probe returns a real 200 with HTML. JS goto throws (typical
+    // Webflow networkidle timeout). Renderer must NOT throw — it returns
+    // the static result with jsRenderFailed set so the crawler records
+    // the URL in renderFailed[] (not brokenLinks).
+    const staticBody = '<!doctype html><html><head><title>OK</title></head><body><h1>hi</h1></body></html>';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(staticBody, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }),
+    );
+    const page = createStubPage({
+      html: '', finalUrl: 'https://x.com/', status: 200,
+      gotoThrows: new Error('Timeout 30000ms exceeded'),
+    });
+    const browser = createStubBrowser(page);
+    const r = new JsRenderer({
+      endpoint: 'ws://localhost:9223', token: 't', userAgent: 'UA',
+      connect: async () => browser as never,
+    });
+
+    const result = await r.fetch('https://x.com/');
+    expect(result.status).toBe(200);
+    expect(result.html).toBe(staticBody);
+    expect(result.jsRenderFailed).toEqual({ reason: 'Timeout 30000ms exceeded' });
+    expect(result.mode).toBe('static');  // mode flips since JS data is missing
     await r.close();
   });
 

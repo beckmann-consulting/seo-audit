@@ -163,6 +163,15 @@ export async function crawlSite(
           continue;
         }
 
+        // JsRenderer fell back to static after a JS render failure.
+        // Page is still pushed to `pages` (static data is enough for
+        // most checks); URL is recorded in renderFailed[] so the
+        // separate finding can call out the JS-render limitation
+        // without claiming the page is broken.
+        if (result.jsRenderFailed) {
+          renderFailed.push({ url, reason: result.jsRenderFailed.reason });
+        }
+
         pages.push(pageDataFromRender(result, url, depth));
 
         // Extract links from this page (resolve against the FINAL url after redirects)

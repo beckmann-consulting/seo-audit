@@ -101,9 +101,25 @@ export class JsRenderer implements Renderer {
     ]).then(([s, j]) => [s, j] as const);
 
     if (jsResult.status === 'rejected') {
-      // JS render failed entirely — re-throw so the crawler marks the
-      // URL as broken. Static-only fallback would be confusing here:
-      // the user explicitly opted into js mode.
+      // JS render failed (typical: page.goto timeout because heavy
+      // 3rd-party scripts never let the page reach networkidle/load).
+      // If the parallel static probe succeeded with usable HTML, fall
+      // back to that result — the URL is reachable, only the JS render
+      // didn't complete. The jsRenderFailed flag tells the crawler to
+      // record the URL in renderFailed[] (NOT brokenLinks) so the
+      // distinction shows up in the report. Re-throw only when both
+      // static and JS failed: that's a real unreachable URL.
+      const reason = jsResult.reason instanceof Error ? jsResult.reason.message : String(jsResult.reason);
+      if (staticOutcome.status === 'fulfilled' && staticOutcome.value.status > 0 && staticOutcome.value.html) {
+        const staticResult = staticOutcome.value;
+        return {
+          ...staticResult,
+          // mode stays 'static' — downstream code that gates on mode
+          // for JS-only data (axeViolations, renderTimeMs etc.) skips
+          // this page automatically, which is what we want.
+          jsRenderFailed: { reason },
+        };
+      }
       throw jsResult.reason;
     }
 

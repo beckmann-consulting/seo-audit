@@ -33,6 +33,14 @@ export interface RenderResult {
   // E4.5 — HTTP 4xx/5xx sub-resource errors during the JS render.
   // Complementary to failedRequests (network-layer kind).
   httpErrors?: HttpError[];
+  // Set when the JsRenderer attempted a JS render but failed (timeout
+  // on networkidle/load, page.goto rejection, Browserless hiccup), AND
+  // the parallel static probe succeeded. The result then carries the
+  // static-rendered HTML/status, mode flips to 'static', and this
+  // field tells the crawler to record the URL in renderFailed[] —
+  // the page is still in `pages` because static analysis is enough
+  // for the SEO checks that don't need a live DOM.
+  jsRenderFailed?: { reason: string };
 }
 
 export interface Renderer {
