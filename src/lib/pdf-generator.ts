@@ -1,6 +1,7 @@
 'use client';
 
 import type { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import type { AuditResult, AuditDiff, Lang, Finding } from '@/types';
 import { registerInterFont, INTER_FONT_FAMILY } from './pdf-fonts';
 import { rateMetric, formatComparator, type MetricKey } from './util/metric-thresholds';
@@ -62,7 +63,10 @@ const SEVERITY_COLOR_RGB: Record<Severity, [number, number, number]> = {
 // re-introduce that risk for zero runtime gain, so it stays even though
 // today only → would actually mojibake.
 function sanitizeForPdf(text: string): string {
-  return text.replace(/→/g, '->');
+  return text
+    .replace(/→/g, '->')
+    .replace(/≥/g, '>=')   // U+2265 — used in score comparators ("good: ≥90/100")
+    .replace(/≤/g, '<=');  // U+2264 — present for symmetry; not in current text
 }
 
 // Vector check / cross — anchored on the text baseline at (x, y), scaled
@@ -82,16 +86,11 @@ function drawCheckmark(
   doc.setLineJoin('miter');
 }
 
-function drawCrossmark(
-  doc: jsPDF, x: number, y: number, size: number, color: [number, number, number]
-): void {
-  doc.setDrawColor(color[0], color[1], color[2]);
-  doc.setLineWidth(size * 0.18);
-  doc.setLineCap('round');
-  doc.line(x,         y - size, x + size, y);
-  doc.line(x,         y,        x + size, y - size);
-  doc.setLineCap('butt');
-}
+// drawCrossmark used to back the ✗ symbol in techRow when DNS / SSL
+// items failed; with the autoTable-driven Tech Details flow the value
+// cell carries an explicit text label ("fehlt", "missing") colored red
+// instead. Removed when the helper became unused — keep the comment
+// rather than the function so the rationale survives a `git blame`.
 
 // Recommended and optional share the same grey — muted, clearly secondary
 const PRIORITY_COLORS: Record<string, [number, number, number]> = {
@@ -190,93 +189,101 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     y += 10;
   };
 
-  // H2: bold black sub-heading — no underline
-  const h2 = (text: string) => {
-    checkPage(9);
-    y += 2;
-    setText(COLOR_TEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'bold');
-    doc.setFontSize(11);
-    doc.text(text, CONTENT_LEFT, y + 3);
-    y += 7;
-  };
+  // (techRow + h2 helpers were removed — every tech-details sub-section
+  // now flows through renderTechTable below, which renders a bordered
+  // header+body table per section. drawCheckmark is still used for the
+  // strengths bullets; sanitizeForPdf is shared with finding rendering.)
 
-  // Tech row: grey label + colored value, with two optional sub-lines:
-  //   `detail` — Courier monospace, for raw data (DNS records). `\n` is a
-  //              hard break; long strings wrap via splitTextToSize.
-  //   `note`   — Inter proportional, right-aligned (belongs to the value
-  //              column, not the label). Used for PSI threshold
-  //              comparators in muted small text.
-  // Both reset the font back to Inter normal afterwards so subsequent
-  // direct doc.text() outside techRow stays in the expected state.
+  // ============================================================
+  //  Tech-details table renderer (jspdf-autotable)
+  // ============================================================
+  // Single helper for every Tech Details sub-section. Each sub-section
+  // is rendered as a bordered 2- or 3-column table with the section
+  // name as a tinted header row spanning all columns, so the visual
+  // relationship between label and value is preserved even when values
+  // wrap (long DNS records, multi-token CSP, multiple MX entries).
   //
-  // The third arg accepts either the canonical Severity vocabulary
-  // (good/warn/bad/info/neutral — preferred for new call sites) or the
-  // legacy boolean `ok` form (true → good, false → bad). The bare
-  // strings '✓' and '✗' are special-cased and drawn as vector primitives
-  // — Inter does not include the Dingbats block, and using a built-in
-  // font for these glyphs would re-trigger the WinAnsi encoding bug.
-  const techRow = (
-    label: string,
-    value: string,
-    sevOrOk: Severity | boolean = 'neutral',
-    detail?: string,
-    note?: string,
-  ) => {
-    const severity: Severity = typeof sevOrOk === 'string'
-      ? sevOrOk
-      : sevOrOk === true ? 'good' : 'bad';
-    checkPage(5);
-    setText(COLOR_SUBTEXT);
-    doc.setFont(INTER_FONT_FAMILY, 'normal');
-    doc.setFontSize(8);
-    doc.text(label, CONTENT_LEFT + 2, y);
-    if (value === '✓') {
-      drawCheckmark(doc, CONTENT_LEFT + 60, y, 2.6, COLOR_GOOD);
-      y += 5;
-    } else if (value === '✗') {
-      drawCrossmark(doc, CONTENT_LEFT + 60, y, 2.4, COLOR_CRITICAL);
-      y += 5;
-    } else {
-      setText(SEVERITY_COLOR_RGB[severity]);
-      const valueLines = doc.splitTextToSize(sanitizeForPdf(value), CONTENT_W - 65);
-      doc.text(valueLines, CONTENT_LEFT + 60, y);
-      y += valueLines.length * 4 + 0.8;
-    }
-    if (detail) {
-      setText(COLOR_SUBTEXT);
-      doc.setFont('courier', 'normal');
-      doc.setFontSize(7.5);
-      for (const rawLine of detail.split('\n')) {
-        const wrapped = doc.splitTextToSize(rawLine, CONTENT_W - 8);
-        for (const line of wrapped) {
-          checkPage(3.5);
-          doc.text(line, CONTENT_LEFT + 4, y);
-          y += 3.2;
-        }
+  // Column 1 is the label (--text-muted, fixed 38mm).
+  // Column 2 is the value (severity-colored; monospace when `mono`).
+  // Column 3 (optional, present iff any row has a `note`) is the
+  // muted right-aligned annotation — used for PSI threshold comparators.
+  interface TechTableRow {
+    label: string;
+    value: string;            // \n is a hard line break inside the cell
+    severity?: Severity;      // defaults to neutral (text-strong)
+    mono?: boolean;            // value column in built-in Courier
+    note?: string;             // adds the right-aligned 3rd column
+  }
+
+  const renderTechTable = (title: string, rows: TechTableRow[]) => {
+    if (rows.length === 0) return;
+    const hasNoteCol = rows.some(r => r.note);
+
+    // Cell type from jspdf-autotable is intentionally loose — use the
+    // plugin's documented shape inline rather than the gnarly inferred
+    // generic. Each cell is `{ content: string, styles: {...} }`.
+    type Cell = { content: string; colSpan?: number; styles?: Record<string, unknown> };
+    const body: Cell[][] = rows.map(r => {
+      const cells: Cell[] = [
+        { content: r.label, styles: { textColor: COLOR_SUBTEXT, fontStyle: 'normal' } },
+        {
+          content: sanitizeForPdf(r.value),
+          styles: {
+            font: r.mono ? 'courier' : INTER_FONT_FAMILY,
+            textColor: SEVERITY_COLOR_RGB[r.severity ?? 'neutral'],
+            fontStyle: r.severity && r.severity !== 'neutral' ? 'bold' : 'normal',
+          },
+        },
+      ];
+      if (hasNoteCol) {
+        cells.push({
+          content: r.note ? sanitizeForPdf(r.note) : '',
+          styles: { halign: 'right', fontSize: 7, textColor: COLOR_SUBTEXT, fontStyle: 'normal' },
+        });
       }
-      // Reset font so subsequent direct doc.text() calls outside techRow
-      // never accidentally render in Courier.
-      doc.setFont(INTER_FONT_FAMILY, 'normal');
-      doc.setFontSize(8);
-      y += 1;
-    }
-    if (note) {
-      // Right-aligned: the note (PSI threshold comparator) is contextual
-      // information for the value, so it visually belongs under the
-      // value column, not under the label.
-      setText(COLOR_SUBTEXT);
-      doc.setFont(INTER_FONT_FAMILY, 'normal');
-      doc.setFontSize(7);
-      const wrapped = doc.splitTextToSize(sanitizeForPdf(note), CONTENT_W * 0.7);
-      for (const line of wrapped) {
-        checkPage(3);
-        doc.text(line, CONTENT_RIGHT, y, { align: 'right' });
-        y += 2.8;
-      }
-      doc.setFontSize(8);
-      y += 0.6;
-    }
+      return cells;
+    });
+
+    // Reserve enough space for the header row + first body row before
+    // autoTable takes over its own page-break handling.
+    checkPage(14);
+
+    autoTable(doc, {
+      startY: y,
+      head: [[
+        {
+          content: title,
+          colSpan: hasNoteCol ? 3 : 2,
+          styles: {
+            fillColor: [245, 245, 243],
+            textColor: COLOR_TEXT,
+            fontStyle: 'bold',
+            fontSize: 9.5,
+            cellPadding: { top: 2, right: 3, bottom: 2, left: 3 },
+          },
+        },
+      ]],
+      body,
+      theme: 'grid',
+      margin: { left: CONTENT_LEFT, right: W - CONTENT_RIGHT },
+      styles: {
+        font: INTER_FONT_FAMILY,
+        fontSize: 8,
+        cellPadding: { top: 1.6, right: 2.5, bottom: 1.6, left: 2.5 },
+        lineColor: COLOR_BORDER,
+        lineWidth: 0.2,
+        valign: 'top',
+        overflow: 'linebreak',
+      },
+      columnStyles: hasNoteCol
+        ? { 0: { cellWidth: 38 }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 60 } }
+        : { 0: { cellWidth: 38 }, 1: { cellWidth: 'auto' } },
+    });
+
+    // Pull the new y cursor from the plugin's lastAutoTable record so
+    // subsequent renderTechTable calls stack correctly across pages.
+    const finalY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
+    y = finalY + 4;
   };
 
   // ============================================================
@@ -437,12 +444,24 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     W / 2, authorY, { align: 'center' }
   );
 
+  // Executive summary prose immediately after the score block — short
+  // 2-3 line synopsis (totalScore, crawled count, critical/important
+  // findings, headline recommendation pointer). Lives on the cover
+  // page so the reader gets the verbal context next to the visual.
+  y = authorY + 12;
+  setText(COLOR_TEXT);
+  doc.setFont(INTER_FONT_FAMILY, 'normal');
+  doc.setFontSize(9);
+  const summaryProse = sanitizeForPdf(isDE ? result.summary_de : result.summary_en);
+  const summaryProseLines = doc.splitTextToSize(summaryProse, CONTENT_W);
+  doc.text(summaryProseLines, CONTENT_LEFT, y);
+  y += summaryProseLines.length * 4.5 + 6;
+
   // Module overview on the cover. The previous quick-stats row
   // (crawled / findings / critical / important) was redundant with the
-  // executive-summary prose on the next page and is gone — the freed
-  // vertical space accommodates the module gauges here instead, so the
-  // CEO sees the score AND the per-module breakdown on page 1.
-  y = authorY + 14;
+  // executive-summary prose above and is gone — the freed vertical
+  // space accommodates the module gauges here instead, so the CEO sees
+  // score, prose, AND per-module breakdown on page 1.
   setText(COLOR_TEXT);
   doc.setFont(INTER_FONT_FAMILY, 'bold');
   doc.setFontSize(11);
@@ -593,27 +612,14 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   }
 
   // ============================================================
-  //  Executive summary — first content page after the cover
+  //  Findings — first content page after the cover
   // ============================================================
-  // Module overview moved to the cover page; this section now starts
-  // a fresh page with the executive summary prose.
+  // Executive summary prose now lives on the cover (above the module
+  // overview); this page goes straight into Improvement Recommendations.
   doc.addPage();
   addPageHeader();
   y = CONTENT_TOP;
 
-  h1(t('Zusammenfassung', 'Executive Summary'));
-  setText(COLOR_TEXT);
-  doc.setFont(INTER_FONT_FAMILY, 'normal');
-  doc.setFontSize(9);
-  const summary = sanitizeForPdf(isDE ? result.summary_de : result.summary_en);
-  const summaryLines = doc.splitTextToSize(summary, CONTENT_W);
-  checkPage(summaryLines.length * 4.5 + 6);
-  doc.text(summaryLines, CONTENT_LEFT, y);
-  y += summaryLines.length * 4.5 + 8;
-
-  // ============================================================
-  //  Findings
-  // ============================================================
   h1(t('Verbesserungsempfehlungen', 'Improvement Recommendations'));
 
   // Two-key sort: priority bucket primary (critical → optional), then
@@ -736,184 +742,214 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
 
     // SSL / TLS
     if (result.sslInfo) {
-      h2(t('SSL / TLS', 'SSL / TLS'));
       const ssl = result.sslInfo;
-      techRow(t('Grade', 'Grade'), ssl.grade || t('unbekannt', 'unknown'), ['A+', 'A', 'A-', 'B'].includes(ssl.grade || ''));
-      techRow(t('Gültig', 'Valid'), ssl.valid ? '✓' : '✗', ssl.valid);
+      const grade = ssl.grade || '';
+      const gradeSeverity: Severity = ssl.pendingSlow ? 'neutral'
+        : !ssl.valid ? 'bad'
+        : ['A+', 'A', 'A-'].includes(grade) ? 'good'
+        : grade ? 'warn'
+        : 'neutral';
+      const sslRows: TechTableRow[] = [
+        { label: t('Grade', 'Grade'), value: ssl.grade || t('unbekannt', 'unknown'), severity: gradeSeverity },
+        { label: t('Gültig', 'Valid'), value: ssl.valid ? t('Ja', 'Yes') : t('Nein', 'No'), severity: ssl.valid ? 'good' : 'bad' },
+      ];
       if (ssl.daysUntilExpiry !== undefined) {
-        techRow(t('Läuft ab in', 'Expires in'), `${ssl.daysUntilExpiry} ${t('Tagen', 'days')}`, ssl.daysUntilExpiry > 30);
+        sslRows.push({
+          label: t('Läuft ab in', 'Expires in'),
+          value: `${ssl.daysUntilExpiry} ${t('Tagen', 'days')}`,
+          severity: ssl.daysUntilExpiry < 14 ? 'bad' : ssl.daysUntilExpiry < 30 ? 'warn' : 'good',
+        });
       }
-      if (ssl.issuer) techRow(t('Aussteller', 'Issuer'), ssl.issuer);
+      if (ssl.issuer) sslRows.push({ label: t('Aussteller', 'Issuer'), value: ssl.issuer });
       if (ssl.protocols && ssl.protocols.length > 0) {
-        techRow(t('Protokolle', 'Protocols'), ssl.protocols.join(', '));
+        sslRows.push({ label: t('Protokolle', 'Protocols'), value: ssl.protocols.join(', ') });
       }
+      renderTechTable(t('SSL / TLS', 'SSL / TLS'), sslRows);
     }
 
-    // DNS
+    // DNS & Email
     if (result.dnsInfo) {
-      h2(t('DNS & E-Mail', 'DNS & Email'));
-      techRow(
-        'SPF',
-        result.dnsInfo.hasSPF ? '✓' : t('fehlt', 'missing'),
-        result.dnsInfo.hasSPF,
-        result.dnsInfo.hasSPF && result.dnsInfo.spfRecord ? result.dnsInfo.spfRecord : undefined,
-      );
-      // DKIM: when not detected, render neutral text (ok=true keeps it
-      // out of red) — non-detection is a probing limitation, not a
-      // defect. Finding text in tech.ts spells out the verification
-      // path. When detected, prepend "selector: <name>" to the record
-      // so the reader knows which DKIM selector matched.
-      techRow(
-        'DKIM',
-        result.dnsInfo.hasDKIM ? '✓' : t('nicht verifizierbar', 'not verifiable'),
-        true,
-        result.dnsInfo.hasDKIM && result.dnsInfo.dkimRecord
-          ? (result.dnsInfo.dkimSelector
-              ? `selector: ${result.dnsInfo.dkimSelector}\n${result.dnsInfo.dkimRecord}`
-              : result.dnsInfo.dkimRecord)
-          : undefined,
-      );
-      techRow(
-        'DMARC',
-        result.dnsInfo.hasDMARC ? '✓' : t('fehlt', 'missing'),
-        result.dnsInfo.hasDMARC,
-        result.dnsInfo.hasDMARC && result.dnsInfo.dmarcRecord ? result.dnsInfo.dmarcRecord : undefined,
-      );
-      if (result.dnsInfo.mxRecords && result.dnsInfo.mxRecords.length > 0) {
-        const mx = result.dnsInfo.mxRecords;
-        const label = mx.length === 1 ? t('Eintrag', 'record') : t('Einträge', 'records');
-        techRow('MX', `${mx.length} ${label}`, true, mx.join('\n'));
+      const dns = result.dnsInfo;
+      const hasMx = !!(dns.mxRecords && dns.mxRecords.length > 0);
+      // Without MX the domain isn't sending mail — SPF/DMARC missing is
+      // only a warning then, not bad. Mirrors AuditApp.tsx logic.
+      const missingMailSev: Severity = hasMx ? 'bad' : 'warn';
+      const dnsRows: TechTableRow[] = [
+        {
+          label: 'SPF',
+          value: dns.hasSPF && dns.spfRecord ? dns.spfRecord : t('fehlt', 'missing'),
+          mono: dns.hasSPF,
+          severity: dns.hasSPF ? 'good' : missingMailSev,
+        },
+        {
+          label: 'DKIM',
+          value: dns.hasDKIM && dns.dkimRecord
+            ? (dns.dkimSelector ? `selector: ${dns.dkimSelector}\n${dns.dkimRecord}` : dns.dkimRecord)
+            : t('nicht verifizierbar', 'not verifiable'),
+          mono: dns.hasDKIM,
+          severity: dns.hasDKIM ? 'good' : 'neutral',
+        },
+        {
+          label: 'DMARC',
+          value: dns.hasDMARC && dns.dmarcRecord ? dns.dmarcRecord : t('fehlt', 'missing'),
+          mono: dns.hasDMARC,
+          severity: dns.hasDMARC ? 'good' : missingMailSev,
+        },
+      ];
+      if (hasMx) {
+        dnsRows.push({ label: 'MX', value: dns.mxRecords!.join('\n'), mono: true });
       }
+      renderTechTable(t('DNS & E-Mail', 'DNS & Email'), dnsRows);
     }
 
-    // PageSpeed — every row carries the canonical web.dev / Lighthouse
-    // threshold below the value as a muted note (single source of truth
-    // in metric-thresholds.ts). Severity is the 3-bucket rating from
-    // those same thresholds, mapped to good/warn/bad COLOR_*.
+    // PageSpeed — comparator note in column 3, severity colors the value.
     if (result.pageSpeedData && !result.pageSpeedData.error) {
-      h2(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'));
       const ps = result.pageSpeedData;
       const locale: 'de' | 'en' = isDE ? 'de' : 'en';
-      // 3-bucket severity straight from rateMetric — good/warn/bad
-      // colour the value text directly, so a 3.1s LCP is amber, a 4.6s
-      // is red, and a 1.8s is green. Matches the HTML view.
       const psiSeverity = (rating: ReturnType<typeof rateMetric>): Severity =>
         rating === 'good' ? 'good' : rating === 'poor' ? 'bad' : 'warn';
-      const psiRow = (label: string, raw: number, key: MetricKey, display: string) => {
-        const rating = rateMetric(raw, key);
-        techRow(label, display, psiSeverity(rating), undefined, formatComparator(key, locale));
+      const psiRows: TechTableRow[] = [];
+      const pushPsi = (label: string, raw: number, key: MetricKey, display: string) => {
+        psiRows.push({
+          label,
+          value: display,
+          severity: psiSeverity(rateMetric(raw, key)),
+          note: formatComparator(key, locale),
+        });
       };
-      if (ps.performanceScore !== undefined) psiRow('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`);
-      if (ps.seoScore !== undefined) psiRow('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`);
-      if (ps.accessibilityScore !== undefined) psiRow(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`);
-      if (ps.bestPracticesScore !== undefined) psiRow(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score', `${ps.bestPracticesScore}/100`);
-      if (ps.lcp !== undefined) psiRow('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`);
-      if (ps.cls !== undefined) psiRow('CLS', ps.cls, 'cls', ps.cls.toFixed(3));
-      if (ps.inp !== undefined) psiRow('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`);
-      // FID: legacy metric INP replaced in March 2024 — kept for sites
-      // still surfacing it in CrUX. No comparator (web.dev no longer
-      // publishes one); falls back to the historical 100ms threshold.
-      if (ps.fidField !== undefined) techRow(t('FID (Feld)', 'FID (field)'), `${Math.round(ps.fidField)}ms`, ps.fidField < 100);
-      if (ps.fcp !== undefined) psiRow('FCP', ps.fcp, 'fcp', `${Math.round(ps.fcp / 100) / 10}s`);
-      if (ps.ttfb !== undefined) psiRow('TTFB', ps.ttfb, 'ttfb', `${Math.round(ps.ttfb)}ms`);
-      if (ps.tbt !== undefined) psiRow('TBT', ps.tbt, 'tbt', `${Math.round(ps.tbt)}ms`);
+      if (ps.performanceScore !== undefined) pushPsi('Performance', ps.performanceScore, 'score', `${ps.performanceScore}/100`);
+      if (ps.seoScore !== undefined) pushPsi('SEO', ps.seoScore, 'score', `${ps.seoScore}/100`);
+      if (ps.accessibilityScore !== undefined) pushPsi(t('Zugänglichkeit', 'Accessibility'), ps.accessibilityScore, 'score', `${ps.accessibilityScore}/100`);
+      if (ps.bestPracticesScore !== undefined) pushPsi(t('Best Practices', 'Best Practices'), ps.bestPracticesScore, 'score', `${ps.bestPracticesScore}/100`);
+      if (ps.lcp !== undefined) pushPsi('LCP', ps.lcp, 'lcp', `${Math.round(ps.lcp / 100) / 10}s`);
+      if (ps.cls !== undefined) pushPsi('CLS', ps.cls, 'cls', ps.cls.toFixed(3));
+      if (ps.inp !== undefined) pushPsi('INP', ps.inp, 'inp', `${Math.round(ps.inp)}ms`);
+      // FID: legacy metric INP replaced in March 2024. No web.dev
+      // comparator any more; falls back to the historical 100ms cutoff.
+      if (ps.fidField !== undefined) {
+        psiRows.push({
+          label: t('FID (Feld)', 'FID (field)'),
+          value: `${Math.round(ps.fidField)}ms`,
+          severity: ps.fidField < 100 ? 'good' : 'warn',
+        });
+      }
+      if (ps.fcp !== undefined) pushPsi('FCP', ps.fcp, 'fcp', `${Math.round(ps.fcp / 100) / 10}s`);
+      if (ps.ttfb !== undefined) pushPsi('TTFB', ps.ttfb, 'ttfb', `${Math.round(ps.ttfb)}ms`);
+      if (ps.tbt !== undefined) pushPsi('TBT', ps.tbt, 'tbt', `${Math.round(ps.tbt)}ms`);
+      renderTechTable(t('PageSpeed (Mobile) & Core Web Vitals', 'PageSpeed (Mobile) & Core Web Vitals'), psiRows);
     }
 
-    // Security Headers — severity per header via the classifier so the
-    // PDF and HTML views agree, and the per-feature rationale ("CSP
-    // missing is warn not bad", "X-Frame-Options redundant when CSP
-    // frame-ancestors set") lives in one place.
+    // Security Headers — classifier-driven per-header severity.
     if (result.securityHeaders && !result.securityHeaders.error) {
-      h2(t('Security Headers', 'Security Headers'));
       const sh = result.securityHeaders;
-      techRow(
-        'HSTS',
-        sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing'),
-        classifyHsts(sh),
-      );
-      techRow(
-        'X-Content-Type-Options',
-        sh.xContentTypeOptions || t('fehlt', 'missing'),
-        classifyXContentTypeOptions(sh),
-      );
       const frameViaCsp = /frame-ancestors/i.test(sh.csp || '');
-      techRow(
-        'X-Frame-Options',
-        sh.xFrameOptions || (frameViaCsp ? t('via CSP', 'via CSP') : t('fehlt', 'missing')),
-        classifyXFrameOptions(sh),
-      );
-      techRow(
-        'CSP',
-        sh.csp ? t('gesetzt', 'set') : t('fehlt', 'missing'),
-        classifyCsp(sh),
-      );
-      techRow(
-        'Referrer-Policy',
-        sh.referrerPolicy || t('fehlt', 'missing'),
-        classifyReferrerPolicy(sh),
-      );
-      techRow(
-        'Permissions-Policy',
-        sh.permissionsPolicy ? t('gesetzt', 'set') : t('fehlt', 'missing'),
-        classifyPermissionsPolicy(sh),
-      );
+      const shRows: TechTableRow[] = [
+        {
+          label: 'HSTS',
+          value: sh.hsts ? (sh.hstsMaxAge ? `max-age=${sh.hstsMaxAge}` : t('gesetzt', 'set')) : t('fehlt', 'missing'),
+          mono: !!sh.hsts,
+          severity: classifyHsts(sh),
+        },
+        {
+          label: 'X-Content-Type-Options',
+          value: sh.xContentTypeOptions || t('fehlt', 'missing'),
+          mono: !!sh.xContentTypeOptions,
+          severity: classifyXContentTypeOptions(sh),
+        },
+        {
+          label: 'X-Frame-Options',
+          value: sh.xFrameOptions || (frameViaCsp ? t('via CSP', 'via CSP') : t('fehlt', 'missing')),
+          mono: !!sh.xFrameOptions,
+          severity: classifyXFrameOptions(sh),
+        },
+        {
+          label: 'CSP',
+          value: sh.csp || t('fehlt', 'missing'),
+          mono: !!sh.csp,
+          severity: classifyCsp(sh),
+        },
+        {
+          label: 'Referrer-Policy',
+          value: sh.referrerPolicy || t('fehlt', 'missing'),
+          mono: !!sh.referrerPolicy,
+          severity: classifyReferrerPolicy(sh),
+        },
+        {
+          label: 'Permissions-Policy',
+          value: sh.permissionsPolicy || t('fehlt', 'missing'),
+          mono: !!sh.permissionsPolicy,
+          severity: classifyPermissionsPolicy(sh),
+        },
+      ];
       if (sh.hasCookieSecure === false) {
-        techRow(t('Cookie Secure-Flag', 'Cookie Secure flag'), t('fehlt', 'missing'), 'warn');
+        shRows.push({ label: t('Cookie Secure-Flag', 'Cookie Secure flag'), value: t('fehlt', 'missing'), severity: 'warn' });
       }
       if (sh.hasMixedContent) {
-        techRow('Mixed Content', t('erkannt', 'detected'), classifyMixedContent(true));
+        shRows.push({ label: 'Mixed Content', value: t('erkannt', 'detected'), severity: classifyMixedContent(true) });
       }
+      renderTechTable(t('Security Headers', 'Security Headers'), shRows);
     }
 
-    // AI Crawler Readiness — `unspecified` is the default for ~99% of
-    // sites and is rendered neutral, never red. llms.txt is info-blue
-    // when missing (emerging standard, not defect). See classifier
-    // module for per-status rationale.
+    // AI Crawler Readiness — unspecified rendered neutral; llms.txt
+    // missing is info-blue (emerging standard, ~10% adoption).
     if (result.aiReadiness && !result.aiReadiness.error) {
-      h2(t('AI Crawler Readiness', 'AI Crawler Readiness'));
       const ai = result.aiReadiness;
-      techRow(
-        'llms.txt',
-        ai.hasLlmsTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
-        classifyLlmsTxt(ai.hasLlmsTxt),
-      );
-      techRow(
-        'llms-full.txt',
-        ai.hasLlmsFullTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
-        classifyLlmsTxt(ai.hasLlmsFullTxt),
-      );
+      const aiRows: TechTableRow[] = [
+        {
+          label: 'llms.txt',
+          value: ai.hasLlmsTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
+          severity: classifyLlmsTxt(ai.hasLlmsTxt),
+        },
+        {
+          label: 'llms-full.txt',
+          value: ai.hasLlmsFullTxt ? t('vorhanden', 'present') : t('nicht konfiguriert (optional)', 'not configured (optional)'),
+          severity: classifyLlmsTxt(ai.hasLlmsFullTxt),
+        },
+      ];
       for (const b of ai.bots) {
-        const valueText = b.status === 'allowed'
-          ? t('erlaubt', 'allowed')
-          : b.status === 'blocked'
-            ? t('blockiert', 'blocked')
-            : b.status === 'partial'
-              ? t('teilweise', 'partial')
-              : t('nicht geregelt', 'unspecified');
-        techRow(`${b.bot} (${b.purpose})`, valueText, classifyAIBotRow(b.status));
+        const valueText = b.status === 'allowed' ? t('erlaubt', 'allowed')
+          : b.status === 'blocked' ? t('blockiert', 'blocked')
+          : b.status === 'partial' ? t('teilweise', 'partial')
+          : t('nicht geregelt', 'unspecified');
+        aiRows.push({ label: `${b.bot} (${b.purpose})`, value: valueText, severity: classifyAIBotRow(b.status) });
       }
+      renderTechTable(t('AI Crawler Readiness', 'AI Crawler Readiness'), aiRows);
     }
 
     // Sitemap Coverage
     if (result.sitemapInfo && !result.sitemapInfo.error) {
-      h2(t('Sitemap Coverage', 'Sitemap Coverage'));
       const sm = result.sitemapInfo;
-      techRow(t('URLs in Sitemap', 'URLs in sitemap'), String(sm.urls.length));
-      techRow(t('Sitemap-Index', 'Sitemap index'), sm.isIndex ? t('ja', 'yes') : t('nein', 'no'));
+      const smRows: TechTableRow[] = [
+        { label: t('URLs in Sitemap', 'URLs in sitemap'), value: String(sm.urls.length) },
+        { label: t('Sitemap-Index', 'Sitemap index'), value: sm.isIndex ? t('ja', 'yes') : t('nein', 'no') },
+      ];
       if (sm.isIndex) {
-        techRow(t('Sub-Sitemaps', 'Sub-sitemaps'), String(sm.subSitemaps.length));
+        smRows.push({ label: t('Sub-Sitemaps', 'Sub-sitemaps'), value: String(sm.subSitemaps.length) });
       }
       const withLastmod = sm.urls.filter(e => !!e.lastmod).length;
-      techRow(t('Mit lastmod', 'With lastmod'), `${withLastmod}/${sm.urls.length}`, withLastmod > 0);
+      smRows.push({
+        label: t('Mit lastmod', 'With lastmod'),
+        value: `${withLastmod}/${sm.urls.length}`,
+        severity: withLastmod > 0 ? 'good' : 'warn',
+      });
       const withImages = sm.urls.filter(e => e.imageCount > 0).length;
-      techRow(t('Mit Bild-Einträgen', 'With image entries'), String(withImages));
+      smRows.push({ label: t('Mit Bild-Einträgen', 'With image entries'), value: String(withImages) });
 
       const crawledSet = new Set(result.pages.map(p => p.url));
       const sitemapSet = new Set(sm.urls.map(e => e.url));
       const missingFromCrawl = [...sitemapSet].filter(u => !crawledSet.has(u)).length;
       const missingFromSitemap = [...crawledSet].filter(u => !sitemapSet.has(u)).length;
-      techRow(t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled'), String(missingFromCrawl), missingFromCrawl === 0);
-      techRow(t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap'), String(missingFromSitemap), missingFromSitemap === 0);
+      smRows.push({
+        label: t('In Sitemap, nicht gecrawlt', 'In sitemap, not crawled'),
+        value: String(missingFromCrawl),
+        severity: missingFromCrawl === 0 ? 'good' : 'warn',
+      });
+      smRows.push({
+        label: t('Gecrawlt, nicht in Sitemap', 'Crawled, not in sitemap'),
+        value: String(missingFromSitemap),
+        severity: missingFromSitemap === 0 ? 'good' : 'warn',
+      });
+      renderTechTable(t('Sitemap Coverage', 'Sitemap Coverage'), smRows);
     }
 
     // Redirects
@@ -931,17 +967,18 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       p.redirectChain[0]?.startsWith('https://') && p.finalUrl.startsWith('http://')
     );
     if (redirected.length > 0 || result.crawlStats.redirectChains.length > 0) {
-      h2(t('Redirects', 'Redirects'));
       const redirectInputs = {
         redirectedCount: redirected.length,
         chainCount: chainPages.length,
         loopCount: loopPages.length,
         downgradeCount: downgradePages.length,
       };
-      techRow(t('Mit Redirect gecrawlt', 'Crawled via redirect'), String(redirected.length), classifyRedirected(redirectInputs));
-      techRow(t('Ketten (>1 Hop)', 'Chains (>1 hop)'), String(chainPages.length), classifyChains(chainPages.length));
-      techRow(t('Schleifen', 'Loops'), String(loopPages.length), classifyLoops(loopPages.length));
-      techRow('HTTPS -> HTTP', String(downgradePages.length), classifyDowngrades(downgradePages.length));
+      renderTechTable(t('Redirects', 'Redirects'), [
+        { label: t('Mit Redirect gecrawlt', 'Crawled via redirect'), value: String(redirected.length), severity: classifyRedirected(redirectInputs) },
+        { label: t('Ketten (>1 Hop)', 'Chains (>1 hop)'), value: String(chainPages.length), severity: classifyChains(chainPages.length) },
+        { label: t('Schleifen', 'Loops'), value: String(loopPages.length), severity: classifyLoops(loopPages.length) },
+        { label: 'HTTPS -> HTTP', value: String(downgradePages.length), severity: classifyDowngrades(downgradePages.length) },
+      ]);
     }
 
     // Link Quality
@@ -949,31 +986,39 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
     const totalEmpty = result.pages.reduce((s, p) => s + (p.emptyAnchors || 0), 0);
     const noindexPages = result.pages.filter(p => p.hasNoindex).length;
     if (totalGeneric > 0 || totalEmpty > 0 || noindexPages > 0) {
-      h2(t('Link Quality', 'Link Quality'));
-      techRow(t('Generische Ankertexte', 'Generic anchor texts'), String(totalGeneric), totalGeneric === 0);
-      techRow(t('Links ohne Text', 'Links without text'), String(totalEmpty), totalEmpty === 0);
-      techRow(t('Seiten mit noindex', 'Pages with noindex'), String(noindexPages));
+      renderTechTable(t('Link Quality', 'Link Quality'), [
+        { label: t('Generische Ankertexte', 'Generic anchor texts'), value: String(totalGeneric), severity: totalGeneric === 0 ? 'good' : 'warn' },
+        { label: t('Links ohne Text', 'Links without text'), value: String(totalEmpty), severity: totalEmpty === 0 ? 'good' : 'warn' },
+        { label: t('Seiten mit noindex', 'Pages with noindex'), value: String(noindexPages) },
+      ]);
     }
 
     // Safe Browsing
     if (result.safeBrowsingData) {
-      h2(t('Google Safe Browsing', 'Google Safe Browsing'));
-      techRow(
-        t('Status', 'Status'),
-        result.safeBrowsingData.isSafe ? t('Sicher', 'Safe') : t('GEFÄHRLICH', 'DANGEROUS'),
-        result.safeBrowsingData.isSafe
-      );
+      const sbRows: TechTableRow[] = [
+        {
+          label: t('Status', 'Status'),
+          value: result.safeBrowsingData.isSafe ? t('Sicher', 'Safe') : t('GEFÄHRLICH', 'DANGEROUS'),
+          severity: result.safeBrowsingData.isSafe ? 'good' : 'bad',
+        },
+      ];
       if (result.safeBrowsingData.threats && result.safeBrowsingData.threats.length > 0) {
-        techRow(t('Bedrohungen', 'Threats'), result.safeBrowsingData.threats.join(', '), false);
+        sbRows.push({
+          label: t('Bedrohungen', 'Threats'),
+          value: result.safeBrowsingData.threats.join(', '),
+          severity: 'bad',
+        });
       }
+      renderTechTable(t('Google Safe Browsing', 'Google Safe Browsing'), sbRows);
     }
 
     // Crawl Statistics
-    h2(t('Crawl-Statistik', 'Crawl Statistics'));
-    techRow(t('Seiten gecrawlt', 'Pages crawled'), String(result.crawlStats.crawledPages));
-    techRow(t('Defekte Links', 'Broken links'), String(result.crawlStats.brokenLinks.length), result.crawlStats.brokenLinks.length === 0);
-    techRow(t('Weiterleitungen', 'Redirects'), String(result.crawlStats.redirectChains.length), result.crawlStats.redirectChains.length < 3);
-    techRow(t('Externe Links', 'External links'), String(result.crawlStats.externalLinks));
+    renderTechTable(t('Crawl-Statistik', 'Crawl Statistics'), [
+      { label: t('Seiten gecrawlt', 'Pages crawled'), value: String(result.crawlStats.crawledPages) },
+      { label: t('Defekte Links', 'Broken links'), value: String(result.crawlStats.brokenLinks.length), severity: result.crawlStats.brokenLinks.length === 0 ? 'good' : 'bad' },
+      { label: t('Weiterleitungen', 'Redirects'), value: String(result.crawlStats.redirectChains.length), severity: result.crawlStats.redirectChains.length < 3 ? 'good' : 'warn' },
+      { label: t('Externe Links', 'External links'), value: String(result.crawlStats.externalLinks) },
+    ]);
     y += 4;
   }
 
