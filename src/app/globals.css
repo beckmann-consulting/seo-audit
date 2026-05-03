@@ -101,7 +101,6 @@ body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; colo
 
 /* ---- Categories ---- */
 .categories { display: flex; flex-direction: column; gap: 10px; margin-bottom: 1.5rem; }
-.cat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
 .cat-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; cursor: pointer; user-select: none;
@@ -113,10 +112,6 @@ body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; colo
   font-size: 11px; font-weight: 600; padding: 2px 8px;
   border-radius: 20px; line-height: 1.6;
 }
-.badge-good { background: var(--pass-bg); color: var(--pass); }
-.badge-ok { background: var(--warn-bg); color: var(--warn); }
-.badge-bad { background: var(--fail-bg); color: var(--fail); }
-
 .cat-chevron { font-size: 11px; color: var(--text-faint); transition: transform 0.2s; display: inline-block; }
 .cat-chevron.open { transform: rotate(90deg); }
 
@@ -124,21 +119,6 @@ body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; colo
 .cat-bar-fill { height: 100%; transition: width 0.4s; }
 
 .criteria-list { border-top: 1px solid var(--border-light); }
-.criterion {
-  display: flex; align-items: flex-start; gap: 12px;
-  padding: 10px 16px; border-bottom: 1px solid var(--border-light);
-}
-.criterion:last-child { border-bottom: none; }
-
-.crit-status {
-  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; margin-top: 1px;
-}
-.st-pass { background: var(--pass-bg); color: var(--pass); }
-.st-warn { background: var(--warn-bg); color: var(--warn); }
-.st-fail { background: var(--fail-bg); color: var(--fail); }
-.st-info { background: var(--info-bg); color: var(--info); }
 
 .crit-body { flex: 1; min-width: 0; }
 .crit-name { font-size: 13px; font-weight: 600; }
