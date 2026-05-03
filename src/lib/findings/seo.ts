@@ -1211,6 +1211,17 @@ function checkSchemaSubstructure(pages: PageSEOData[]): Finding[] {
 // ============================================================
 //  AI CRAWLER READINESS FINDINGS
 // ============================================================
+// Severity guidance (Q2 2026): llms.txt and AI-bot directives are an
+// emerging standard with ~10% adoption and no major LLM provider
+// (OpenAI, Anthropic, Google, Meta) committed to honouring them. The
+// default for ~99% of live sites is "unspecified", which is not a
+// defect. Therefore:
+//   critical → only when the wildcard rule blocks ALL bots
+//              (Googlebot included → indexability showstopper) OR all
+//              retrieval-class AI bots are explicitly blocked
+//              (zero AI visibility).
+//   important → partial block of retrieval bots.
+//   optional → missing strategy, partial strategy, missing llms.txt.
 export function generateAIReadinessFindings(ai?: AIReadinessInfo): Finding[] {
   const findings: Finding[] = [];
   if (!ai || ai.error) return findings;
@@ -1218,66 +1229,83 @@ export function generateAIReadinessFindings(ai?: AIReadinessInfo): Finding[] {
   const retrievalBots = ai.bots.filter(b => b.purpose === 'retrieval' || b.purpose === 'search' || b.purpose === 'mixed');
   const blockedRetrieval = retrievalBots.filter(b => b.status === 'blocked');
 
-  // 1) Retrieval/search bots blocked = invisible in ChatGPT, Perplexity, Google AI Overviews
-  if (blockedRetrieval.length > 0) {
+  // 1) Retrieval/search bots blocked → invisible in ChatGPT, Perplexity,
+  //    Google AI Overviews. Skipped when wildcardBlocksAll is set —
+  //    finding #2 covers that case at a higher priority and would
+  //    otherwise double-fire (every unspecified retrieval bot becomes
+  //    "blocked" via the wildcard escalation in checkAIReadiness).
+  if (blockedRetrieval.length > 0 && !ai.wildcardBlocksAll) {
+    const allBlocked = retrievalBots.length > 0 && blockedRetrieval.length === retrievalBots.length;
     const names = blockedRetrieval.map(b => `${b.bot} (${b.vendor})`).join(', ');
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'high',
-      title_de: `AI-Retrieval-Bots blockiert: ${blockedRetrieval.length}`,
-      title_en: `AI retrieval bots blocked: ${blockedRetrieval.length}`,
+      id: id(),
+      priority: allBlocked ? 'critical' : 'important',
+      module: 'seo', effort: 'low', impact: 'high',
+      title_de: allBlocked
+        ? 'Alle AI-Retrieval-Bots in robots.txt blockiert'
+        : `AI-Retrieval-Bots in robots.txt blockiert: ${blockedRetrieval.length} von ${retrievalBots.length}`,
+      title_en: allBlocked
+        ? 'All AI retrieval bots blocked in robots.txt'
+        : `AI retrieval bots blocked in robots.txt: ${blockedRetrieval.length} of ${retrievalBots.length}`,
       description_de: `Diese Bots holen Inhalte on-demand für KI-Antworten (ChatGPT, Perplexity, Google AI Overviews). Blockade bedeutet: Die Seite taucht in diesen Antworten nicht auf. Betroffen: ${names}`,
-      description_en: `These bots retrieve content on-demand for AI answers (ChatGPT, Perplexity, Google AI Overviews). Blocking them means: the site does not appear in those answers. Affected: ${names}`,
+      description_en: `These bots retrieve content on-demand for AI answers (ChatGPT, Perplexity, Google AI Overviews). Blocking them means the site does not appear in those answers. Affected: ${names}`,
       recommendation_de: 'In robots.txt den Zugriff für Retrieval-Bots explizit erlauben, z.B. "User-agent: ChatGPT-User\\nAllow: /". Unterscheide zwischen Training-Bots (Opt-out sinnvoll) und Retrieval-Bots (Opt-in sinnvoll für Sichtbarkeit).',
       recommendation_en: 'Explicitly allow retrieval bots in robots.txt, e.g. "User-agent: ChatGPT-User\\nAllow: /". Distinguish between training bots (opt-out makes sense) and retrieval bots (opt-in makes sense for visibility).',
     });
   }
 
-  // 2) Wildcard Disallow: / blocks everything including AI bots unintentionally
+  // 2) Wildcard Disallow: / blocks Googlebot AND every other crawler.
+  //    Stays critical: the audit runs against live URLs, not staging,
+  //    so wildcardBlocksAll on a production domain is an indexability
+  //    showstopper that the CEO needs to see in red, not orange.
   if (ai.wildcardBlocksAll) {
     findings.push({
       id: id(), priority: 'critical', module: 'seo', effort: 'low', impact: 'high',
       title_de: 'robots.txt blockiert alle Bots (User-agent: * / Disallow: /)',
       title_en: 'robots.txt blocks all bots (User-agent: * / Disallow: /)',
-      description_de: 'Die Wildcard-Regel "Disallow: /" blockiert ALLE Bots — inklusive Googlebot. Das ist fast immer ein Fehler und macht die Seite für die organische Suche unsichtbar.',
-      description_en: 'The wildcard rule "Disallow: /" blocks ALL bots — including Googlebot. This is almost always a mistake and makes the site invisible in organic search.',
-      recommendation_de: 'Wildcard-Regel sofort entfernen oder auf spezifische Pfade begrenzen. Nur in Staging-Umgebungen akzeptabel.',
-      recommendation_en: 'Remove the wildcard rule immediately or restrict to specific paths. Only acceptable in staging environments.',
+      description_de: 'Die Wildcard-Regel "Disallow: /" blockiert ALLE Bots — inklusive Googlebot. Diese Konfiguration verhindert Indexierung durch Googlebot und alle anderen Crawler. Wenn die Site versehentlich Staging-Konfiguration ausgeliefert wurde, sofort prüfen.',
+      description_en: 'The wildcard rule "Disallow: /" blocks ALL bots — including Googlebot. This configuration prevents indexing by Googlebot and all other crawlers. If the site is accidentally serving staging configuration, verify immediately.',
+      recommendation_de: 'Wildcard-Regel entfernen oder auf spezifische Pfade begrenzen.',
+      recommendation_en: 'Remove the wildcard rule or restrict to specific paths.',
     });
   }
 
-  // 3) No AI bots mentioned at all — no explicit strategy
+  // 3) No AI bots mentioned at all — no explicit strategy. Optional:
+  //    the default state for the majority of live sites and not a
+  //    defect; users who care about AI visibility can opt in.
   const unspecified = ai.bots.filter(b => b.status === 'unspecified').length;
   const anySpecified = ai.bots.some(b => b.status !== 'unspecified');
   if (!anySpecified && !ai.wildcardBlocksAll) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
-      title_de: 'Keine AI-Crawler-Strategie in robots.txt',
-      title_en: 'No AI crawler strategy in robots.txt',
-      description_de: `Keiner der ${ai.bots.length} bekannten AI-Bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, ...) ist in robots.txt erwähnt. Ohne explizite Regeln werden die Bots standardmäßig zugelassen — das kann gewünscht sein (Sichtbarkeit in KI-Antworten) oder nicht (Training-Opt-out).`,
-      description_en: `None of the ${ai.bots.length} known AI bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, ...) are mentioned in robots.txt. Without explicit rules the bots are allowed by default — which may be desired (visibility in AI answers) or not (training opt-out).`,
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'medium',
+      title_de: 'AI-Crawler-Strategie nicht konfiguriert (optional)',
+      title_en: 'AI crawler strategy not configured (optional)',
+      description_de: `Keiner der ${ai.bots.length} bekannten AI-Bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, ...) ist in robots.txt erwähnt. Ohne explizite Regeln werden die Bots standardmäßig zugelassen. Kein großer LLM-Anbieter (OpenAI, Anthropic, Google, Meta) hat eine offizielle Verpflichtung zur Auswertung dieser Direktiven kommuniziert; der Standard ist noch in Entwicklung.`,
+      description_en: `None of the ${ai.bots.length} known AI bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, ...) are mentioned in robots.txt. Without explicit rules the bots are allowed by default. No major LLM provider (OpenAI, Anthropic, Google, Meta) has officially committed to honouring these directives; the standard is still emerging.`,
       recommendation_de: 'Bewusste Entscheidung treffen: Training-Bots (GPTBot, Google-Extended, CCBot, anthropic-ai, Applebot-Extended) ggf. blockieren; Retrieval-Bots (ChatGPT-User, Perplexity-User, OAI-SearchBot, ClaudeBot) erlauben für AI-Sichtbarkeit. Regeln in robots.txt dokumentieren.',
       recommendation_en: 'Make a conscious decision: optionally block training bots (GPTBot, Google-Extended, CCBot, anthropic-ai, Applebot-Extended); allow retrieval bots (ChatGPT-User, Perplexity-User, OAI-SearchBot, ClaudeBot) for AI visibility. Document rules in robots.txt.',
     });
   } else if (unspecified > ai.bots.length / 2 && !ai.wildcardBlocksAll) {
     findings.push({
       id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
-      title_de: `AI-Crawler-Strategie unvollständig: ${unspecified}/${ai.bots.length} Bots nicht abgedeckt`,
-      title_en: `AI crawler strategy incomplete: ${unspecified}/${ai.bots.length} bots not covered`,
-      description_de: 'Einige AI-Bots sind in robots.txt geregelt, andere nicht. Für eine kohärente Strategie alle relevanten Bots explizit behandeln.',
-      description_en: 'Some AI bots are handled in robots.txt, others are not. For a coherent strategy, handle all relevant bots explicitly.',
+      title_de: `Empfehlung: AI-Crawler-Strategie erweitern (${unspecified} von ${ai.bots.length} Bots offen)`,
+      title_en: `Recommendation: extend AI crawler strategy (${unspecified} of ${ai.bots.length} bots open)`,
+      description_de: 'Einige AI-Bots sind in robots.txt geregelt, andere nicht. Vollständige Abdeckung ist eine Best-Practice für Konsistenz, kein Ranking-Faktor — sinnvoll, wenn eine bewusste Strategie für AI-Crawler bereits begonnen wurde.',
+      description_en: 'Some AI bots are handled in robots.txt, others are not. Full coverage is a best-practice for consistency, not a ranking factor — useful when a deliberate AI crawler strategy is already in place.',
       recommendation_de: 'robots.txt um Regeln für die fehlenden Bots ergänzen (siehe Liste in der UI).',
       recommendation_en: 'Add rules for the missing bots to robots.txt (see list in the UI).',
     });
   }
 
-  // 4) llms.txt missing — emerging standard for AI-friendly content discovery
+  // 4) llms.txt missing — emerging standard, ~10% adoption, no provider
+  //    commit. Optional, framed as opportunity rather than gap.
   if (!ai.hasLlmsTxt) {
     findings.push({
       id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
-      title_de: 'llms.txt nicht vorhanden',
-      title_en: 'llms.txt not present',
-      description_de: '"llms.txt" ist ein entstehender Standard (analog zu robots.txt), der LLMs eine kuratierte Übersicht der wichtigsten Inhalte einer Site bietet. Noch nicht verbreitet, aber hilfreich für AI-Sichtbarkeit.',
-      description_en: '"llms.txt" is an emerging standard (similar to robots.txt) that offers LLMs a curated overview of a site\'s most important content. Not widely adopted yet, but helpful for AI visibility.',
+      title_de: 'llms.txt nicht konfiguriert (optional)',
+      title_en: 'llms.txt not configured (optional)',
+      description_de: '"llms.txt" ist ein entstehender Standard (analog zu robots.txt), der LLMs eine kuratierte Übersicht der wichtigsten Inhalte einer Site bietet. Adoption derzeit ~10% der Domains, kein offizieller Commit großer LLM-Anbieter zur Auswertung — als frühe Best-Practice für AI-Sichtbarkeit nutzbar, kein Defekt.',
+      description_en: '"llms.txt" is an emerging standard (similar to robots.txt) offering LLMs a curated overview of a site\'s most important content. Current adoption ~10% of domains, no major LLM provider has officially committed to honouring it — usable as an early best-practice for AI visibility, not a defect.',
       recommendation_de: 'Eine /llms.txt-Datei im Root anlegen mit Markdown-formatierter Inhaltsübersicht (siehe llmstxt.org). Optional /llms-full.txt mit vollständigem Markdown-Content.',
       recommendation_en: 'Create a /llms.txt file in the root with a Markdown-formatted content overview (see llmstxt.org). Optionally /llms-full.txt with full Markdown content.',
     });
