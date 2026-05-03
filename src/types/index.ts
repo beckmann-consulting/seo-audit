@@ -208,6 +208,14 @@ export interface DNSInfo {
   hasDMARC: boolean;
   spfRecord?: string;
   dmarcRecord?: string;
+  // The selector under which the matching DKIM record was found
+  // (e.g. "google", "selector1-example-com"). Set only when hasDKIM
+  // is true. DKIM probing is heuristic — see external-checks.probeDkim.
+  dkimSelector?: string;
+  // Joined raw TXT value of the matching DKIM record. Set only when
+  // hasDKIM is true. Sanitised: chunks are joined with no separator;
+  // the validity check requires a "v=DKIM1" / "k=" / "p=" marker.
+  dkimRecord?: string;
   mxRecords?: string[];
   error?: string;
 }

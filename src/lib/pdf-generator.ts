@@ -805,7 +805,21 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
         result.dnsInfo.hasSPF,
         result.dnsInfo.hasSPF && result.dnsInfo.spfRecord ? result.dnsInfo.spfRecord : undefined,
       );
-      techRow('DKIM', result.dnsInfo.hasDKIM ? '✓' : t('fehlt', 'missing'), result.dnsInfo.hasDKIM);
+      // DKIM: when not detected, render neutral text (ok=true keeps it
+      // out of red) — non-detection is a probing limitation, not a
+      // defect. Finding text in tech.ts spells out the verification
+      // path. When detected, prepend "selector: <name>" to the record
+      // so the reader knows which DKIM selector matched.
+      techRow(
+        'DKIM',
+        result.dnsInfo.hasDKIM ? '✓' : t('nicht verifizierbar', 'not verifiable'),
+        true,
+        result.dnsInfo.hasDKIM && result.dnsInfo.dkimRecord
+          ? (result.dnsInfo.dkimSelector
+              ? `selector: ${result.dnsInfo.dkimSelector}\n${result.dnsInfo.dkimRecord}`
+              : result.dnsInfo.dkimRecord)
+          : undefined,
+      );
       techRow(
         'DMARC',
         result.dnsInfo.hasDMARC ? '✓' : t('fehlt', 'missing'),

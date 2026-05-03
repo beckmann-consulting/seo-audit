@@ -114,6 +114,24 @@ export function generateTechFindings(
     });
   }
 
+  // DNS: DKIM. Optional — non-detection is a probing limitation, not
+  // a configuration defect. DKIM records sit under domain-specific
+  // selectors that no exhaustive guess can cover; the audit checks
+  // ~25 common provider selectors plus M365 domain-derived variants
+  // (see external-checks.probeDkim) and reports the result as a hint
+  // rather than a finding to fix.
+  if (dnsInfo && !dnsInfo.hasDKIM) {
+    findings.push({
+      id: id(), priority: 'optional', module: 'tech', effort: 'low', impact: 'low',
+      title_de: 'DKIM nicht über DNS-Lookup verifizierbar',
+      title_en: 'DKIM not verifiable via DNS lookup',
+      description_de: 'DKIM-Records werden unter domain-spezifischen Selectors gespeichert, die nicht erschöpfend erraten werden können. Der Audit hat eine Liste gängiger Selectors (Google Workspace, M365, SendGrid, Mailgun, AWS SES, ...) plus domain-abgeleitete M365-Varianten geprüft, ohne Treffer. Das bedeutet nicht zwangsläufig, dass kein DKIM aktiv ist.',
+      description_en: 'DKIM records are stored under domain-specific selectors that cannot be exhaustively guessed. The audit checked a list of common selectors (Google Workspace, M365, SendGrid, Mailgun, AWS SES, ...) plus domain-derived M365 variants without a hit. That does not necessarily mean no DKIM is active.',
+      recommendation_de: 'Zur Verifikation den `DKIM-Signature`-Header einer ausgehenden E-Mail prüfen (das `s=`-Tag enthält den genutzten Selector) oder beim E-Mail-Provider die aktiven Selectors erfragen. Falls tatsächlich kein DKIM aktiv ist: TXT-Record unter `<selector>._domainkey.<domain>` einrichten.',
+      recommendation_en: 'To verify, check the `DKIM-Signature` header of an outgoing email (the `s=` tag holds the selector in use) or ask your email provider for the active selectors. If no DKIM is in fact active: set up a TXT record at `<selector>._domainkey.<domain>`.',
+    });
+  }
+
   // DNS: DMARC
   if (dnsInfo && !dnsInfo.hasDMARC) {
     findings.push({

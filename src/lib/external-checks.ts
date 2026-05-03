@@ -172,6 +172,78 @@ export async function checkSSL(domain: string): Promise<SSLInfo> {
 // ============================================================
 //  DNS CHECK (SPF, DKIM, DMARC, MX)
 // ============================================================
+
+// Common DKIM selectors used across mail providers. Order is "more
+// likely first" so the typical case short-circuits early. Coverage:
+//   - Generic / legacy:                   default, mail, dkim, k1
+//   - M365 (catch-all selectors):         selector1, selector2
+//   - Google Workspace:                    google
+//   - SendGrid / Mailgun / Mailjet /
+//     Mandrill / Zoho / Protonmail /
+//     AWS SES / Mimecast / Fastmail /
+//     M365 EOP / generic numeric          (as listed below)
+//
+// M365 also injects a domain-derived selector pair
+// (selector1-<slug>, selector2-<slug>) which is computed at probe time
+// from the domain. Combined coverage handles the common case (~70%
+// of business mail setups) but still cannot exhaustively guess every
+// custom selector — non-detection is therefore reported as a detection
+// limitation, not as a configuration defect (see findings/tech.ts).
+const DKIM_STATIC_SELECTORS = [
+  'default', 'mail', 'dkim', 'k1',
+  'selector1', 'selector2',
+  'google',
+  's1', 's2',
+  'mailgun', 'mg', 'pic', 'smtpapi',
+  'mailjet',
+  'mandrill',
+  'zoho',
+  'protonmail', 'protonmail2', 'protonmail3',
+  'amazonses',
+  'mimecast',
+  'fm1', 'fm2', 'fm3',
+  'mxvault',
+  'sel1', 'sel2', 'key1', 'key2',
+] as const;
+
+interface DkimProbeResult {
+  found: boolean;
+  selector?: string;
+  record?: string;
+  attemptedSelectors: string[];
+}
+
+async function probeDkim(domain: string): Promise<DkimProbeResult> {
+  // M365 derives selectors from the domain by replacing every dot with
+  // a hyphen — e.g. example.com → selector1-example-com.
+  const slug = domain.replace(/\./g, '-');
+  const allSelectors: string[] = [...DKIM_STATIC_SELECTORS, `selector1-${slug}`, `selector2-${slug}`];
+
+  for (const selector of allSelectors) {
+    try {
+      const records = await dns.resolveTxt(`${selector}._domainkey.${domain}`);
+      if (records.length === 0) continue;
+      // TXT records can be split into 255-byte chunks; join all parts
+      // back into the canonical single string.
+      const joined = records[0].join('');
+      // Validate it actually looks like DKIM. A bare existing TXT under
+      // the _domainkey label is sometimes a CNAME-pointing placeholder
+      // or unrelated metadata — treat only records carrying a DKIM
+      // marker (v=DKIM1, or the k=/p= tag pair) as matches.
+      if (!/v=DKIM1|k=|p=/i.test(joined)) continue;
+      return {
+        found: true,
+        selector,
+        record: joined,
+        attemptedSelectors: allSelectors.slice(0, allSelectors.indexOf(selector) + 1),
+      };
+    } catch {
+      // NXDOMAIN / no answer — try the next selector.
+    }
+  }
+  return { found: false, attemptedSelectors: allSelectors };
+}
+
 export async function checkDNS(domain: string): Promise<DNSInfo> {
   try {
     // SPF
@@ -202,18 +274,8 @@ export async function checkDNS(domain: string): Promise<DNSInfo> {
       }
     } catch {}
 
-    // DKIM (common selectors)
-    let hasDKIM = false;
-    const selectors = ['default', 'google', 'k1', 'mail', 'dkim', 'selector1', 'selector2'];
-    for (const selector of selectors) {
-      try {
-        const records = await dns.resolveTxt(`${selector}._domainkey.${domain}`);
-        if (records.length > 0) {
-          hasDKIM = true;
-          break;
-        }
-      } catch {}
-    }
+    // DKIM via extended selector probe + M365 dynamic selectors.
+    const dkim = await probeDkim(domain);
 
     // MX
     let mxRecords: string[] = [];
@@ -222,7 +284,16 @@ export async function checkDNS(domain: string): Promise<DNSInfo> {
       mxRecords = mx.map(r => r.exchange).slice(0, 5);
     } catch {}
 
-    return { hasSPF, hasDKIM, hasDMARC, spfRecord, dmarcRecord, mxRecords };
+    return {
+      hasSPF,
+      hasDKIM: dkim.found,
+      hasDMARC,
+      spfRecord,
+      dmarcRecord,
+      dkimSelector: dkim.selector,
+      dkimRecord: dkim.record,
+      mxRecords,
+    };
   } catch (err) {
     return { hasSPF: false, hasDKIM: false, hasDMARC: false, error: String(err) };
   }

@@ -1243,7 +1243,16 @@ export default function AuditApp() {
                       severity={result.dnsInfo.hasSPF ? 'good' : missingSev}
                       detail={result.dnsInfo.hasSPF && result.dnsInfo.spfRecord ? result.dnsInfo.spfRecord : undefined}
                     />
-                    <TechRow label="DKIM" value={result.dnsInfo.hasDKIM ? '✓' : '✗'} severity={result.dnsInfo.hasDKIM ? 'good' : missingSev} />
+                    <TechRow
+                      label="DKIM"
+                      value={result.dnsInfo.hasDKIM ? '✓' : t('nicht verifizierbar', 'not verifiable')}
+                      severity={result.dnsInfo.hasDKIM ? 'good' : 'neutral'}
+                      detail={result.dnsInfo.hasDKIM && result.dnsInfo.dkimRecord
+                        ? (result.dnsInfo.dkimSelector
+                            ? `${t('Selector', 'Selector')}: ${result.dnsInfo.dkimSelector}\n${result.dnsInfo.dkimRecord}`
+                            : result.dnsInfo.dkimRecord)
+                        : undefined}
+                    />
                     <TechRow
                       label="DMARC"
                       value={result.dnsInfo.hasDMARC ? '✓' : '✗'}
