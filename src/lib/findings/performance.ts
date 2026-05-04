@@ -80,7 +80,7 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
   // kippen und das Finding konsistenter erscheint/verschwindet.
   if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 47) {
     findings.push({
-      id: id(), priority: 'critical', module: 'performance', effort: 'high', impact: 'high',
+      id: id(), priority: 'important', module: 'performance', effort: 'high', impact: 'high',
       title_de: `PageSpeed Score kritisch: ${pageSpeed.performanceScore}/100`,
       title_en: `PageSpeed score critical: ${pageSpeed.performanceScore}/100`,
       description_de: `Google Lighthouse Performance-Score: ${pageSpeed.performanceScore}/100. LCP: ${pageSpeed.lcp ? Math.round(pageSpeed.lcp / 100) / 10 + 's' : 'n/a'}, CLS: ${pageSpeed.cls?.toFixed(3) ?? 'n/a'}, TBT: ${pageSpeed.tbt ? Math.round(pageSpeed.tbt) + 'ms' : 'n/a'}`,
@@ -90,7 +90,7 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
     });
   } else if (pageSpeed.performanceScore !== undefined && pageSpeed.performanceScore < 72) {
     findings.push({
-      id: id(), priority: 'important', module: 'performance', effort: 'medium', impact: 'high',
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'high',
       title_de: `PageSpeed Score verbesserungswürdig: ${pageSpeed.performanceScore}/100`,
       title_en: `PageSpeed score needs improvement: ${pageSpeed.performanceScore}/100`,
       description_de: `LCP: ${pageSpeed.lcp ? Math.round(pageSpeed.lcp / 100) / 10 + 's' : 'n/a'} (Ziel: <2.5s), CLS: ${pageSpeed.cls?.toFixed(3) ?? 'n/a'} (Ziel: <0.1)`,
@@ -106,14 +106,14 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
       id: id(), priority: 'critical', module: 'performance', effort: 'medium', impact: 'high',
       title_de: `INP kritisch: ${Math.round(pageSpeed.inp)}ms`,
       title_en: `INP critical: ${Math.round(pageSpeed.inp)}ms`,
-      description_de: 'Interaction to Next Paint > 500ms wird von Google als "schlecht" eingestuft. INP misst die Reaktionsfähigkeit bei Nutzerinteraktionen und hat FID seit März 2024 als Core Web Vital ersetzt.',
-      description_en: 'Interaction to Next Paint > 500ms is rated "poor" by Google. INP measures responsiveness to user interactions and replaced FID as a Core Web Vital in March 2024.',
+      description_de: 'Nutzer erleben spürbare Verzögerungen bei Klicks/Tippen — über 500ms sind klar wahrnehmbar und erzeugen den Eindruck einer "hängenden" Oberfläche. INP misst die Reaktionsfähigkeit auf echte Nutzerinteraktionen und hat FID seit März 2024 als Core Web Vital ersetzt; Google stuft >500ms als "schlecht" ein.',
+      description_en: 'Users experience noticeable delays on clicks/taps — over 500ms is clearly perceptible and produces a "stuck" feeling. INP measures responsiveness to real user interactions and replaced FID as a Core Web Vital in March 2024; Google rates >500ms as "poor".',
       recommendation_de: 'JavaScript-Ausführung reduzieren, lange Tasks aufteilen, Event-Handler optimieren, nicht-kritische Scripts verzögern.',
       recommendation_en: 'Reduce JavaScript execution, break up long tasks, optimise event handlers, defer non-critical scripts.',
     });
   } else if (pageSpeed.inp && pageSpeed.inp > 200) {
     findings.push({
-      id: id(), priority: 'important', module: 'performance', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
       title_de: `INP verbesserungswürdig: ${Math.round(pageSpeed.inp)}ms`,
       title_en: `INP needs improvement: ${Math.round(pageSpeed.inp)}ms`,
       description_de: 'Interaction to Next Paint zwischen 200ms und 500ms gilt als verbesserungswürdig. Ziel: unter 200ms für eine flüssige Nutzerinteraktion.',
@@ -126,7 +126,7 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
   // FID (Legacy — kept alongside INP for completeness)
   if (pageSpeed.fidField && pageSpeed.fidField > 300) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'optional', module: 'performance', effort: 'medium', impact: 'medium',
       title_de: `FID (Feld-Daten) hoch: ${Math.round(pageSpeed.fidField)}ms`,
       title_en: `FID (field data) high: ${Math.round(pageSpeed.fidField)}ms`,
       description_de: 'First Input Delay aus echten Nutzerdaten (CrUX) > 300ms. FID ist zwar durch INP als Core Web Vital abgelöst, bleibt aber ein Indikator für schlechte Interaktivität beim ersten Klick.',
