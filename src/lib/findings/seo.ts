@@ -93,7 +93,7 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
   const pagesWithoutDesc = pages.filter(p => !p.metaDescription || p.metaDescription.length === 0);
   if (pagesWithoutDesc.length > 0) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'high',
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'high',
       title_de: `${pagesWithoutDesc.length} Seite(n) ohne Meta-Description (CTR-Risiko)`,
       title_en: `${pagesWithoutDesc.length} page(s) missing meta description (CTR risk)`,
       description_de: `Betroffen: ${pagesWithoutDesc.slice(0, 3).map(p => p.url).join(', ')}`,
@@ -128,11 +128,8 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
       !homepage.ogDescription && 'og:description',
       !homepage.ogImage && 'og:image',
     ].filter(Boolean);
-    // OG tags affect social-share preview CTR, not core SEO ranking
-    // (per Mueller). Missing them costs social-traffic CTR, doesn't
-    // hurt search visibility — recommended fits the actual impact.
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'high',
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'high',
       title_de: `Open Graph Tags fehlen: ${missing.join(', ')}`,
       title_en: `Open Graph tags missing: ${missing.join(', ')}`,
       description_de: 'Beim Teilen der Website auf LinkedIn, X oder Facebook erscheint keine Vorschau. Das reduziert Klickraten erheblich.',
@@ -142,13 +139,11 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
-  // Schema markup — recommended per Search Central: structured data
-  // enables rich results but does not block ranking. Important too
-  // strong for what is purely a CTR/visibility enhancer.
+  // Schema markup
   const pagesWithSchema = pages.filter(p => p.schemaTypes.length > 0);
   if (pagesWithSchema.length === 0) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'high',
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
       title_de: 'Kein Schema.org / JSON-LD Markup vorhanden',
       title_en: 'No Schema.org / JSON-LD markup present',
       description_de: 'Strukturierte Daten fehlen vollständig. Google kann die Organisation, Produkte und Inhalte nicht als Rich Snippets darstellen.',
@@ -1831,10 +1826,8 @@ export function generateRichResultsFindings(pages: PageSEOData[], pageSpeed?: Pa
 
   const anySchemas = pages.some(p => p.schemas.length > 0);
   if (!anySchemas) {
-    // Same logic as the schema-missing finding above (L141): rich
-    // results aid CTR but are not a ranking blocker per Search Central.
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'high',
+      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
       title_de: 'Keine strukturierten Daten (JSON-LD) gefunden',
       title_en: 'No structured data (JSON-LD) found',
       description_de: 'Auf keiner gecrawlten Seite wurde Schema.org-Markup gefunden. Strukturierte Daten sind die Grundlage für Google Rich Results (Sterne-Bewertungen, FAQ-Snippets, Breadcrumb-Darstellung im SERP) und deutliche CTR-Booster.',
@@ -1846,9 +1839,7 @@ export function generateRichResultsFindings(pages: PageSEOData[], pageSpeed?: Pa
 
   if (pageSpeed?.structuredDataAuditWarning) {
     findings.push({
-      // Same source category as the JSON-LD-missing finding above —
-      // rich-result hygiene, not a ranking signal.
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
       title_de: 'PageSpeed Insights meldet Probleme mit strukturierten Daten',
       title_en: 'PageSpeed Insights reports structured data issues',
       description_de: `Lighthouse-Audit "structured-data": ${pageSpeed.structuredDataAuditWarning}. Dies bedeutet, dass Google die Daten zwar findet, aber syntaktische oder semantische Fehler erkennt, die Rich Results verhindern können.`,

@@ -164,7 +164,7 @@ export function generateFaviconFindings(pages: PageSEOData[]): Finding[] {
 
   if (!homepage.hasFavicon) {
     findings.push({
-      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
+      id: id(), priority: 'important', module: 'ux', effort: 'low', impact: 'medium',
       title_de: 'Kein Favicon',
       title_en: 'No favicon',
       description_de: 'Es wurde kein <link rel="icon"> oder <link rel="shortcut icon"> gefunden. Browser zeigen ohne Favicon ein generisches Platzhalter-Icon im Tab, Bookmarks und Browser-History — ein sofortiger Vertrauensverlust und Brand-Signal.',

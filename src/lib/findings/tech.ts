@@ -263,12 +263,9 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
   const findings: Finding[] = [];
   if (!sh || sh.error) return findings;
 
-  // HSTS — recommended per OWASP: HSTS is "should have", not "must
-  // have"; absence breaks nothing for users on HTTPS-default sites
-  // and most modern browsers preload HTTPS for major domains anyway.
   if (!sh.hsts) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
       title_de: 'HTTP Strict Transport Security (HSTS) fehlt',
       title_en: 'HTTP Strict Transport Security (HSTS) missing',
       description_de: 'Der Header "Strict-Transport-Security" fehlt. Ohne HSTS können Man-in-the-Middle-Angriffe den ersten Request downgraden (HTTPS → HTTP).',
@@ -288,13 +285,9 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
     });
   }
 
-  // X-Content-Type-Options — recommended per OWASP: missing enables
-  // MIME-sniffing edge cases that matter for misconfigured uploads
-  // (specific scenario), but doesn't affect most marketing sites.
-  // Down-graded to recommended to match Mozilla Observatory grading.
   if (!sh.xContentTypeOptions) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
+      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
       title_de: 'X-Content-Type-Options fehlt',
       title_en: 'X-Content-Type-Options missing',
       description_de: 'Ohne "X-Content-Type-Options: nosniff" kann der Browser MIME-Types erraten. Das öffnet XSS- und Script-Injection-Vektoren bei falsch konfigurierten Uploads.',
