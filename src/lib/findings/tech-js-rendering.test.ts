@@ -62,7 +62,7 @@ describe('generateJsRenderingFindings — js-rendering-required', () => {
     ]);
     const f = findings.find(x => x.title_en.includes('rendering required'));
     expect(f).toBeDefined();
-    expect(f!.priority).toBe('critical');
+    expect(f!.priority).toBe('important');
     expect(f!.description_en).toContain('static 5 → rendered 800');
   });
 
@@ -91,13 +91,17 @@ describe('generateJsRenderingFindings — js-rendering-required', () => {
     ])).toHaveLength(0);
   });
 
-  it('escalates to Critical when ANY page in the cluster meets the Critical threshold', () => {
+  it('uses flat Important across the cluster regardless of per-page severity', () => {
+    // Was previously dynamic (Critical if any page hit the heavy-SPA
+    // threshold). Now flat Important: pre-rendering / SSR is the
+    // recommendation either way and the priority shouldn't depend on
+    // how many words a single page happens to load post-render.
     const findings = generateJsRenderingFindings([
-      page({ url: 'https://x.com/a', renderMode: 'js', wordCount: 300, staticWordCount: 100 }), // important
-      page({ url: 'https://x.com/b', renderMode: 'js', wordCount: 800, staticWordCount: 5 }),    // critical
+      page({ url: 'https://x.com/a', renderMode: 'js', wordCount: 300, staticWordCount: 100 }),
+      page({ url: 'https://x.com/b', renderMode: 'js', wordCount: 800, staticWordCount: 5 }),
     ]);
     const f = findings.find(x => x.title_en.includes('rendering required'));
-    expect(f!.priority).toBe('critical');
+    expect(f!.priority).toBe('important');
     expect(f!.title_en).toContain('2 page');
   });
 
@@ -169,6 +173,6 @@ describe('both findings can co-emit on the same page', () => {
       }),
     ]);
     expect(findings).toHaveLength(2);
-    expect(findings.map(f => f.priority).sort()).toEqual(['critical', 'recommended']);
+    expect(findings.map(f => f.priority).sort()).toEqual(['important', 'recommended']);
   });
 });

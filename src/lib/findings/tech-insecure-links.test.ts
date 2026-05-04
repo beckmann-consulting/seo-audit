@@ -49,7 +49,7 @@ describe('generateInsecureLinkFindings', () => {
       page({ url: 'https://example.com/', internalLinks: ['http://example.com/old-page'] }),
     ]);
     expect(findings).toHaveLength(1);
-    expect(findings[0].priority).toBe('important');
+    expect(findings[0].priority).toBe('recommended');
     expect(findings[0].title_en).toContain('1 internal http:// link');
     expect(findings[0].description_en).toContain('http://example.com/old-page');
   });

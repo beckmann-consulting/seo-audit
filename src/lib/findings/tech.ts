@@ -125,9 +125,12 @@ export function generateTechFindings(
   }
 
   // HTTP/2 heuristic — homepage protocol derived from alt-svc/via headers
+  // Optional per Web Almanac 2024 (~75% of HTTPS sites already use HTTP/2)
+  // and the heuristic itself is non-definitive — Node's fetch doesn't
+  // expose the wire protocol. Down-graded to optional in C-2.
   if (homepage && homepage.protocol === null) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'optional', module: 'tech', effort: 'medium', impact: 'medium',
       title_de: 'Kein Hinweis auf HTTP/2 oder HTTP/3 gefunden',
       title_en: 'No HTTP/2 or HTTP/3 indicator found',
       description_de: 'Weder alt-svc- noch via-Header der Homepage deuten auf HTTP/2 oder HTTP/3 hin. HTTP/1.1 ist spürbar langsamer bei vielen kleinen Requests (keine Multiplexing). Hinweis: Diese Heuristik ist nicht definitiv — Node\'s fetch gibt das genutzte Wire-Protokoll nicht direkt zurück.',
@@ -231,15 +234,15 @@ export function generateClientRenderingFindings(pages: PageSEOData[]): Finding[]
   const rendered = pages.filter(p => p.likelyClientRendered);
   if (rendered.length === 0) return findings;
 
-  const ratio = rendered.length / pages.length;
-  const homepageAffected = pages[0]?.likelyClientRendered === true;
   const signal = rendered[0].clientRenderSignal || 'empty SPA root';
 
-  // If homepage is affected or > 50% of pages: critical. Otherwise important.
-  const priority: 'critical' | 'important' = homepageAffected || ratio > 0.5 ? 'critical' : 'important';
-
+  // Flat important (was dynamic critical/important by homepage / 50%
+  // ratio threshold). Mueller: Googlebot does render JS but often
+  // imperfectly — important across the board. Critical was too strong
+  // even for the homepage case (the page IS reachable, content IS
+  // there for Googlebot, the loss is to AI / social / older bots).
   findings.push({
-    id: id(), priority, module: 'tech', effort: 'high', impact: 'high',
+    id: id(), priority: 'important', module: 'tech', effort: 'high', impact: 'high',
     title_de: `Seite wird clientseitig gerendert: ${rendered.length} von ${pages.length} Seiten`,
     title_en: `Site appears client-side rendered: ${rendered.length} of ${pages.length} pages`,
     description_de: `Im Roh-HTML fehlt der sichtbare Inhalt — er wird erst per JavaScript im Browser nachgeladen. Signal: "${signal}". Folgen: Googlebot rendert zwar noch, aber AI-Retrieval-Bots (ChatGPT-User, Perplexity), Social-Preview-Crawler (Facebook, Twitter, LinkedIn) und ältere Suchmaschinen sehen eine leere Seite.`,
@@ -260,10 +263,12 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
   const findings: Finding[] = [];
   if (!sh || sh.error) return findings;
 
-  // HSTS
+  // HSTS — recommended per OWASP: HSTS is "should have", not "must
+  // have"; absence breaks nothing for users on HTTPS-default sites
+  // and most modern browsers preload HTTPS for major domains anyway.
   if (!sh.hsts) {
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
       title_de: 'HTTP Strict Transport Security (HSTS) fehlt',
       title_en: 'HTTP Strict Transport Security (HSTS) missing',
       description_de: 'Der Header "Strict-Transport-Security" fehlt. Ohne HSTS können Man-in-the-Middle-Angriffe den ersten Request downgraden (HTTPS → HTTP).',
@@ -283,10 +288,13 @@ export function generateSecurityHeadersFindings(sh?: SecurityHeadersInfo): Findi
     });
   }
 
-  // X-Content-Type-Options
+  // X-Content-Type-Options — recommended per OWASP: missing enables
+  // MIME-sniffing edge cases that matter for misconfigured uploads
+  // (specific scenario), but doesn't affect most marketing sites.
+  // Down-graded to recommended to match Mozilla Observatory grading.
   if (!sh.xContentTypeOptions) {
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
       title_de: 'X-Content-Type-Options fehlt',
       title_en: 'X-Content-Type-Options missing',
       description_de: 'Ohne "X-Content-Type-Options: nosniff" kann der Browser MIME-Types erraten. Das öffnet XSS- und Script-Injection-Vektoren bei falsch konfigurierten Uploads.',
@@ -429,11 +437,13 @@ export function generateRedirectFindings(pages: PageSEOData[], startUrl: string)
   }
 
   // Chains > 1 hop (excluding loops which already count as critical)
+  // Recommended per Mueller: chains of 1-2 hops are tolerated; 3+
+  // hurts measurably but isn't a hard ranking blocker.
   const chainPages = pages.filter(p => p.redirectChain.length > 1 && !loopPages.includes(p));
   if (chainPages.length > 0) {
     const sample = chainPages.slice(0, 3).map(p => p.redirectChain.concat(p.finalUrl).join(' → ')).join(' | ');
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
       title_de: `Redirect-Ketten erkannt: ${chainPages.length} Seiten`,
       title_en: `Redirect chains detected: ${chainPages.length} pages`,
       description_de: `Bei diesen URLs erfolgen mehrere aufeinanderfolgende Redirects (statt eines direkten Sprungs). Google folgt nur begrenzt vielen Hops — Ranking-Signale und Linkjuice können verloren gehen. Beispiele: ${sample}`,
@@ -472,9 +482,14 @@ export function generateRedirectFindings(pages: PageSEOData[], startUrl: string)
       return false;
     }
   });
+  // Homepage redirect-chain — important, not critical. Hurts crawl
+  // budget and first-paint, but does not BREAK indexability (the
+  // homepage is still reachable, Google does follow chains up to ~5
+  // hops). Critical was over-classified for what is a measurable
+  // performance / link-equity drag.
   if (homepage && homepage.redirectChain.length > 1) {
     findings.push({
-      id: id(), priority: 'critical', module: 'tech', effort: 'medium', impact: 'high',
+      id: id(), priority: 'important', module: 'tech', effort: 'medium', impact: 'high',
       title_de: 'Homepage hat Redirect-Kette',
       title_en: 'Homepage has redirect chain',
       description_de: `Die Startseite durchläuft ${homepage.redirectChain.length} Redirect-Hops bevor der finale Inhalt ausgeliefert wird. Das verlangsamt den First Paint messbar (jeder Hop kostet ~100–300ms) und schwächt die Linkjuice-Weitergabe vom Root-Domain-Link. Kette: ${homepage.redirectChain.concat(homepage.finalUrl).join(' → ')}`,
@@ -597,12 +612,15 @@ export function generateThirdPartyScriptFindings(pages: PageSEOData[]): Finding[
     }
   }
 
-  // Render-blocking third-party scripts
+  // Render-blocking third-party scripts — recommended (was important).
+  // Performance impact is real but already captured by the PSI
+  // metrics (LCP, TBT) more accurately. This finding is duplicative
+  // when those rows are red; redundant noise at important.
   const renderBlocking = [...domainMap.entries()].filter(([, v]) => v.isRenderBlocking && v.category !== 'cdn');
   if (renderBlocking.length > 0) {
     const list = renderBlocking.slice(0, 5).map(([d, v]) => `${d} (${v.category})`).join(', ');
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'high',
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'high',
       title_de: `${renderBlocking.length} render-blockierende Dritt-Scripts`,
       title_en: `${renderBlocking.length} render-blocking third-party scripts`,
       description_de: `Diese externen Scripts blockieren das initiale Rendering weil sie weder async noch defer gesetzt haben: ${list}. Jeder blockierende Script kostet direkt LCP und INP.`,
@@ -674,8 +692,13 @@ export function generateInsecureLinkFindings(pages: PageSEOData[]): Finding[] {
     })
     .join('; ');
 
+  // Recommended (was important). Modern browsers auto-upgrade many
+  // http:// internal links via HTTPS Everywhere / HTTPS-First defaults
+  // since Chrome 118 / Firefox 116. Real but moderate — still flagged
+  // because Google does count them as canonical-signal split, but the
+  // user-impact half (mixed content / scheme leak) is mostly mitigated.
   findings.push({
-    id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+    id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
     title_de: `${insecureTargets.size} interne http://-Link(s) auf HTTPS-Seiten`,
     title_en: `${insecureTargets.size} internal http:// link(s) on HTTPS pages`,
     description_de: `Auf ${affectedPages.size} HTTPS-Seite(n) verweisen ${totalLinks} interne <a href="http://…">-Verlinkungen weiterhin auf das unverschlüsselte Schema. Browser zeigen das nicht als Mixed Content (das gilt nur für Sub-Ressourcen), aber Nutzer verlassen beim Klick die HTTPS-Verbindung. Google interpretiert die HTTP- und HTTPS-Variante zudem als unterschiedliche URLs — Linkjuice und Canonical-Signale verteilen sich. Beispiele: ${sample}`,
@@ -846,9 +869,11 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
   }
 
   if (flagged.length > 0) {
-    // Use the highest severity present in the cluster as the finding's
-    // priority; even one Critical-class page should escalate.
-    const priority: Severity = flagged.some(f => f.severity === 'critical') ? 'critical' : 'important';
+    // Flat important (was dynamic critical/important by per-page
+    // static-vs-rendered ratio). Mueller: Googlebot does render JS,
+    // imperfectly — important across the board. The Severity branch
+    // distinction was useful for internal grouping but the per-finding
+    // user-facing severity should be uniform.
 
     const sample = flagged
       .slice(0, 5)
@@ -860,7 +885,7 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
       .join('; ');
 
     findings.push({
-      id: id(), priority, module: 'tech', effort: 'high', impact: 'high',
+      id: id(), priority: 'important', module: 'tech', effort: 'high', impact: 'high',
       title_de: `JavaScript-Rendering nötig für sichtbaren Inhalt: ${flagged.length} Seite(n)`,
       title_en: `JavaScript rendering required for visible content: ${flagged.length} page(s)`,
       description_de: `Diese Seiten sehen ohne JavaScript leer oder fast leer aus, liefern erst nach Hydration ihren Content. Googlebot rendert zwar JS (zweite Pass), aber die meisten AI-Retrieval-Bots (ChatGPT-User, PerplexityBot), Social-Preview-Crawler (Facebook, Slack, LinkedIn) und ältere Suchmaschinen sehen die statische Variante. Beispiele: ${sample}`,
@@ -922,7 +947,11 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
   if (pagesWithFailures.length > 0) {
     const totalFailures = pagesWithFailures.reduce((s, x) => s + x.failures.length, 0);
     const totalCritical = pagesWithFailures.reduce((s, x) => s + x.criticalCount, 0);
-    const priority: 'important' | 'recommended' = totalCritical > 0 ? 'important' : 'recommended';
+    // Flat recommended (was dynamic important/recommended). Sub-
+    // resource failures rarely block content — most are tracker /
+    // analytics / 3rd-party-script failures that don't affect the
+    // user-visible page. The criticalCount-based escalation produced
+    // false-important on sites with one stale Google Analytics tag.
 
     // Pages first by critical-count desc, then total-count desc — worst
     // offenders surface in the sample.
@@ -953,10 +982,10 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
 
     findings.push({
       id: id(),
-      priority,
+      priority: 'recommended',
       module: 'tech',
       effort: 'medium',
-      impact: priority === 'important' ? 'high' : 'medium',
+      impact: 'medium',
       title_de: `${totalFailures} fehlgeschlagene Netzwerk-Request(s) auf ${pagesWithFailures.length} Seite(n)${criticalNoteDe}`,
       title_en: `${totalFailures} failed network request(s) on ${pagesWithFailures.length} page(s)${criticalNoteEn}`,
       description_de: `Beim Headless-Browser-Render brachen Sub-Resource-Requests ab — entweder durch HTTP 4xx/5xx-Antworten oder durch Network-Layer-Fehler (DNS, CORS, ABORTED). Same-Origin-Fehler auf Script/Stylesheet/Fetch sind kritisch, weil sie die Page funktional brechen können. Cross-Origin-Fehler (Drittanbieter-Tracker, externe Fonts) sind milder, signalisieren aber unzuverlässige Abhängigkeiten. Beispiele: ${sample}`,

@@ -43,8 +43,8 @@ function findById(findings: ReturnType<typeof generateJsRenderingFindings>, pred
   return findings.find(f => predicate(f.title_en));
 }
 
-describe('failed-network-requests — Important via httpErrors (same-origin, critical resource)', () => {
-  it('flags Important when ≥1 httpError on a same-origin script', () => {
+describe('failed-network-requests — generated for httpErrors on same-origin critical resources', () => {
+  it('generates finding when ≥1 httpError on a same-origin script (critical noted in title)', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -53,11 +53,11 @@ describe('failed-network-requests — Important via httpErrors (same-origin, cri
     ]);
     const f = findById(findings, t => t.includes('failed network'));
     expect(f).toBeDefined();
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
     expect(f!.title_en).toContain('1 of them critical');
   });
 
-  it('flags Important when ≥1 httpError on a same-origin stylesheet', () => {
+  it('generates finding when ≥1 httpError on a same-origin stylesheet', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -65,10 +65,10 @@ describe('failed-network-requests — Important via httpErrors (same-origin, cri
       }),
     ]);
     const f = findById(findings, t => t.includes('failed network'));
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
   });
 
-  it('flags Important on a same-origin xhr 503', () => {
+  it('generates finding on a same-origin xhr 503', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -76,12 +76,12 @@ describe('failed-network-requests — Important via httpErrors (same-origin, cri
       }),
     ]);
     const f = findById(findings, t => t.includes('failed network'));
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
   });
 });
 
-describe('failed-network-requests — Important via failedRequests (URL-pattern heuristic)', () => {
-  it('flags Important when failedRequests has same-origin .js URL', () => {
+describe('failed-network-requests — generated for failedRequests via URL-pattern heuristic', () => {
+  it('generates finding when failedRequests has same-origin .js URL', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -89,10 +89,10 @@ describe('failed-network-requests — Important via failedRequests (URL-pattern 
       }),
     ]);
     const f = findById(findings, t => t.includes('failed network'));
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
   });
 
-  it('flags Important when failedRequests has same-origin .css URL with query string', () => {
+  it('generates finding when failedRequests has same-origin .css URL with query string', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -100,10 +100,10 @@ describe('failed-network-requests — Important via failedRequests (URL-pattern 
       }),
     ]);
     const f = findById(findings, t => t.includes('failed network'));
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
   });
 
-  it('flags Important when failedRequests has same-origin .mjs URL', () => {
+  it('generates finding when failedRequests has same-origin .mjs URL', () => {
     const findings = generateJsRenderingFindings([
       page({
         url: 'https://example.com/foo',
@@ -111,7 +111,7 @@ describe('failed-network-requests — Important via failedRequests (URL-pattern 
       }),
     ]);
     const f = findById(findings, t => t.includes('failed network'));
-    expect(f!.priority).toBe('important');
+    expect(f!.priority).toBe('recommended');
   });
 });
 
