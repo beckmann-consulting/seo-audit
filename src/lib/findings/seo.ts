@@ -17,10 +17,11 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
   const homepage = pages[0];
   if (!homepage) return findings;
 
-  // robots.txt
+  // robots.txt — recommended per Search Central: missing robots.txt =
+  // Googlebot crawls everything (default-allow). Useful but not breaking.
   if (!hasRobots) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
       title_de: 'robots.txt fehlt',
       title_en: 'robots.txt missing',
       description_de: 'Keine robots.txt unter /robots.txt gefunden. Suchmaschinen haben keinen Hinweis auf Crawling-Regeln.',
@@ -85,13 +86,16 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
-  // Meta descriptions missing
+  // Meta descriptions missing — recommended per Search Central /
+  // Mueller: no ranking impact, only CTR (Google rewrites snippets
+  // dynamically anyway). Title flagged as CTR-Risiko so the framing
+  // matches the impact.
   const pagesWithoutDesc = pages.filter(p => !p.metaDescription || p.metaDescription.length === 0);
   if (pagesWithoutDesc.length > 0) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'high',
-      title_de: `${pagesWithoutDesc.length} Seite(n) ohne Meta-Description`,
-      title_en: `${pagesWithoutDesc.length} page(s) missing meta description`,
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'high',
+      title_de: `${pagesWithoutDesc.length} Seite(n) ohne Meta-Description (CTR-Risiko)`,
+      title_en: `${pagesWithoutDesc.length} page(s) missing meta description (CTR risk)`,
       description_de: `Betroffen: ${pagesWithoutDesc.slice(0, 3).map(p => p.url).join(', ')}`,
       description_en: `Affected: ${pagesWithoutDesc.slice(0, 3).map(p => p.url).join(', ')}`,
       recommendation_de: 'Meta-Description mit 140–160 Zeichen, primärem Keyword und Call-to-Action ergänzen.',
@@ -124,8 +128,11 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
       !homepage.ogDescription && 'og:description',
       !homepage.ogImage && 'og:image',
     ].filter(Boolean);
+    // OG tags affect social-share preview CTR, not core SEO ranking
+    // (per Mueller). Missing them costs social-traffic CTR, doesn't
+    // hurt search visibility — recommended fits the actual impact.
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'high',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'high',
       title_de: `Open Graph Tags fehlen: ${missing.join(', ')}`,
       title_en: `Open Graph tags missing: ${missing.join(', ')}`,
       description_de: 'Beim Teilen der Website auf LinkedIn, X oder Facebook erscheint keine Vorschau. Das reduziert Klickraten erheblich.',
@@ -135,11 +142,13 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
-  // Schema markup
+  // Schema markup — recommended per Search Central: structured data
+  // enables rich results but does not block ranking. Important too
+  // strong for what is purely a CTR/visibility enhancer.
   const pagesWithSchema = pages.filter(p => p.schemaTypes.length > 0);
   if (pagesWithSchema.length === 0) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'high',
       title_de: 'Kein Schema.org / JSON-LD Markup vorhanden',
       title_en: 'No Schema.org / JSON-LD markup present',
       description_de: 'Strukturierte Daten fehlen vollständig. Google kann die Organisation, Produkte und Inhalte nicht als Rich Snippets darstellen.',
@@ -163,10 +172,12 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
     });
   }
 
-  // HTML lang missing
+  // HTML lang missing — important per WCAG 2.2 SC 3.1.1 (Level A):
+  // screen readers need the lang attribute to choose the correct
+  // pronunciation. Real accessibility impact, not just SEO hygiene.
   if (!homepage.lang) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
       title_de: 'HTML lang-Attribut fehlt',
       title_en: 'HTML lang attribute missing',
       description_de: 'Das <html>-Tag hat kein lang-Attribut. Suchmaschinen und Screenreader können die Sprache nicht erkennen.',
@@ -188,9 +199,12 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
       return true;
     }
   });
+  // Pagination without canonical — recommended per Mueller 2023:
+  // Google handles pagination heuristically; rel=next/prev support
+  // gone since 2019. Self-canonical helps but isn't breaking.
   if (paginationWithoutCanonical.length > 0) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
       title_de: `${paginationWithoutCanonical.length} Paginations-Seite(n) ohne self-referencing Canonical`,
       title_en: `${paginationWithoutCanonical.length} pagination page(s) without self-referencing canonical`,
       description_de: `Betroffen: ${paginationWithoutCanonical.slice(0, 3).map(p => p.url).join(', ')}. Paginierte Seiten brauchen einen Canonical auf sich selbst, damit Google sie als eigene Seiten indexiert und nicht als Duplikate der Seite 1.`,
@@ -435,14 +449,15 @@ export function generateCrawlStructureFindings(pages: PageSEOData[]): Finding[] 
   }
 
   // --- Crawl depth: pages deeper than 3 clicks ---
-  // Google generally recommends max 3 clicks from the homepage for important pages.
+  // Mueller: "click depth matters but not at the level people fear".
+  // Flattened from dynamic important/recommended to a flat
+  // recommended — the per-ratio escalation overstates the impact.
   const deepPages = pages.filter(p => p.depth >= 4);
   if (deepPages.length > 0) {
     const ratio = deepPages.length / pages.length;
     const maxDepth = Math.max(...pages.map(p => p.depth));
-    const priority: 'important' | 'recommended' = ratio > 0.3 ? 'important' : 'recommended';
     findings.push({
-      id: id(), priority, module: 'seo', effort: 'medium', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
       title_de: `${deepPages.length} Seiten mit Klicktiefe >= 4 (max: ${maxDepth})`,
       title_en: `${deepPages.length} pages at click depth >= 4 (max: ${maxDepth})`,
       description_de: `${Math.round(ratio * 100)}% der gecrawlten Seiten sind mindestens 4 Klicks von der Startseite entfernt. Tiefe Seiten werden seltener gecrawlt und bekommen weniger Linkjuice.`,
@@ -897,13 +912,12 @@ export function generateStructuredDataFindings(pages: PageSEOData[]): Finding[] 
     const allMissing = new Set<string>();
     list.forEach(l => l.missing.forEach(f => allMissing.add(f)));
     const sampleUrl = list[0].url;
-    const priority: 'important' | 'recommended' =
-      ['Article', 'NewsArticle', 'BlogPosting', 'Product', 'Recipe', 'Event', 'JobPosting'].includes(type)
-        ? 'important'
-        : 'recommended';
-
+    // Flat recommended (was dynamic important/recommended). Missing
+    // schema fields suppress rich-result eligibility but never block
+    // ranking — important was over-classified for what is purely a
+    // SERP-feature opportunity.
     findings.push({
-      id: id(), priority, module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
       title_de: `Schema.org ${type}: Pflichtfelder fehlen (${[...allMissing].join(', ')})`,
       title_en: `Schema.org ${type}: required fields missing (${[...allMissing].join(', ')})`,
       description_de: `Auf ${list.length} Seite(n) fehlen in ${type}-Schemas die von Google für Rich Results geforderten Felder: ${[...allMissing].join(', ')}. Ohne diese Felder werden keine Rich Snippets ausgespielt.`,
@@ -1040,7 +1054,10 @@ function checkRecommendedProperties(pages: PageSEOData[]): Finding[] {
     const missingList = [...allMissing].join(', ');
     const sample = list.slice(0, 3).map(l => l.url).join(', ');
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'low',
+      // schema.org "recommended" fields per spec — even more optional
+      // than required ones; only relevant if the user is actively
+      // chasing rich-result coverage.
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
       title_de: `Schema-Empfehlungen: ${list.length} Page(s) mit unvollständigem ${type}-Schema`,
       title_en: `Schema recommendations: ${list.length} page(s) with incomplete ${type} schema`,
       description_de: `${list.length} Page(s) haben ein vollständiges ${type}-Schema (alle Pflichtfelder OK), aber empfohlene Felder fehlen: ${missingList}. Google rendert das Rich Result trotzdem, aber qualitativ schwächer (z.B. ohne Beschreibung im SERP). Beispiele: ${sample}`,
@@ -1095,7 +1112,9 @@ function checkAlternativesConstraints(pages: PageSEOData[]): Finding[] {
     const orList = entry.properties.join(' OR ');
     const sample = entry.urls.slice(0, 3).join(', ');
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      // Common-sense alternative type missing — useful, not breaking.
+      // Drops ranking eligibility for that rich result only.
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
       title_de: `Schema-Alternative fehlt: ${entry.urls.length} ${entry.type}-Schema(s) ohne ${orList}`,
       title_en: `Schema alternative missing: ${entry.urls.length} ${entry.type} schema(s) without ${orList}`,
       description_de: `Auf ${entry.urls.length} Page(s) hat das ${entry.type}-Schema KEINE der Properties ${orList} gesetzt. Mindestens eine davon ist nötig, damit Google ein Rich Result rendert. Beispiele: ${sample}`,
@@ -1526,7 +1545,12 @@ export function generateRobotsConflictFindings(
     // Only flag when some (but not all) are unprotected — if none are set at all
     // the site probably doesn't use any of these paths.
     findings.push({
-      id: id(), priority: 'important', module: 'tech', effort: 'low', impact: 'medium',
+      // Defense-in-depth signal — recommended per OWASP: robots.txt
+      // is explicitly NOT a security boundary, so flagging missing
+      // disallow rules at important overstated the security value.
+      // The recommendation text already says this; the priority now
+      // matches the framing.
+      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'medium',
       title_de: `Sensitive Pfade nicht durch robots.txt geschützt: ${unprotected.join(', ')}`,
       title_en: `Sensitive paths not protected by robots.txt: ${unprotected.join(', ')}`,
       description_de: 'robots.txt blockt einige Standardpfade bereits, diese potenziell sensiblen Pfade aber nicht. Suchmaschinen und Scraper crawlen sie damit weiterhin — bei Admin-/Login-Pfaden ist das ein Security-Hinweis (kein Schutz, aber weniger Exposure).',
@@ -1570,7 +1594,10 @@ export function generateAnchorTextFindings(pages: PageSEOData[]): Finding[] {
       .map(a => `"${a.text}" → ${a.href}`)
       .join('; ');
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'medium',
+      // Mueller: "click here" anchors are suboptimal but not a ranking
+      // factor. Optional matches the actual SEO impact (and matches
+      // how most modern audit tools — Ahrefs, Semrush — surface this).
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'medium',
       title_de: `Generische Ankertexte auf ${pagesWithGeneric.length} Seiten (${allGeneric.length} gesamt)`,
       title_en: `Generic anchor texts on ${pagesWithGeneric.length} pages (${allGeneric.length} total)`,
       description_de: `Viele interne Links verwenden unspezifische Ankertexte wie "hier klicken", "mehr erfahren", "weiterlesen". Google bewertet Ankertexte als Ranking-Signal — sie sollten beschreiben, worum es auf der Zielseite geht. Beispiele: ${sample}`,
@@ -1676,7 +1703,10 @@ export function generateSitemapQualityFindings(
   });
   if (homepageEntry && (homepageEntry.priority === undefined || homepageEntry.priority < 0.8)) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      // Mueller 2024: the sitemap `priority` field is largely ignored
+      // by Google. Was over-classified — optional matches actual SEO
+      // impact (zero in 2026).
+      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'medium',
       title_de: `Homepage-Priority zu niedrig: ${homepageEntry.priority ?? 'fehlt'}`,
       title_en: `Homepage priority too low: ${homepageEntry.priority ?? 'missing'}`,
       description_de: 'Die Homepage sollte die höchste Priority im Sitemap haben (1.0) — sie ist der wichtigste Einstiegspunkt der Site. Aktueller Wert suggeriert, dass sie weniger wichtig wäre als andere URLs.',
@@ -1746,10 +1776,13 @@ export function generateSitemapCoverageFindings(pages: PageSEOData[], sitemap?: 
 
   if (notInSitemap.length > 0) {
     const ratio = notInSitemap.length / Math.max(crawledSet.size, 1);
-    const priority: 'important' | 'recommended' = ratio > 0.1 ? 'important' : 'recommended';
     const sample = notInSitemap.slice(0, 5).join(', ');
+    // Flat recommended (was dynamic important/recommended). Google
+    // discovers crawled-but-not-in-sitemap pages via internal links
+    // anyway; the sitemap merely accelerates indexing — useful, not
+    // breaking. Important was over-classified.
     findings.push({
-      id: id(), priority, module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
       title_de: `${notInSitemap.length} gecrawlte Seiten fehlen in der Sitemap`,
       title_en: `${notInSitemap.length} crawled pages missing from sitemap`,
       description_de: `${Math.round(ratio * 100)}% der gecrawlten Seiten sind nicht in der Sitemap enthalten. Google findet sie so zwar über interne Links, die Sitemap beschleunigt die Indexierung aber deutlich. Beispiele: ${sample}`,
@@ -1798,8 +1831,10 @@ export function generateRichResultsFindings(pages: PageSEOData[], pageSpeed?: Pa
 
   const anySchemas = pages.some(p => p.schemas.length > 0);
   if (!anySchemas) {
+    // Same logic as the schema-missing finding above (L141): rich
+    // results aid CTR but are not a ranking blocker per Search Central.
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'high',
       title_de: 'Keine strukturierten Daten (JSON-LD) gefunden',
       title_en: 'No structured data (JSON-LD) found',
       description_de: 'Auf keiner gecrawlten Seite wurde Schema.org-Markup gefunden. Strukturierte Daten sind die Grundlage für Google Rich Results (Sterne-Bewertungen, FAQ-Snippets, Breadcrumb-Darstellung im SERP) und deutliche CTR-Booster.',
@@ -1811,7 +1846,9 @@ export function generateRichResultsFindings(pages: PageSEOData[], pageSpeed?: Pa
 
   if (pageSpeed?.structuredDataAuditWarning) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      // Same source category as the JSON-LD-missing finding above —
+      // rich-result hygiene, not a ranking signal.
+      id: id(), priority: 'recommended', module: 'seo', effort: 'low', impact: 'medium',
       title_de: 'PageSpeed Insights meldet Probleme mit strukturierten Daten',
       title_en: 'PageSpeed Insights reports structured data issues',
       description_de: `Lighthouse-Audit "structured-data": ${pageSpeed.structuredDataAuditWarning}. Dies bedeutet, dass Google die Daten zwar findet, aber syntaktische oder semantische Fehler erkennt, die Rich Results verhindern können.`,
@@ -1831,11 +1868,14 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
   const findings: Finding[] = [];
   if (pages.length === 0) return findings;
 
-  // 1) URLs longer than 115 characters
+  // 1) URLs longer than 115 characters — optional per Mueller 2024:
+  // URL length is not a ranking factor. Common at e-commerce /
+  // category-stack sites and not actionable in many CMSes; flagging
+  // at recommended produced too much noise.
   const longUrls = pages.filter(p => p.url.length > 115);
   if (longUrls.length > 0) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'high', impact: 'low',
+      id: id(), priority: 'optional', module: 'seo', effort: 'high', impact: 'low',
       title_de: `${longUrls.length} URL(s) länger als 115 Zeichen`,
       title_en: `${longUrls.length} URL(s) longer than 115 characters`,
       description_de: `Lange URLs sind schlecht teilbar und schwerer im SERP zu lesen. Beispiele: ${longUrls.slice(0, 2).map(p => `${p.url.slice(0, 80)}… (${p.url.length})`).join(', ')}`,
@@ -1855,8 +1895,10 @@ export function generateURLQualityFindings(pages: PageSEOData[]): Finding[] {
     }
   });
   if (uppercaseUrls.length > 0) {
+    // Best practice but no ranking impact; many CMS produce mixed-case
+    // paths that work fine in practice. Optional matches reality.
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'low',
+      id: id(), priority: 'optional', module: 'seo', effort: 'medium', impact: 'low',
       title_de: `${uppercaseUrls.length} URL(s) mit Großbuchstaben im Pfad`,
       title_en: `${uppercaseUrls.length} URL(s) with uppercase letters in the path`,
       description_de: `Großbuchstaben in Pfaden führen auf manchen Servern zu 404 (case-sensitive), und Google behandelt /About und /about potenziell als unterschiedliche URLs. Beispiele: ${uppercaseUrls.slice(0, 3).map(p => p.url).join(', ')}`,

@@ -59,7 +59,10 @@ describe('checkRecommendedProperties', () => {
     ];
     const f = findRecommended(generateStructuredDataFindings(pages), 'Article');
     expect(f).toBeDefined();
-    expect(f!.priority).toBe('recommended');
+    // Package C-1 reclass: schema.org "recommended" fields are even
+    // more optional than required ones — they only matter when chasing
+    // rich-result coverage. Down-graded from recommended → optional.
+    expect(f!.priority).toBe('optional');
     expect(f!.description_en).toContain('description');
     expect(f!.description_en).toContain('publisher');
     expect(f!.description_en).toContain('mainEntityOfPage');
@@ -131,7 +134,10 @@ describe('checkAlternativesConstraints', () => {
     ];
     const f = findAlternative(generateStructuredDataFindings(pages), 'Product');
     expect(f).toBeDefined();
-    expect(f!.priority).toBe('important');
+    // Package C-1 reclass: missing schema-alternative property only
+    // suppresses one rich-result variant; never blocks ranking.
+    // Down-graded from important → recommended.
+    expect(f!.priority).toBe('recommended');
     expect(f!.title_en).toContain('aggregateRating OR review OR description');
   });
 
