@@ -33,9 +33,7 @@ export function calculateModuleScore(findings: Finding[], module: Module, maxPos
 //  TOP FINDINGS RANKING
 // ============================================================
 // Each finding gets an impact score = priority base × module weight.
-// Priority base:   critical 100, important 60, recommended 30, optional 10.
-// Module weight:   seo 1.5, performance 1.4, tech 1.3, content 1.2, ux 1.1, legal 1.0
-// Modules not listed default to 1.0.
+// Priority base: critical 100, important 60, recommended 30, optional 10.
 const PRIORITY_BASE: Record<Priority, number> = {
   critical: 100,
   important: 60,
@@ -43,17 +41,31 @@ const PRIORITY_BASE: Record<Priority, number> = {
   optional: 10,
 };
 
+// Module weights for module-score aggregation in 2026.
+//
+// accessibility 1.5: WCAG 2.2 + EU EAA (effective June 2025) make a11y
+//   compliance a baseline legal requirement. axe-driven findings are
+//   concrete violations.
+// seo 1.5: tied with accessibility — this tool is primarily an SEO audit;
+//   the audited site's primary commercial concern is search visibility.
+// legal 1.4: GDPR fines up to 4% global revenue; missing Impressum /
+//   Datenschutz on EU-targeted sites is direct cease-and-desist exposure.
+//   Up sharply from 1.0.
+// tech 1.3: unchanged.
+// performance 1.3: CWVs confirmed as ranking signal but per Mueller 2024
+//   they're a "tie-breaker", not primary. Down from 1.4.
+// content 1.1: most content findings are heuristic-flagged opportunities,
+//   not defects.
+// ux 1.0: UX findings are mostly recommended/optional already; weight
+//   matches.
 const MODULE_WEIGHT: Record<string, number> = {
+  accessibility: 1.5,
   seo: 1.5,
-  performance: 1.4,
-  // Accessibility findings come from axe-core — concrete WCAG-tagged
-  // violations rather than heuristics, so they sit just below tech in
-  // weight and ahead of content/ux/legal.
-  accessibility: 1.35,
+  legal: 1.4,
   tech: 1.3,
-  content: 1.2,
-  ux: 1.1,
-  legal: 1.0,
+  performance: 1.3,
+  content: 1.1,
+  ux: 1.0,
 };
 
 export function findingImpactScore(finding: Finding): number {

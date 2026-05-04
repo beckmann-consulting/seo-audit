@@ -88,8 +88,10 @@ describe('estimateScoreGain', () => {
 
 describe('findingImpactScore', () => {
   it('multiplies priority base by module weight', () => {
+    // 2026 weight rebalance: legal raised from 1.0 → 1.4 (GDPR fines).
+    // accessibility raised from 1.35 → 1.5 (WCAG 2.2 + EU EAA exposure).
     expect(findingImpactScore(f({ priority: 'critical', module: 'seo' }))).toBe(150);
-    expect(findingImpactScore(f({ priority: 'critical', module: 'legal' }))).toBe(100);
+    expect(findingImpactScore(f({ priority: 'critical', module: 'legal' }))).toBe(140);
   });
 });
 
