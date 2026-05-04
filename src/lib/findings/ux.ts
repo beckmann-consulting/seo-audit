@@ -82,7 +82,7 @@ export function generateUXFindings(pages: PageSEOData[]): Finding[] {
   const pagesWithLegacyPlugins = pages.filter(p => p.legacyPlugins > 0);
   if (pagesWithLegacyPlugins.length > 0) {
     findings.push({
-      id: id(), priority: 'critical', module: 'ux', effort: 'high', impact: 'high',
+      id: id(), priority: 'important', module: 'ux', effort: 'high', impact: 'high',
       title_de: `Legacy-Plugin-Inhalte (Flash/Shockwave) auf ${pagesWithLegacyPlugins.length} Seiten`,
       title_en: `Legacy plugin content (Flash/Shockwave) on ${pagesWithLegacyPlugins.length} pages`,
       description_de: 'Flash wurde 2020 eingestellt und wird von keinem modernen Browser mehr unterstützt. Diese Inhalte sind für alle Nutzer unsichtbar.',
@@ -164,7 +164,7 @@ export function generateFaviconFindings(pages: PageSEOData[]): Finding[] {
 
   if (!homepage.hasFavicon) {
     findings.push({
-      id: id(), priority: 'important', module: 'ux', effort: 'low', impact: 'medium',
+      id: id(), priority: 'optional', module: 'ux', effort: 'low', impact: 'low',
       title_de: 'Kein Favicon',
       title_en: 'No favicon',
       description_de: 'Es wurde kein <link rel="icon"> oder <link rel="shortcut icon"> gefunden. Browser zeigen ohne Favicon ein generisches Platzhalter-Icon im Tab, Bookmarks und Browser-History — ein sofortiger Vertrauensverlust und Brand-Signal.',
@@ -235,8 +235,8 @@ export function generateTouchTargetFindings(pages: PageSEOData[]): Finding[] {
     title_en: `Potentially small touch targets: ${totalSmall} element(s) across ${affected.length} page(s)`,
     description_de: `Heuristik-basierte Schätzung: Interaktive Elemente (Links/Buttons) mit explizit gesetzten Dimensionen unter ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px und ohne nennenswerten Text-Inhalt — typischerweise Icon-Buttons ohne ausreichendes Padding. Ohne Layout-Engine ist diese Detection vorsichtig (eher Untererfassung als Falschalarme); CSS-Padding kann das echte Tap-Target vergrößern. Beispiele: ${sample}`,
     description_en: `Heuristic estimate: interactive elements (links/buttons) with explicit dimensions under ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px and no meaningful text content — typically icon buttons without sufficient padding. Without a layout engine the detection is conservative (under-counts rather than false-flags); CSS padding can grow the real tap target. Examples: ${sample}`,
-    recommendation_de: `Die genannten Seiten in den DevTools auf Mobile-Viewport prüfen: jedes Touch-Target sollte mindestens ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px Klickfläche haben (WCAG 2.5.5 AAA, Apple HIG, Material Design). Lösung meist: padding rund um Icons setzen, oder Icon-Container vergrößern.`,
-    recommendation_en: `Verify the listed pages in DevTools at a mobile viewport: each touch target should have at least ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px hit area (WCAG 2.5.5 AAA, Apple HIG, Material Design). Usual fix: add padding around icons or enlarge the icon container.`,
+    recommendation_de: `Die genannten Seiten in den DevTools auf Mobile-Viewport prüfen: jedes Touch-Target sollte mindestens ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px Klickfläche haben (WCAG 2.2 SC 2.5.8 AA: 24×24px Minimum; WCAG 2.5.5 AAA: 44×44px Enhanced; Apple HIG, Material Design empfehlen 44-48px). Lösung meist: padding rund um Icons setzen, oder Icon-Container vergrößern.`,
+    recommendation_en: `Verify the listed pages in DevTools at a mobile viewport: each touch target should have at least ${TOUCH_TARGET_THRESHOLD_PX}×${TOUCH_TARGET_THRESHOLD_PX}px hit area (WCAG 2.2 SC 2.5.8 AA: 24×24px minimum; WCAG 2.5.5 AAA: 44×44px enhanced; Apple HIG and Material Design recommend 44-48px). Usual fix: add padding around icons or enlarge the icon container.`,
     affectedUrl: affected[0].url,
   });
 
