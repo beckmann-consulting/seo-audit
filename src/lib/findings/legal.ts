@@ -16,8 +16,8 @@ export function generateLegalFindings(pages: PageSEOData[], allHtml: string): Fi
       id: id(), priority: 'critical', module: 'legal', effort: 'low', impact: 'high',
       title_de: 'Kein Impressum gefunden',
       title_en: 'No legal notice (Impressum) found',
-      description_de: 'Für Unternehmen mit EU-Bezug ist ein Impressum gemäß §5 TMG bzw. §18 MStV Pflicht. Es wurde weder eine Seite mit erkennbarem Impressum-URL-Muster (multi-lingual geprüft) noch ein eingebettetes Pflicht-Marker wie "§ 5 TMG" gefunden. Fehlt das Impressum, drohen Abmahnungen.',
-      description_en: 'For companies with EU connections, a legal notice is mandatory under §5 TMG / §18 MStV. We found neither a page with a recognisable imprint URL pattern (checked multilingually) nor any embedded legal-disclosure marker like "§ 5 TMG" / "directeur de la publication". Absence risks legal warnings.',
+      description_de: 'Für Unternehmen mit EU-Bezug ist ein Impressum gemäß §5 DDG (seit Mai 2024, ersetzt §5 TMG) bzw. §18 MStV Pflicht. Es wurde weder eine Seite mit erkennbarem Impressum-URL-Muster (multi-lingual geprüft) noch ein eingebettetes Pflicht-Marker wie "§ 5 DDG" oder "§ 5 TMG" gefunden. Fehlt das Impressum, drohen Abmahnungen.',
+      description_en: 'For companies with EU connections, a legal notice is mandatory under §5 DDG (since May 2024, replacing §5 TMG) / §18 MStV. We found neither a page with a recognisable imprint URL pattern (checked multilingually) nor any embedded legal-disclosure marker like "§ 5 DDG", "§ 5 TMG" or "directeur de la publication". Absence risks legal warnings.',
       recommendation_de: 'Impressum-Seite erstellen mit: vollständiger Firmenname, Adresse, Geschäftsführer, Handelsregisternummer, USt-IdNr., E-Mail. Auf einer eindeutigen URL wie /impressum oder /legal-notice ablegen.',
       recommendation_en: 'Create a legal notice page with: full company name, address, managing director, company registration, VAT number, email. Host it on a recognisable URL like /imprint or /legal-notice.',
     });
@@ -29,8 +29,8 @@ export function generateLegalFindings(pages: PageSEOData[], allHtml: string): Fi
       id: id(), priority: 'optional', module: 'legal', effort: 'low', impact: 'low',
       title_de: 'Impressum-Inhalt vorhanden, aber URL folgt keinem Standard',
       title_en: 'Imprint content present, but the URL follows no standard pattern',
-      description_de: 'Pflicht-Marker wie "§ 5 TMG" wurden im Site-HTML gefunden, aber keine Seite liegt auf einer der üblichen Impressum-URLs (/impressum, /legal-notice, /mentions-legales, …). Nutzer und Suchmaschinen erwarten den Standard-Slug.',
-      description_en: 'Mandatory legal markers like "§ 5 TMG" were found in the site HTML, but no page lives at one of the conventional imprint URLs (/impressum, /legal-notice, /mentions-legales, …). Users and search engines expect the standard slug.',
+      description_de: 'Pflicht-Marker wie "§ 5 DDG" oder "§ 5 TMG" wurden im Site-HTML gefunden, aber keine Seite liegt auf einer der üblichen Impressum-URLs (/impressum, /legal-notice, /mentions-legales, …). Nutzer und Suchmaschinen erwarten den Standard-Slug.',
+      description_en: 'Mandatory legal markers like "§ 5 DDG" or "§ 5 TMG" were found in the site HTML, but no page lives at one of the conventional imprint URLs (/impressum, /legal-notice, /mentions-legales, …). Users and search engines expect the standard slug.',
       recommendation_de: 'Impressum auf eine eindeutige URL umziehen oder einen 301-Redirect von /impressum auf den aktuellen Pfad setzen.',
       recommendation_en: 'Move the imprint to a recognisable URL or set up a 301 redirect from /imprint (or /impressum, depending on locale) to the current path.',
     });
