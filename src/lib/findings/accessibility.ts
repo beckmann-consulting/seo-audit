@@ -53,8 +53,8 @@ export function generateAccessibilityFindings(pages: PageSEOData[], modulesInclu
       title_en: 'Accessibility audit not run — JS mode required',
       description_de: 'Das Accessibility-Modul nutzt axe-core, das im Browser-Kontext laufen muss. Im aktuellen Static-Mode kann das nicht durchgeführt werden — keine Pflichten-Verstöße erkannt, aber auch keine Sicherheit dass die Seite WCAG-konform ist.',
       description_en: 'The accessibility module uses axe-core, which has to run inside a real browser. The current static mode can\'t do that — no violations were detected, but there\'s also no assurance the site is WCAG-compliant.',
-      recommendation_de: 'Im Audit-Formular Rendering-Modus auf "JavaScript (Browserless / Chromium)" stellen und das Accessibility-Modul angehakt lassen. Dann werden alle Seiten gegen WCAG 2.1 AA geprüft.',
-      recommendation_en: 'In the audit form, set rendering mode to "JavaScript (Browserless / Chromium)" and keep the Accessibility module checked. All pages will then be checked against WCAG 2.1 AA.',
+      recommendation_de: 'Im Audit-Formular Rendering-Modus auf "JavaScript (Browserless / Chromium)" stellen und das Accessibility-Modul angehakt lassen. Dann werden alle Seiten gegen WCAG 2.2 AA geprüft.',
+      recommendation_en: 'In the audit form, set rendering mode to "JavaScript (Browserless / Chromium)" and keep the Accessibility module checked. All pages will then be checked against WCAG 2.2 AA.',
     }];
   }
 
