@@ -42,7 +42,7 @@ export function generateContentFindings(pages: PageSEOData[]): Finding[] {
   const pagesWithoutH1 = pages.filter(p => p.h1s.length === 0);
   if (pagesWithoutH1.length > 0) {
     findings.push({
-      id: id(), priority: 'critical', module: 'content', effort: 'low', impact: 'high',
+      id: id(), priority: 'important', module: 'content', effort: 'low', impact: 'high',
       title_de: `${pagesWithoutH1.length} Seite(n) ohne H1-Tag`,
       title_en: `${pagesWithoutH1.length} page(s) without H1 tag`,
       description_de: `Betroffen: ${pagesWithoutH1.slice(0, 3).map(p => p.url).join(', ')}`,
@@ -55,7 +55,7 @@ export function generateContentFindings(pages: PageSEOData[]): Finding[] {
   const pagesWithMultipleH1 = pages.filter(p => p.h1s.length > 1);
   if (pagesWithMultipleH1.length > 0) {
     findings.push({
-      id: id(), priority: 'important', module: 'content', effort: 'low', impact: 'medium',
+      id: id(), priority: 'optional', module: 'content', effort: 'low', impact: 'medium',
       title_de: `${pagesWithMultipleH1.length} Seite(n) mit mehreren H1-Tags`,
       title_en: `${pagesWithMultipleH1.length} page(s) with multiple H1 tags`,
       description_de: pagesWithMultipleH1.slice(0, 2).map(p => `${p.url}: ${p.h1s.length} H1s (${p.h1s.slice(0,2).join(', ')})`).join('\n'),
@@ -119,7 +119,7 @@ export function generateContentFindings(pages: PageSEOData[]): Finding[] {
   const pagesWithoutH2 = pages.filter(p => p.wordCount >= 100 && p.h2s.length === 0);
   if (pagesWithoutH2.length > 0) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'content', effort: 'low', impact: 'low',
+      id: id(), priority: 'optional', module: 'content', effort: 'low', impact: 'low',
       title_de: `${pagesWithoutH2.length} Content-Seite(n) ohne einziges H2`,
       title_en: `${pagesWithoutH2.length} content page(s) without a single H2`,
       description_de: 'Diese Seiten haben genug Text, aber keine Unter-Überschriften. H2-Tags strukturieren den Inhalt für Leser und Suchmaschinen.',
