@@ -32,10 +32,13 @@
     "@types/react-dom": "^19.2.3",
     "typescript": "^6.0.3",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "sharp": "^0.35.4",
-    "postcss": "^8.5.25"
+    "postcss": "^8.5.25",
+    "tsconfck": {
+      "typescript": "$typescript"
+    }
   }
 }
