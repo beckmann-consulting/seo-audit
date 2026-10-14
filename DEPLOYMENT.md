@@ -325,7 +325,8 @@ explizit gematched, alles andere ist hinter Basic Auth.
 ```caddy
 seo-audit.beckmanndigital.com {
     @public {
-        path /widget /widget/* /widget.js /api/widget/* /_next/static/* /_next/image* /TWB_Logo_Transparent.png /favicon.ico
+        # /robots.txt is public too, so crawlers can read its "Disallow: /"
+        path /widget /widget/* /widget.js /api/widget/* /_next/static/* /_next/image* /TWB_Logo_Transparent.png /favicon.ico /robots.txt
     }
 
     handle @public {
@@ -346,6 +347,10 @@ Widget-Embed auf beckmanndigital.com erreichen. Alles andere — die
 interne Audit-UI, der prompt-Tab, der Diff-Audit, die admin-tauglichen
 APIs — landet im default-`handle`-Block und ist durch Basic Auth
 geschützt.
+
+`/robots.txt` (served from `public/robots.txt`) is public as well: crawlers
+that follow the widget iframe to this host get `Disallow: /` instead of a
+401 and do not crawl it.
 
 **Bcrypt-Hash erzeugen** für Basic Auth:
 

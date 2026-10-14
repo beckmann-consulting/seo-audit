@@ -1,0 +1,4 @@
+# Internal tool host: only the widget embedded on beckmanndigital.com is public,
+# nothing on this host is meant for search results.
+User-agent: *
+Disallow: /
