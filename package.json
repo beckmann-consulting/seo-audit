@@ -35,6 +35,7 @@
     "vitest": "^4.1.11"
   },
   "overrides": {
+    "vite": "7.3.7",
     "sharp": "^0.35.4",
     "postcss": "^8.5.25",
     "tsconfck": {
