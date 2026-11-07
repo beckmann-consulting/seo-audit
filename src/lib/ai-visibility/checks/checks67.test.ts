@@ -91,8 +91,40 @@ describe('check 7: trust and freshness', () => {
     expect(t).toEqual(expect.arrayContaining([
       expect.stringMatching(/All 5 sitemap entries share one lastmod/),
       expect.stringMatching(/dateModified and sitemap lastmod differ/),
-      expect.stringMatching(/Last-Modified and sitemap lastmod differ/),
+      expect.stringMatching(/Sitemap lastmod is more than 30 days newer than Last-Modified/),
     ]));
+  });
+
+  // websites-33: the direction counts
+  describe('Last-Modified against lastmod', () => {
+    const urls = ['a', 'b'].map(x => ({ url: `https://example.com/${x}`, lastmod: '2026-10-21', imageCount: 0 }));
+    const page = (lastModified?: string) => ({ url: 'https://example.com/a', html: home, seo: seoPage({ url: 'https://example.com/a', wordCount: 100 }), lastModified });
+    const run = (lastModified?: string) => checkTrust({ pages: [homePage, page(lastModified)], sitemap: { urls, isIndex: false, subSitemaps: [] }, modules: ['ai'], imprintFound: true });
+    const headerTitles = (o: ReturnType<typeof run>) => o.findings.map(f => f.title_en).filter(t => /Last-Modified/.test(t));
+
+    it('lastmod newer than Last-Modified: the finding stays', () => {
+      const o = run('Mon, 01 Jun 2026 10:00:00 GMT');
+      expect(headerTitles(o)).toEqual(['Sitemap lastmod is more than 30 days newer than Last-Modified on 1 page(s)']);
+      expect(o.result.details_en.join(' ')).not.toMatch(/no points deducted/);
+    });
+
+    it('Last-Modified newer than lastmod (every upload stamps all files): a note only, no finding', () => {
+      const o = run('Sat, 26 Dec 2026 10:00:00 GMT');
+      expect(headerTitles(o)).toEqual([]);
+      expect(o.result.details_en.join(' ')).toMatch(/Note, no points deducted: Last-Modified is more than 30 days newer than lastmod on 1 page\(s\)/);
+      expect(o.result.details_de.join(' ')).toMatch(/Hinweis ohne Punktabzug/);
+      expect(JSON.stringify(o.result)).not.toMatch(/[\u2013\u2014]/);
+    });
+
+    it('without Last-Modified: no finding, named as not checkable', () => {
+      const o = run(undefined);
+      expect(headerTitles(o)).toEqual([]);
+      expect(o.result.details_en.join(' ')).toMatch(/No Last-Modified header: this comparison not checkable/);
+    });
+
+    it('a newer Last-Modified costs no points: same score as no header at all', () => {
+      expect(run('Sat, 26 Dec 2026 10:00:00 GMT').findings.length).toBe(run(undefined).findings.length);
+    });
   });
 
   it('not checkable: no page; without sitemap and headers those parts are named as not checkable', () => {

@@ -131,7 +131,11 @@ export function checkTrust(input: TrustInput): CheckOutput {
   } else {
     const byUrl = new Map(entries.filter(e => e.lastmod).map(e => [norm(e.url), e.lastmod as string]));
     const gaps: string[] = [];
+    // websites-33: only a lastmod newer than Last-Modified is a finding (the sitemap claims content the
+    // server does not deliver yet); a newer Last-Modified is what every full upload does (FTP deploys stamp
+    // every file), so it is a note without points
     const headerGaps: string[] = [];
+    const headerNewer: string[] = [];
     for (const p of pages) {
       const lastmod = byUrl.get(norm(p.seo.finalUrl || p.url));
       if (!lastmod) continue;
@@ -140,7 +144,11 @@ export function checkTrust(input: TrustInput): CheckOutput {
       if (g !== undefined && g > DATE_GAP_DAYS) gaps.push(`${p.url} (dateModified ${dm}, lastmod ${lastmod})`);
       const lm = p.lastModified;
       const h = lm ? days(lm, lastmod) : undefined;
-      if (h !== undefined && h > DATE_GAP_DAYS) headerGaps.push(`${p.url} (Last-Modified ${lm}, lastmod ${lastmod})`);
+      if (lm && h !== undefined && h > DATE_GAP_DAYS) {
+        const item = `${p.url} (Last-Modified ${lm}, lastmod ${lastmod})`;
+        if (Date.parse(lastmod) > Date.parse(lm)) headerGaps.push(item);
+        else headerNewer.push(item);
+      }
     }
     if (gaps.length > 0) {
       findings.push(finding('optional', 'low', 'low', {
@@ -166,13 +174,17 @@ export function checkTrust(input: TrustInput): CheckOutput {
     }
     if (headerGaps.length > 0) {
       findings.push(finding('optional', 'low', 'low', {
-        title_de: `Last-Modified und Sitemap-lastmod weichen auf ${headerGaps.length} Seite(n) um mehr als ${DATE_GAP_DAYS} Tage ab`,
-        title_en: `Last-Modified and sitemap lastmod differ by more than ${DATE_GAP_DAYS} days on ${headerGaps.length} page(s)`,
-        description_de: `Beispiele: ${sample(headerGaps, 3)}`,
-        description_en: `Examples: ${sample(headerGaps, 3)}`,
+        title_de: `Sitemap-lastmod ist auf ${headerGaps.length} Seite(n) mehr als ${DATE_GAP_DAYS} Tage neuer als Last-Modified`,
+        title_en: `Sitemap lastmod is more than ${DATE_GAP_DAYS} days newer than Last-Modified on ${headerGaps.length} page(s)`,
+        description_de: `Die Sitemap meldet neueren Inhalt, als der Server ausliefert. Beispiele: ${sample(headerGaps, 3)}`,
+        description_en: `The sitemap reports newer content than the server delivers. Examples: ${sample(headerGaps, 3)}`,
         recommendation_de: 'Last-Modified und lastmod aus derselben Quelle setzen.',
         recommendation_en: 'Set Last-Modified and lastmod from the same source.',
       }));
+    }
+    if (headerNewer.length > 0) {
+      details_de.push(`Hinweis ohne Punktabzug: Last-Modified ist auf ${headerNewer.length} Seite(n) mehr als ${DATE_GAP_DAYS} Tage neuer als lastmod, zum Beispiel weil ein Upload alle Dateien neu gestempelt hat. Das ist kein Fehler der Seite.`);
+      details_en.push(`Note, no points deducted: Last-Modified is more than ${DATE_GAP_DAYS} days newer than lastmod on ${headerNewer.length} page(s), for example because an upload stamped every file anew. This is not a fault of the site.`);
     }
     if (!pages.some(p => p.lastModified)) {
       details_de.push('Kein Last-Modified-Header: dieser Vergleich nicht prüfbar.');

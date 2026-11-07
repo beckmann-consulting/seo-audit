@@ -1,5 +1,5 @@
 import { parseRobots, botVerdict } from '../ai-visibility/robots';
-import { SCHEMA_REQUIRED_FIELDS, SCHEMA_RECOMMENDED, hasField, schemaTableType, schemaSubstructureBug, SCHEMA_SUBSTRUCTURE_BUG_DE, SCHEMA_SUBSTRUCTURE_BUG_EN } from '../schema-fields';
+import { SCHEMA_REQUIRED_FIELDS, SCHEMA_RECOMMENDED, hasField, hasFieldOrEquivalent, schemaTableType, schemaSubstructureBug, SCHEMA_SUBSTRUCTURE_BUG_DE, SCHEMA_SUBSTRUCTURE_BUG_EN } from '../schema-fields';
 import type {
   Finding, PageSEOData, PageSpeedData,
   AIReadinessInfo, SitemapInfo,
@@ -985,7 +985,7 @@ function checkRecommendedProperties(pages: PageSEOData[]): Finding[] {
       // Skip when required already missing — required-findings own that case.
       const required = SCHEMA_REQUIRED_FIELDS[schemaTableType(schema.type)];
       if (required && required.some(f => !hasField(schema.data, f))) continue;
-      const missing = recommended.filter(f => !hasField(schema.data, f));
+      const missing = recommended.filter(f => !hasFieldOrEquivalent(schema.data, f));
       if (missing.length > 0) {
         issues.push({ type: schema.type, missing, url: page.url });
       }

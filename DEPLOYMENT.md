@@ -20,8 +20,8 @@ Hetzner CPX32). The target layout is:
 
 | Component | Version            | Install                                                   |
 |-----------|--------------------|-----------------------------------------------------------|
-| Node.js   | **24.x LTS** (see `.nvmrc`) | `curl -fsSL https://deb.nodesource.com/setup_24.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
-| npm       | ≥10.x (comes with Node 24) | — |
+| Node.js   | **22.x LTS** (see `.nvmrc`; twb-server runs 22, `engines` also allows 24) | `curl -fsSL https://deb.nodesource.com/setup_22.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
+| npm       | ≥10.x (comes with Node 22) | — |
 | git       | any current        | `sudo apt-get install -y git`                             |
 | caddy     | 2.11+              | `sudo apt-get install -y caddy` (or follow https://caddyserver.com/docs/install for the latest .deb) |
 | systemd   | (built-in)         | Process manager. Unit files live under `infra/seo-audit/` and `infra/browserless/`. |
@@ -747,7 +747,7 @@ journalctl -u seo-audit.service -n 50 --no-pager
 
 ## Ready-Checklist (TL;DR)
 
-- [ ] Node 24 / Caddy / docker (optional) installiert
+- [ ] Node 22 / Caddy / docker (optional) installiert
 - [ ] Repo unter `/home/tobias/apps/seo-audit` geklont (User `tobias`)
 - [ ] `npm ci && npm run build` durchgelaufen
 - [ ] `.env.production` mit `GOOGLE_API_KEY` und `PORT=3001` gesetzt, `chmod 600`

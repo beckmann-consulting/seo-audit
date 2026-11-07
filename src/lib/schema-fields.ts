@@ -39,6 +39,21 @@ export function hasField(data: Record<string, unknown>, field: string): boolean 
   return true;
 }
 
+/**
+ * Fields that count as present when an equivalent field is there
+ * (websites-33): openingHoursSpecification is the structured and more
+ * complete form of openingHours (schema.org, Google's local business
+ * guidelines), so a LocalBusiness with it does not miss openingHours.
+ */
+export const FIELD_EQUIVALENTS: Record<string, string[]> = {
+  openingHours: ['openingHoursSpecification'],
+};
+
+/** hasField, or one of the field's equivalents present (for the recommended fields). */
+export function hasFieldOrEquivalent(data: Record<string, unknown>, field: string): boolean {
+  return hasField(data, field) || (FIELD_EQUIVALENTS[field] ?? []).some(f => hasField(data, f));
+}
+
 // Properties beyond the Google Rich Results required set that visibly
 // improve the rendered result quality. Required-Findings already cover the
 // hard failures; these surface "rich-result rendered, but suboptimal" cases.

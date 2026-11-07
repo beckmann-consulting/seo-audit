@@ -6,7 +6,7 @@
 // is active: ai then keeps a shadow entry with the priority of seo's finding
 // instead of a second finding.
 
-import { SCHEMA_REQUIRED_FIELDS, SCHEMA_RECOMMENDED, hasField, schemaTableType, LOCAL_BUSINESS_SUBTYPES, schemaSubstructureBug, SCHEMA_SUBSTRUCTURE_BUG_DE, SCHEMA_SUBSTRUCTURE_BUG_EN } from '@/lib/schema-fields';
+import { SCHEMA_REQUIRED_FIELDS, SCHEMA_RECOMMENDED, hasField, hasFieldOrEquivalent, schemaTableType, LOCAL_BUSINESS_SUBTYPES, schemaSubstructureBug, SCHEMA_SUBSTRUCTURE_BUG_DE, SCHEMA_SUBSTRUCTURE_BUG_EN } from '@/lib/schema-fields';
 import type { AIShadowEntry } from '../types';
 import type { Module, PageSEOData, ParsedSchema } from '@/types';
 import { result, finding, sample, type CheckOutput } from './common';
@@ -157,7 +157,7 @@ export function checkStructured(input: StructuredInput): CheckOutput {
     if (!ANSWER_TYPES.has(row)) continue;
     const req = (SCHEMA_REQUIRED_FIELDS[row] ?? []).filter(f => !hasField(s.data, f));
     if (req.length > 0) { missingRequired.push(`${s.type} ${req.join(', ')} (${p.url})`); continue; }
-    const rec = (SCHEMA_RECOMMENDED[row] ?? []).filter(f => !hasField(s.data, f));
+    const rec = (SCHEMA_RECOMMENDED[row] ?? []).filter(f => !hasFieldOrEquivalent(s.data, f));
     if (rec.length > 0) missingRecommended.push(`${s.type} ${rec.join(', ')} (${p.url})`);
   }
   if (missingRequired.length > 0) {
