@@ -89,7 +89,16 @@ Every shared signal has one owner: with SEO, content, legal or tech active, the 
 
 **Crawler data.** `src/lib/ai-visibility/crawlers.json` names each token with its vendor, purpose, what the vendor says about robots.txt, the official source (or none found) and the day it was checked. Keep both up to date when a vendor changes its documentation; `crawlers.test.ts` checks the shape.
 
-**Rendering for check 5.** With Browserless (rendering `js` or `auto`) the crawl's rendered DOM is used. Without it, an optional local Chromium renders the start page and up to four more pages: set `AI_LOCAL_CHROMIUM` to the path of a Chromium executable on the server (nothing is downloaded). That Chromium opens no connection of its own: every request goes through `safe-fetch.ts` (only the audited host and its www or apex counterpart, only public addresses, pinned against DNS rebinding, redirects only for the document, limits per request and per page). A page counts only if every one of its requests was served, so pages with resources from other hosts cannot be assessed locally; Browserless can. Without either, check 5 is not checkable.
+**Rendering for check 5.** With Browserless (rendering `js` or `auto`) the crawl's rendered DOM is used. Without it, an optional local Chromium renders the start page and up to four more pages: set `AI_LOCAL_CHROMIUM` to the path of a Chromium executable on the server (nothing is downloaded). That Chromium opens no connection of its own: every request goes through `safe-fetch.ts`:
+
+- the audited host, its www or apex counterpart and, since ultimate-40b, further hosts of the same registrable domain (for `beckmanndigital.com` also `umami.beckmanndigital.com`), at most 10 of them per run;
+- the registrable domain comes from the Public Suffix List in `src/lib/ai-visibility/public-suffix-list.json` (both sections, so two projects under `github.io` are two domains); a host no listed rule covers keeps the old rule of host and counterpart;
+- every host only with the scheme and port of the audit and only with public addresses, pinned against DNS rebinding; redirects only for the document, each step checked; limits per request and per page;
+- the audit's own headers and credentials go to the audited origin only; cookies follow their domain, a `Domain` that is a public suffix is refused.
+
+A page counts only if every one of its requests was served, so pages with resources from other registrable domains cannot be assessed locally; Browserless can. Without either, check 5 is not checkable.
+
+**Public Suffix List.** `node scripts/update-public-suffix-list.mjs` fetches the list and the official test corpus (`src/lib/ai-visibility/__fixtures__/test_psl.txt`), validates both and writes them only if every corpus case passes. It runs by hand, never at runtime. The list is under the MPL 2.0 (https://publicsuffix.org/).
 
 **Deploy.** Nothing to do; `AI_LOCAL_CHROMIUM` is optional.
 

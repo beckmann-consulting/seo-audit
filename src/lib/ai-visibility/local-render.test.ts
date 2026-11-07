@@ -69,7 +69,7 @@ describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () =
     expect(get('/')?.incompleteReason).toBeUndefined();
     expect(get('/')?.renderedHtml).toContain('<p id="loc">https://site.test/de/</p>');
     // foreign resources of any type make a page not assessable, in both directions
-    expect(get('/img')?.incompleteReason).toMatch(/another host blocked \(cdn\.other\.test\)/);
+    expect(get('/img')?.incompleteReason).toMatch(/another host blocked \(cdn\.other\.test: another domain/);
     expect(get('/foreign-js')?.incompleteReason).toMatch(/another host blocked/);
     expect(get('/remove')?.incompleteReason).toMatch(/another host blocked/);
     // own resources missing or redirected
@@ -92,6 +92,39 @@ describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () =
     // no Chromium of this test is left running
     expect(chromiumCount()).toBe(before);
   }, 120_000);
+
+  it('resources of a subdomain of the same registrable domain are served; other domains and inward subdomains are not (ultimate-40b)', async () => {
+    const hits: string[] = [];
+    const t: Transport = {
+      async resolve(host) {
+        if (host === 'beckmanndigital.com' || host === 'umami.beckmanndigital.com') return [{ address: '93.184.215.14', family: 4 }];
+        if (host === 'intern.beckmanndigital.com') return [{ address: '10.0.0.5', family: 4 }];
+        if (host === 'beckmanndigital.com.evil.example') return [{ address: '93.184.215.30', family: 4 }];
+        throw new Error('ENOTFOUND');
+      },
+      async request(url, _address, init) {
+        hits.push(`${init.method} ${url.host}${url.pathname}`);
+        const pages: Record<string, Answer> = {
+          'beckmanndigital.com/sub': { body: PAGE('<main id="m"><h1>Sub</h1></main><script src="https://umami.beckmanndigital.com/script.js"></script>') },
+          'beckmanndigital.com/evil': { body: PAGE('<main><h1>E</h1></main><script src="https://beckmanndigital.com.evil.example/x.js"></script>') },
+          'beckmanndigital.com/inward': { body: PAGE('<main><h1>I</h1></main><script src="https://intern.beckmanndigital.com/x.js"></script>') },
+          'umami.beckmanndigital.com/script.js': { headers: { 'content-type': 'application/javascript' }, body: 'document.getElementById("m").append("von-umami")' },
+        };
+        const a = pages[`${url.host}${url.pathname}`] ?? { status: 404, body: 'nf' };
+        return { status: a.status ?? 200, headers: { 'content-type': 'text/html; charset=utf-8', ...(a.headers ?? {}) }, body: Readable.from([Buffer.from(a.body ?? '')]) };
+      },
+    };
+    const before = chromiumCount();
+    const urls = ['/sub', '/evil', '/inward'].map(p => `https://beckmanndigital.com${p}`);
+    const out = await localRender({ executablePath: CHROMIUM, auditUrl: 'https://beckmanndigital.com/de', urls, transport: t, limits: { ...DEFAULT_LIMITS, pageTimeMs: 8000 }, quietMs: 500 });
+    const get = (p: string) => out.get(`https://beckmanndigital.com${p}`);
+    expect(get('/sub')?.incompleteReason).toBeUndefined();
+    expect(get('/sub')?.renderedHtml).toContain('von-umami');
+    expect(get('/evil')?.incompleteReason).toMatch(/another host blocked \(beckmanndigital\.com\.evil\.example: another domain/);
+    expect(get('/inward')?.incompleteReason).toMatch(/non-public address \(10\.0\.0\.5\)/);
+    expect(hits.some(h => h.includes('evil.example') || h.startsWith('GET intern.'))).toBe(false);
+    expect(chromiumCount()).toBe(before);
+  }, 60_000);
 
   it('a page that never gets quiet is not assessable', async () => {
     const { t } = siteTransport({

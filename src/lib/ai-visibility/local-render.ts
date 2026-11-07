@@ -2,7 +2,8 @@
 // (AI_LOCAL_CHROMIUM, no download) that opens no connection of its own.
 //
 // - Every request of the page is caught by context.route and answered from
-//   safeFetch (audited host only, public pinned addresses); WebSockets are
+//   safeFetch (the audited host and further hosts of its registrable domain,
+//   public pinned addresses); WebSockets are
 //   closed; anything that could slip past the routing meets a resolver that
 //   maps every host to nothing and a dead proxy.
 // - The document's redirects are resolved in Node first; Chromium then
@@ -18,7 +19,7 @@
 //   with it.
 
 import type { Browser, Page } from 'playwright-core';
-import { buildScope, inScope, safeFetch, CookieJar, DEFAULT_LIMITS, type Limits, type Scope, type Transport } from './safe-fetch';
+import { buildScope, admit, safeFetch, CookieJar, DEFAULT_LIMITS, type Limits, type Scope, type Transport } from './safe-fetch';
 import type { LocalRenderOutcome } from './index';
 
 export const LOCAL_RENDER_SAMPLE = 5; // the start page and up to 4 more
@@ -130,8 +131,9 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
           await route.abort('blockedbyclient');
           return;
         }
-        if (!inScope(scope, req.url())) {
-          mark(`request to another host blocked (${hostOf(req.url())})`);
+        const allowed = await admit(scope, req.url(), budget.deadline);
+        if (!allowed.ok) {
+          mark(`request to another host blocked (${hostOf(req.url())}: ${allowed.reason})`);
           await route.abort('blockedbyclient');
           return;
         }
@@ -182,7 +184,8 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
 /** Render a sample of pages locally; every page gets an outcome, a failure of the whole run included. */
 export async function localRender(o: LocalRenderOptions): Promise<Map<string, LocalRenderOutcome>> {
   const out = new Map<string, LocalRenderOutcome>();
-  const scope = await buildScope(o.auditUrl, o.transport);
+  // the local render may load from further hosts of the audited host's registrable domain (ultimate-40b)
+  const scope = await buildScope(o.auditUrl, o.transport, { subdomains: true, requestTimeoutMs: (o.limits ?? DEFAULT_LIMITS).requestTimeoutMs });
   if (!scope.ok) {
     for (const u of o.urls) out.set(u, { incompleteReason: scope.reason });
     return out;

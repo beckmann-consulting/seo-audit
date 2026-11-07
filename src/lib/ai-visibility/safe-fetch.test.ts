@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
 import * as zlib from 'node:zlib';
-import { buildScope, inScope, isPublicAddress, safeFetch, fulfillHeaders, pinnedLookup, DEFAULT_LIMITS, type Transport, type Address, type RawResponse } from './safe-fetch';
+import { buildScope, admit, isPublicAddress, safeFetch, fulfillHeaders, pinnedLookup, DEFAULT_LIMITS, type Transport, type Address, type RawResponse } from './safe-fetch';
 
 const PUBLIC: Address = { address: '93.184.215.14', family: 4 };
 
@@ -64,15 +64,16 @@ describe('buildScope', () => {
     const r = await buildScope('https://site.test/', t);
     expect(r.ok && [...r.scope.hosts.keys()]).toEqual(['site.test']);
   });
-  it('inScope: other scheme, port or host is outside', async () => {
+  it('admit: other scheme, port or host is outside', async () => {
     const { t } = fakeTransport({ 'site.test': [PUBLIC] }, () => ({}));
     const r = await buildScope('https://site.test/', t);
     if (!r.ok) throw new Error('scope');
-    expect(inScope(r.scope, 'https://site.test/a')).not.toBeNull();
-    expect(inScope(r.scope, 'http://site.test/a')).toBeNull();
-    expect(inScope(r.scope, 'https://site.test:8443/a')).toBeNull();
-    expect(inScope(r.scope, 'https://other.test/a')).toBeNull();
-    expect(inScope(r.scope, 'https://93.184.215.14/a')).toBeNull();
+    const d = Date.now() + 5000;
+    expect((await admit(r.scope, 'https://site.test/a', d)).ok).toBe(true);
+    expect((await admit(r.scope, 'http://site.test/a', d)).ok).toBe(false);
+    expect((await admit(r.scope, 'https://site.test:8443/a', d)).ok).toBe(false);
+    expect((await admit(r.scope, 'https://other.test/a', d)).ok).toBe(false);
+    expect((await admit(r.scope, 'https://93.184.215.14/a', d)).ok).toBe(false);
   });
 });
 

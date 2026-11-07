@@ -92,7 +92,7 @@ export function checkNoJs(pages: RenderedPage[], modules: Module[]): CheckOutput
   }
 
   const render = { source, pages: results,
-    ...(source === 'local' ? { note_de: 'Lokal gerendert, ohne fremde Hosts; Seiten mit fremden Ressourcen sind so nicht wertbar (dafür Browserless).', note_en: 'Rendered locally without foreign hosts; pages with foreign resources cannot be assessed this way (Browserless can).' } : {}) };
+    ...(source === 'local' ? { note_de: 'Lokal gerendert, ohne fremde Domains (Subdomains derselben Domain sind erlaubt); Seiten mit Ressourcen anderer Domains sind so nicht wertbar (dafür Browserless).', note_en: 'Rendered locally without other domains (subdomains of the same domain are allowed); pages with resources of other domains cannot be assessed this way (Browserless can).' } : {}) };
   if (assessed === 0) {
     const why_de = results.length > 0 ? 'Kein Render war vollständig.' : 'Kein gerenderter DOM: weder Browserless noch ein lokales Chromium (AI_LOCAL_CHROMIUM).';
     const why_en = results.length > 0 ? 'No render was complete.' : 'No rendered DOM: neither Browserless nor a local Chromium (AI_LOCAL_CHROMIUM).';

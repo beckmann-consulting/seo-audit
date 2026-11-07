@@ -2,7 +2,10 @@
 // own (plan, check 5; Codex F-003 of round 2 and the rounds after it):
 //
 // - Only the audited host and its www or apex counterpart, only http and
-//   https, only the port of the audited URL.
+//   https, only the port of the audited URL. For the local render also the
+//   further hosts of the audited host's registrable domain (Public Suffix
+//   List, ultimate-40b), at most EXTRA_HOST_LIMIT of them, under the same
+//   rules; the audit's own headers still go to the audited origin only.
 // - Every A and AAAA address of a host is resolved once; if any of them is
 //   not public (loopback, private, link-local, CGNAT, ULA, multicast,
 //   unspecified, IPv4 in IPv6, documentation, reserved), the host is
@@ -22,6 +25,7 @@ import * as dns from 'node:dns';
 import * as net from 'node:net';
 import * as zlib from 'node:zlib';
 import type { Readable } from 'node:stream';
+import { canonicalHost, isPublicSuffix, registrableDomain } from './public-suffix';
 
 export interface Address { address: string; family: 4 | 6 }
 
@@ -137,43 +141,129 @@ export const nodeTransport: Transport = {
 export interface Scope {
   scheme: 'http:' | 'https:';
   port: string; // as in URL.port ('' for the default)
-  hosts: Map<string, Address>; // allowed host -> the checked address it is pinned to
+  hosts: Map<string, Address>; // the audited host and its www or apex counterpart -> the checked address
   auditOrigin: string; // the origin of the audited URL: the audit's own headers go there only
+  // ultimate-40b: hosts of the same registrable domain (Public Suffix List), checked on first use;
+  // null when the audited host has none (IP, public suffix, no listed rule): then only `hosts` count
+  site: string | null;
+  extra: Map<string, HostEntry>; // further hosts of the site: one entry each, final once decided
+  extraLimit: number; // further hosts per run; a slot is taken before the host is resolved
+  transport: Transport;
+  requestTimeoutMs: number; // the longest a resolution may take
 }
+
+export type HostEntry =
+  | { state: 'pending'; done: Promise<void> }
+  | { state: 'allowed'; address: Address }
+  | { state: 'refused'; reason: string };
+
+export const EXTRA_HOST_LIMIT = 10;
 
 export type ScopeResult = { ok: true; scope: Scope } | { ok: false; reason: string };
 
-/** The allowed hosts of an audit: its host and the www or apex counterpart, each only with public addresses. */
-export async function buildScope(auditUrl: string, transport: Transport = nodeTransport): Promise<ScopeResult> {
+/** Every address of a host resolved; refused if there is none or one of them is not public. */
+async function checkHost(transport: Transport, host: string): Promise<{ ok: true; address: Address } | { ok: false; reason: string }> {
+  let addrs: Address[];
+  try { addrs = await transport.resolve(host); } catch { return { ok: false, reason: `${host} does not resolve` }; }
+  if (addrs.length === 0) return { ok: false, reason: `${host} does not resolve` };
+  const bad = addrs.find(a => !isPublicAddress(a.address));
+  if (bad) return { ok: false, reason: `${host} points to a non-public address (${bad.address})` };
+  return { ok: true, address: addrs[0] };
+}
+
+/**
+ * The allowed hosts of an audit: its host and the www or apex counterpart, each only with public
+ * addresses; with `subdomains` (the local render, ultimate-40b) also the further hosts of its
+ * registrable domain, checked when first asked for (admit).
+ */
+export async function buildScope(auditUrl: string, transport: Transport = nodeTransport, opts: { subdomains?: boolean; requestTimeoutMs?: number } = {}): Promise<ScopeResult> {
   let u: URL;
   try { u = new URL(auditUrl); } catch { return { ok: false, reason: 'invalid URL' }; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: `scheme ${u.protocol} not allowed` };
   const host = u.hostname.toLowerCase();
+  const ip = net.isIP(host.replace(/^\[|\]$/g, '')) !== 0;
+  if (!ip && !canonicalHost(host)) return { ok: false, reason: `host ${host} not supported (trailing dot or invalid name)` };
   const twin = host.startsWith('www.') ? host.slice(4) : `www.${host}`;
   const hosts = new Map<string, Address>();
-  for (const h of net.isIP(host) ? [host] : [host, twin]) {
-    let addrs: Address[];
-    try { addrs = await transport.resolve(h); } catch {
-      if (h === host) return { ok: false, reason: `${h} does not resolve` };
-      continue; // the counterpart may not exist
+  for (const h of ip ? [host] : [host, twin]) {
+    const r = await checkHost(transport, h);
+    if (!r.ok) {
+      if (h === host) return { ok: false, reason: r.reason };
+      continue; // the counterpart may not exist; never allow one that points inwards
     }
-    if (addrs.length === 0) { if (h === host) return { ok: false, reason: `${h} does not resolve` }; continue; }
-    const bad = addrs.find(a => !isPublicAddress(a.address));
-    if (bad) {
-      if (h === host) return { ok: false, reason: `${h} points to a non-public address (${bad.address})` };
-      continue; // never allow a counterpart that points inwards
-    }
-    hosts.set(h, addrs[0]);
+    hosts.set(h, r.address);
   }
-  return { ok: true, scope: { scheme: u.protocol as Scope['scheme'], port: u.port, hosts, auditOrigin: u.origin } };
+  return { ok: true, scope: {
+    scheme: u.protocol as Scope['scheme'], port: u.port, hosts, auditOrigin: u.origin,
+    site: opts.subdomains && !ip ? registrableDomain(host) : null,
+    extra: new Map(), extraLimit: EXTRA_HOST_LIMIT, transport,
+    requestTimeoutMs: opts.requestTimeoutMs ?? DEFAULT_LIMITS.requestTimeoutMs,
+  } };
 }
 
-export function inScope(scope: Scope, raw: string): URL | null {
+export type AdmitResult = { ok: true; url: URL; address: Address } | { ok: false; reason: string };
+
+/**
+ * Whether a URL may be fetched, and the checked address to pin it to.
+ * Scheme and port must be the audit's. The audited host and its counterpart
+ * are allowed as before; a further host only when its registrable domain is
+ * the audit's. Such a host takes one of `extraLimit` slots before it is
+ * resolved (refused and failed hosts keep theirs), concurrent requests share
+ * one resolution, and the resolution ends at the earlier of the page's
+ * deadline and the request timeout: then the host is refused for the run and
+ * a late answer is dropped.
+ */
+export async function admit(scope: Scope, raw: string, deadline: number): Promise<AdmitResult> {
   let u: URL;
-  try { u = new URL(raw); } catch { return null; }
-  if (u.protocol !== scope.scheme || u.port !== scope.port) return null;
-  if (!scope.hosts.has(u.hostname.toLowerCase())) return null;
-  return u;
+  try { u = new URL(raw); } catch { return { ok: false, reason: `invalid URL ${raw}` }; }
+  if (u.protocol !== scope.scheme || u.port !== scope.port) return { ok: false, reason: `other scheme or port: ${u.origin}` };
+  const name = u.hostname.toLowerCase();
+  const known = scope.hosts.get(name);
+  if (known) return { ok: true, url: u, address: known };
+  const host = canonicalHost(name);
+  if (!host || net.isIP(host)) return { ok: false, reason: `outside the audited host: ${name}` };
+  if (!scope.site || registrableDomain(host) !== scope.site) return { ok: false, reason: `another domain: ${host}` };
+  let entry = scope.extra.get(host);
+  if (!entry) {
+    let used = 0;
+    for (const e of scope.extra.values()) if (!(e.state === 'refused' && e.reason.startsWith('more than'))) used++;
+    if (used >= scope.extraLimit) {
+      entry = { state: 'refused', reason: `more than ${scope.extraLimit} further hosts of ${scope.site}` };
+      scope.extra.set(host, entry);
+    } else {
+      // the slot is taken now, before the resolution
+      let settle!: () => void;
+      const done = new Promise<void>(r => { settle = r; });
+      const pending: HostEntry = { state: 'pending', done };
+      scope.extra.set(host, pending);
+      // the effective end of the resolution; an answer after it never allows the host, even when its
+      // promise runs before the timer that would refuse it (Codex, review of 58d270e)
+      const until = Math.min(deadline, Date.now() + scope.requestTimeoutMs);
+      const timedOut: HostEntry = { state: 'refused', reason: `resolution of ${host} timed out` };
+      const decide = (e: HostEntry) => {
+        if (scope.extra.get(host) !== pending) return; // decided already: a late answer changes nothing
+        scope.extra.set(host, e.state === 'allowed' && Date.now() >= until ? timedOut : e);
+        settle();
+      };
+      if (Date.now() >= until) {
+        decide(timedOut); // no time left: not resolved at all
+        return { ok: false, reason: timedOut.reason };
+      }
+      const timer = setTimeout(() => decide(timedOut), until - Date.now());
+      checkHost(scope.transport, host).then(
+        r => decide(r.ok ? { state: 'allowed', address: r.address } : { state: 'refused', reason: r.reason }),
+        () => decide({ state: 'refused', reason: `${host} does not resolve` }),
+      ).finally(() => clearTimeout(timer));
+      entry = pending;
+    }
+  }
+  if (entry.state === 'pending') {
+    await entry.done;
+    entry = scope.extra.get(host) as HostEntry;
+  }
+  if (entry.state === 'allowed') return { ok: true, url: u, address: entry.address };
+  if (entry.state === 'refused') return { ok: false, reason: entry.reason };
+  return { ok: false, reason: `resolution of ${host} not decided` };
 }
 
 // ------------------------------------------------------------
@@ -240,6 +330,12 @@ function domainMatch(host: string, domain: string): boolean {
   return host === domain || (host.endsWith(`.${domain}`) && !net.isIP(host));
 }
 
+/** The request host as the jar compares it: canonical, or lower case for an IP address. */
+function jarHost(url: URL): string {
+  const h = url.hostname.toLowerCase();
+  return canonicalHost(h) ?? h;
+}
+
 function pathMatch(reqPath: string, cookiePath: string): boolean {
   if (reqPath === cookiePath) return true;
   if (!reqPath.startsWith(cookiePath)) return false;
@@ -257,7 +353,7 @@ export class CookieJar {
     if (eq <= 0) return;
     const name = first.slice(0, eq).trim();
     const value = first.slice(eq + 1).trim();
-    const host = url.hostname.toLowerCase();
+    const host = jarHost(url);
     let domain = host;
     let hostOnly = true;
     let path = defaultPath(url);
@@ -271,7 +367,15 @@ export class CookieJar {
       const k = (i < 0 ? raw : raw.slice(0, i)).trim().toLowerCase();
       const v = i < 0 ? '' : raw.slice(i + 1).trim();
       if (k === 'domain' && v) {
-        const d = v.replace(/^\./, '').toLowerCase();
+        const d = canonicalHost(v.replace(/^\./, ''));
+        if (!d) return; // no valid domain: refused
+        if (isPublicSuffix(d)) {
+          // RFC 6265 5.3 step 5: a public suffix only as the request host itself, then host-only
+          if (d !== host) return;
+          domain = host;
+          hostOnly = true;
+          continue;
+        }
         if (!domainMatch(host, d)) return; // a cookie for a domain the host is not in: refused
         domain = d;
         hostOnly = false;
@@ -290,7 +394,7 @@ export class CookieJar {
 
   /** The Cookie header a browser sends to this URL, or '' for none. */
   header(url: URL): string {
-    const host = url.hostname.toLowerCase();
+    const host = jarHost(url);
     const now = this.now() / 1000;
     return this.cookies
       .filter(c => (c.hostOnly ? host === c.domain : domainMatch(host, c.domain)))
@@ -399,13 +503,14 @@ export async function safeFetch(rawUrl: string, init: { method: string; headers:
   const limits = o.limits ?? DEFAULT_LIMITS;
   const method = init.method.toUpperCase();
   if (!['GET', 'HEAD', 'POST'].includes(method)) return { ok: false, reason: `method ${method} not reproducible` };
-  let url = inScope(o.scope, rawUrl);
-  if (!url) return { ok: false, reason: `outside the audited host: ${rawUrl}` };
+  const first = await admit(o.scope, rawUrl, o.budget.deadline);
+  if (!first.ok) return { ok: false, reason: first.reason };
+  let url = first.url;
+  let address = first.address;
   const startOrigin = url;
   let pageHeaders = forwardHeaders(init.headers);
   for (let hop = 0; ; hop++) {
     if (Date.now() > o.budget.deadline) return { ok: false, reason: 'page over its time budget' };
-    const address = o.scope.hosts.get(url.hostname.toLowerCase()) as Address;
     const headers: Record<string, string> = { ...pageHeaders, ...auditHeadersFor(url, o.scope, o.auditHeaders) };
     const jarCookie = o.jar?.header(url);
     if (jarCookie) headers.cookie = headers.cookie ? `${headers.cookie}; ${jarCookie}` : jarCookie;
@@ -421,14 +526,16 @@ export async function safeFetch(rawUrl: string, init: { method: string; headers:
       res.body.destroy();
       if (!o.document || method === 'POST') return { ok: false, reason: `redirect of a ${o.document ? 'POST' : 'resource'} not followed (${res.status})` };
       if (hop >= limits.redirects) return { ok: false, reason: 'too many redirects' };
-      const next = inScope(o.scope, new URL(String(res.headers.location), url).href);
-      if (!next) return { ok: false, reason: `redirect outside the audited host: ${res.headers.location}` };
+      const step = await admit(o.scope, new URL(String(res.headers.location), url).href, o.budget.deadline);
+      if (!step.ok) return { ok: false, reason: `redirect refused: ${step.reason}` };
+      const next = step.url;
       if (!sameOrigin(next, startOrigin)) {
         // a change of origin (also www against apex): no cookie or authorization of the page request; the
         // audit's headers follow the audited origin only, the jar's cookies their own domain rules
         pageHeaders = forwardHeaders(Object.fromEntries(Object.entries(init.headers).filter(([k]) => !['cookie', 'authorization'].includes(k.toLowerCase()))));
       }
       url = next;
+      address = step.address;
       continue;
     }
     let body: Buffer;
