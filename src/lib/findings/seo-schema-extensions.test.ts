@@ -214,6 +214,27 @@ describe('checkSchemaSubstructure — FAQPage', () => {
     expect(f).toBeDefined();
   });
 
+  it('triggers when an entry is not typed Question or its answer not typed Answer (Codex, review of 1e62f5d)', () => {
+    const faq = (mainEntity: unknown[]) => [page('https://example.com/faq', [{ type: 'FAQPage', data: { mainEntity } }])];
+    const cases: [unknown, string][] = [
+      [{ '@type': 'Thing', name: 'Q1', acceptedAnswer: { '@type': 'Thing', text: 'A1' } }, 'mainEntity item without @type Question'],
+      [{ name: 'Q1', acceptedAnswer: { '@type': 'Answer', text: 'A1' } }, 'mainEntity item without @type Question'],
+      [{ '@type': 'Question', name: 'Q1', acceptedAnswer: { '@type': 'Thing', text: 'A1' } }, 'acceptedAnswer without @type Answer'],
+      [{ '@type': 'Question', name: 'Q1', acceptedAnswer: { text: 'A1' } }, 'acceptedAnswer without @type Answer'],
+    ];
+    for (const [entry, bug] of cases) {
+      const f = findSubstructure(generateStructuredDataFindings(faq([entry])), 'FAQPage', bug);
+      expect(f, bug).toBeDefined();
+      expect(f!.priority).toBe('important');
+    }
+    // a type list and the schema.org IRI or prefix are types too
+    const ok = faq([
+      { '@type': ['Question'], name: 'Q1', acceptedAnswer: { '@type': 'https://schema.org/Answer', text: 'A1' } },
+      { '@type': 'schema:Question', name: 'Q2', acceptedAnswer: { '@type': ['Answer'], text: 'A2' } },
+    ]);
+    expect(findSubstructure(generateStructuredDataFindings(ok), 'FAQPage')).toBeUndefined();
+  });
+
   it('does NOT trigger when FAQPage mainEntity is a clean array of Question/Answer pairs', () => {
     const pages = [
       page('https://example.com/faq', [{

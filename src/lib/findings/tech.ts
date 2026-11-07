@@ -840,6 +840,19 @@ function describeFailure(f: PageFailure, isDE: boolean): string {
   return `${f.url} (${f.reason ?? (isDE ? 'unbekannt' : 'unknown')})`;
 }
 
+// Whether this module flags a JS-rendered page as "JavaScript rendering
+// required" (and how strongly). Exported so check 5 of the AI visibility
+// module can leave these pages to tech (ultimate-40, ownership table).
+export function jsRenderingRequiredSeverity(p: PageSEOData): 'critical' | 'important' | null {
+  if (p.renderMode !== 'js' || p.staticWordCount === undefined) return null;
+  const staticW = p.staticWordCount ?? 0;
+  const renderedW = p.wordCount;
+  if (renderedW < JS_REQUIRED_IMPORTANT_RENDERED_MIN) return null;
+  if (staticW < JS_REQUIRED_CRITICAL_STATIC_MAX && renderedW >= JS_REQUIRED_CRITICAL_RENDERED_MIN) return 'critical';
+  if (renderedW >= JS_REQUIRED_IMPORTANT_RATIO * Math.max(staticW, 1)) return 'important';
+  return null;
+}
+
 export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
   const findings: Finding[] = [];
   const jsPages = pages.filter(p => p.renderMode === 'js' && p.staticWordCount !== undefined);
@@ -851,14 +864,8 @@ export function generateJsRenderingFindings(pages: PageSEOData[]): Finding[] {
   type Severity = 'critical' | 'important';
   const flagged: { page: PageSEOData; severity: Severity }[] = [];
   for (const p of jsPages) {
-    const staticW = p.staticWordCount ?? 0;
-    const renderedW = p.wordCount;
-    if (renderedW < JS_REQUIRED_IMPORTANT_RENDERED_MIN) continue;
-    if (staticW < JS_REQUIRED_CRITICAL_STATIC_MAX && renderedW >= JS_REQUIRED_CRITICAL_RENDERED_MIN) {
-      flagged.push({ page: p, severity: 'critical' });
-    } else if (renderedW >= JS_REQUIRED_IMPORTANT_RATIO * Math.max(staticW, 1)) {
-      flagged.push({ page: p, severity: 'important' });
-    }
+    const severity = jsRenderingRequiredSeverity(p);
+    if (severity) flagged.push({ page: p, severity });
   }
 
   if (flagged.length > 0) {

@@ -110,6 +110,7 @@ function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number
     httpStatus: r.status,
     protocol: r.protocol,
     xRobotsTag: r.headers['x-robots-tag'] || undefined,
+    lastModified: r.headers['last-modified'] || undefined,
     // JS-mode-only fields are passed through when present so the
     // js-rendering / js-console-errors findings can read them.
     staticHtml: r.staticHtml,

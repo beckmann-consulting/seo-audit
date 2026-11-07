@@ -66,6 +66,9 @@ const MODULE_WEIGHT: Record<string, number> = {
   performance: 1.3,
   content: 1.1,
   ux: 1.0,
+  // ai 1.2 (ultimate-40): above content, below tech, performance and seo;
+  //   parts of it are heuristics and V1 measures no real citations.
+  ai: 1.2,
 };
 
 export function findingImpactScore(finding: Finding): number {

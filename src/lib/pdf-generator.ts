@@ -779,7 +779,7 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   // ============================================================
   const hasAnyTechData =
     result.sslInfo || result.dnsInfo || result.pageSpeedData ||
-    result.securityHeaders || result.aiReadiness || result.sitemapInfo ||
+    result.securityHeaders || result.aiReadiness || result.aiVisibility || result.sitemapInfo ||
     result.safeBrowsingData;
 
   if (hasAnyTechData) {
@@ -957,9 +957,45 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
       renderTechTable(t('Security Headers', 'Security Headers'), shRows);
     }
 
-    // AI Crawler Readiness — unspecified rendered neutral; llms.txt
-    // missing is info-blue (emerging standard, ~10% adoption).
-    if (result.aiReadiness && !result.aiReadiness.error) {
+    // AI visibility (ultimate-40): the seven checks and the AI crawler table.
+    if (result.aiVisibility) {
+      const ai = result.aiVisibility;
+      const STATUS: Record<string, [string, string, TechTableRow['severity']]> = {
+        pass: ['bestanden', 'passed', 'good'],
+        fail: ['nicht bestanden', 'failed', 'bad'],
+        'not-checkable': ['nicht prüfbar', 'not checkable', 'neutral'],
+        info: ['Hinweis', 'note', 'info'],
+      };
+      const NAMES: Record<string, [string, string]> = {
+        crawlers: ['1. KI-Crawler in robots.txt', '1. AI crawlers in robots.txt'],
+        snippets: ['2. Snippet-Steuerung', '2. Snippet controls'],
+        llms: ['3. llms.txt', '3. llms.txt'],
+        structured: ['4. Strukturierte Daten für Antworten', '4. Structured data for answers'],
+        nojs: ['5. Lesbarkeit ohne JavaScript', '5. Readable without JavaScript'],
+        answers: ['6. Antwortfreundlichkeit (Heuristik)', '6. Answer friendliness (heuristic)'],
+        trust: ['7. Vertrauen und Aktualität', '7. Trust and freshness'],
+      };
+      const checkRows: TechTableRow[] = [{
+        label: t('Abdeckung', 'Coverage'),
+        value: ai.score === undefined
+          ? t(`nicht prüfbar (0 von ${ai.coverage.total} wertbar)`, `not checkable (0 of ${ai.coverage.total} assessable)`)
+          : t(`${ai.coverage.assessable} von ${ai.coverage.total} geprüft`, `${ai.coverage.assessable} of ${ai.coverage.total} checked`),
+      }];
+      for (const c of ai.checks) {
+        checkRows.push({ label: t(NAMES[c.id][0], NAMES[c.id][1]), value: `${t(STATUS[c.status][0], STATUS[c.status][1])}: ${t(c.summary_de, c.summary_en)}`, severity: STATUS[c.status][2] });
+      }
+      renderTechTable(t('KI-Sichtbarkeit', 'AI visibility'), checkRows);
+      const botRows: TechTableRow[] = ai.bots.map(b => ({
+        label: `${b.token} (${b.vendor})`,
+        value: `${b.status === 'allowed' ? t('erlaubt', 'allowed') : b.status === 'blocked' ? t('blockiert', 'blocked') : t('teilweise', 'partial')}, ${b.purpose}${b.scoreRelevant ? '' : t(', nur Anzeige', ', shown only')} (${t('geprüft', 'checked')} ${b.checked})`,
+        severity: b.status === 'allowed' ? 'good' : b.status === 'blocked' && b.scoreRelevant ? 'bad' : 'neutral',
+      }));
+      renderTechTable(t('KI-Crawler in robots.txt (Quellen im Tool)', 'AI crawlers in robots.txt (sources in the tool)'), botRows);
+    }
+
+    // AI Crawler Readiness of audits saved before ultimate-40: unspecified
+    // rendered neutral; llms.txt missing is info-blue.
+    if (!result.aiVisibility && result.aiReadiness && !result.aiReadiness.error) {
       const ai = result.aiReadiness;
       const aiRows: TechTableRow[] = [
         {

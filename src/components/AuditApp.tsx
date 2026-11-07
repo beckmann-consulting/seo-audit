@@ -105,6 +105,8 @@ const ALL_MODULES: { id: Module; label_de: string; label_en: string; desc_de: st
   { id: 'performance', label_de: 'Performance', label_en: 'Performance', desc_de: 'PageSpeed, Core Web Vitals (braucht Google API Key)', desc_en: 'PageSpeed, Core Web Vitals (needs Google API key)' },
   { id: 'accessibility', label_de: 'Barrierefreiheit', label_en: 'Accessibility', desc_de: 'WCAG 2.1 AA via axe-core (braucht JS-Mode)', desc_en: 'WCAG 2.1 AA via axe-core (requires JS mode)' },
   { id: 'offers', label_de: 'Angebote', label_en: 'Offers', desc_de: 'CTAs, Produktseiten — nur im Claude-Prompt, kein Auto-Check', desc_en: 'CTAs, product pages — Claude prompt only, no auto-check' },
+  // ultimate-40: on by default
+  { id: 'ai', label_de: 'KI-Sichtbarkeit', label_en: 'AI visibility', desc_de: 'KI-Crawler, Snippets, llms.txt, Schema für Antworten, Lesbarkeit ohne JS, Antwortfreundlichkeit, Vertrauen', desc_en: 'AI crawlers, snippets, llms.txt, schema for answers, readable without JS, answer friendliness, trust' },
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -1336,7 +1338,59 @@ export default function AuditApp() {
               {/* AI Crawler Readiness — severity via classifier:
                   unspecified is neutral (default for ~99% of sites),
                   llms.txt missing is info-blue (emerging standard). */}
-              {result.aiReadiness && !result.aiReadiness.error && (
+              {/* AI visibility (ultimate-40): the seven checks with their status, and the AI crawler table with source and date. */}
+              {result.aiVisibility && (() => {
+                const ai = result.aiVisibility;
+                const STATUS: Record<string, [string, string, TechSeverity]> = {
+                  pass: ['bestanden', 'passed', 'good'],
+                  fail: ['nicht bestanden', 'failed', 'bad'],
+                  'not-checkable': ['nicht prüfbar', 'not checkable', 'neutral'],
+                  info: ['Hinweis', 'note', 'info'],
+                };
+                const NAMES: Record<string, [string, string]> = {
+                  crawlers: ['1. KI-Crawler in robots.txt', '1. AI crawlers in robots.txt'],
+                  snippets: ['2. Snippet-Steuerung', '2. Snippet controls'],
+                  llms: ['3. llms.txt', '3. llms.txt'],
+                  structured: ['4. Strukturierte Daten für Antworten', '4. Structured data for answers'],
+                  nojs: ['5. Lesbarkeit ohne JavaScript', '5. Readable without JavaScript'],
+                  answers: ['6. Antwortfreundlichkeit (Heuristik)', '6. Answer friendliness (heuristic)'],
+                  trust: ['7. Vertrauen und Aktualität', '7. Trust and freshness'],
+                };
+                const BOT: Record<string, [string, string]> = { allowed: ['erlaubt', 'allowed'], partial: ['teilweise', 'partial'], blocked: ['blockiert', 'blocked'] };
+                return (
+                  <div style={techCardStyle}>
+                    <h3 style={techCardTitle}>{t('KI-Sichtbarkeit', 'AI visibility')}</h3>
+                    <TechRow
+                      label={t('Abdeckung', 'Coverage')}
+                      value={ai.score === undefined
+                        ? t(`nicht prüfbar (0 von ${ai.coverage.total} Prüfungen wertbar)`, `not checkable (0 of ${ai.coverage.total} checks assessable)`)
+                        : t(`${ai.coverage.assessable} von ${ai.coverage.total} geprüft, Score ${ai.score}`, `${ai.coverage.assessable} of ${ai.coverage.total} checked, score ${ai.score}`)}
+                    />
+                    {ai.checks.map(c => (
+                      <TechRow
+                        key={c.id}
+                        label={t(NAMES[c.id][0], NAMES[c.id][1])}
+                        value={t(STATUS[c.status][0], STATUS[c.status][1])}
+                        severity={STATUS[c.status][2]}
+                        note={[t(c.summary_de, c.summary_en), ...(lang === 'de' ? c.details_de : c.details_en)].join(' ')}
+                      />
+                    ))}
+                    {ai.render.note_de && <TechRow label={t('Render', 'Render')} value={ai.render.source} note={t(ai.render.note_de, ai.render.note_en ?? '')} />}
+                    {ai.bots.map(b => (
+                      <TechRow
+                        key={b.token}
+                        label={`${b.token} (${b.vendor}, ${b.purpose}${b.legacy ? ', legacy' : ''})`}
+                        value={t(BOT[b.status][0], BOT[b.status][1])}
+                        severity={b.status === 'allowed' ? 'good' : b.status === 'blocked' && b.scoreRelevant ? 'bad' : 'neutral'}
+                        note={`${b.source ?? t('keine offizielle Dokumentation gefunden', 'no official documentation found')} (${b.checked})`}
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Audits saved before ultimate-40 keep their AI crawler readiness tiles. */}
+              {!result.aiVisibility && result.aiReadiness && !result.aiReadiness.error && (
                 <div style={techCardStyle}>
                   <h3 style={techCardTitle}>{t('AI-Crawler-Readiness', 'AI Crawler Readiness')}</h3>
                   <TechRow

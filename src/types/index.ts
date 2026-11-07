@@ -56,7 +56,8 @@ export type Module =
   | 'tech'
   | 'performance'
   | 'accessibility'
-  | 'offers';
+  | 'offers'
+  | 'ai'; // KI-Sichtbarkeit / AI visibility (ultimate-40)
 
 export type UserAgentPreset =
   | 'default'
@@ -139,6 +140,7 @@ export interface PageData {
   httpStatus: number; // final HTTP status code after redirects
   protocol: string | null; // 'h2' if alt-svc advertises HTTP/2+, else null (unknown)
   xRobotsTag?: string; // raw X-Robots-Tag response header on the final hop, joined if multi-valued
+  lastModified?: string; // raw Last-Modified response header on the final hop (ultimate-40, sitemap lastmod check)
   // JS-mode only: captured for the static-vs-rendered diff finding.
   staticHtml?: string;
   staticWordCount?: number;
@@ -611,7 +613,9 @@ export interface AuditResult {
   pageSpeedData?: PageSpeedData;
   safeBrowsingData?: SafeBrowsingData;
   securityHeaders?: SecurityHeadersInfo;
+  // Kept for audits saved before ultimate-40; new audits fill aiVisibility.
   aiReadiness?: AIReadinessInfo;
+  aiVisibility?: import('@/lib/ai-visibility/types').AIVisibilityInfo;
   sitemapInfo?: SitemapInfo;
   wwwConsistency?: WwwConsistencyInfo;
   pages: PageSEOData[];

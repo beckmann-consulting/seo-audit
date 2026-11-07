@@ -1,3 +1,4 @@
+import type { RobotsFetch } from '@/lib/ai-visibility/types';
 import type {
   SSLInfo, DNSInfo, PageSpeedData, SafeBrowsingData,
   SecurityHeadersInfo, AIReadinessInfo, AIBotRule, AIBotStatus,
@@ -9,7 +10,7 @@ import { promises as dns } from 'dns';
 // its own (slightly richer) version because it also sets Accept /
 // Accept-Language; the probes here only need UA + optional auth +
 // any user-supplied custom headers (which override the built-ins).
-function probeHeaders(
+export function probeHeaders(
   userAgent?: string,
   authHeader?: string,
   customHeaders?: Record<string, string>,
@@ -905,6 +906,11 @@ export async function checkRobotsAndSitemap(
   hasSitemap: boolean;
   robotsContent?: string;
   sitemapUrl?: string;
+  // ultimate-40: how the robots.txt fetch ended, for the AI visibility
+  // module. RFC 9309 tells 4xx ("unavailable": everything allowed) apart
+  // from 5xx and network errors ("unreachable": crawlers assume a full
+  // disallow). hasRobots stays as it was for every other caller.
+  robotsFetch: RobotsFetch;
 }> {
   const origin = new URL(baseUrl).origin;
   const headers = probeHeaders(userAgent, authHeader, customHeaders);
@@ -912,6 +918,7 @@ export async function checkRobotsAndSitemap(
   let hasSitemap = false;
   let robotsContent: string | undefined;
   let sitemapUrl: string | undefined;
+  let robotsFetch: RobotsFetch;
 
   // Check robots.txt
   try {
@@ -919,11 +926,16 @@ export async function checkRobotsAndSitemap(
     if (r.ok) {
       hasRobots = true;
       robotsContent = await r.text();
+      robotsFetch = { status: 'ok', httpStatus: r.status, content: robotsContent };
       // Extract sitemap from robots.txt
       const sitemapMatch = robotsContent.match(/Sitemap:\s*(\S+)/i);
       if (sitemapMatch) sitemapUrl = sitemapMatch[1];
+    } else {
+      robotsFetch = { status: r.status >= 500 ? 'server-error' : 'not-found', httpStatus: r.status };
     }
-  } catch {}
+  } catch (err) {
+    robotsFetch = { status: 'network-error', error: String(err) };
+  }
 
   // Check sitemap.xml directly
   if (!hasSitemap) {
@@ -947,5 +959,5 @@ export async function checkRobotsAndSitemap(
     } catch {}
   }
 
-  return { hasRobots, hasSitemap, robotsContent, sitemapUrl };
+  return { hasRobots, hasSitemap, robotsContent, sitemapUrl, robotsFetch };
 }

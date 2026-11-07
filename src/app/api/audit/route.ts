@@ -4,7 +4,7 @@ import { extractPageSEO } from '@/lib/extractor';
 import {
   checkSSL, checkDNS, checkPageSpeed,
   checkSafeBrowsing, checkRobotsAndSitemap, checkSecurityHeaders,
-  checkAIReadiness, fetchSitemap, checkWwwConsistency,
+  fetchSitemap, checkWwwConsistency, probeHeaders,
 } from '@/lib/external-checks';
 import { checkImageSizes } from '@/lib/external-image-sizes';
 import { checkDeepImageFormats } from '@/lib/external-image-formats';
@@ -13,7 +13,7 @@ import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generateLegalFindings, generateUXFindings, generatePerformanceFindings,
   generateSafeBrowsingFindings, generateSecurityHeadersFindings,
-  generateHreflangFindings, generateAIReadinessFindings,
+  generateHreflangFindings, generateRobotsWildcardFindings,
   generateStructuredDataFindings, generateDuplicateContentFindings,
   generateCrawlStructureFindings, generateClientRenderingFindings,
   generateSitemapCoverageFindings, generateRedirectFindings, generateRedirectedInternalLinkFindings,
@@ -35,6 +35,10 @@ import {
   calculateModuleScore, getTopFindings
 } from '@/lib/findings-engine';
 import { generateClaudePrompt } from '@/lib/claude-prompt';
+import { evaluateAIVisibility, fetchLlmsTxt, weightedTotal, needsSitemap, type LocalRenderOutcome } from '@/lib/ai-visibility';
+import { LOCAL_RENDER_SAMPLE } from '@/lib/ai-visibility/local-render';
+import { detectLegalPages } from '@/lib/util/legal-page-detection';
+import type { AIVisibilityInfo, LlmsTxtInfo } from '@/lib/ai-visibility/types';
 import { resolveUserAgent, getRobotsToken } from '@/lib/util/user-agents';
 import { compileFilterPatterns, FilterPatternError } from '@/lib/util/url-filter';
 import { buildBasicAuthHeader, sanitizeConfigForClient } from '@/lib/util/auth';
@@ -64,6 +68,7 @@ const MODULE_LABELS: Record<Module, { de: string; en: string }> = {
   performance: { de: 'Performance', en: 'Performance' },
   accessibility: { de: 'Barrierefreiheit', en: 'Accessibility' },
   offers: { de: 'Angebote', en: 'Offers' },
+  ai: { de: 'KI-Sichtbarkeit', en: 'AI visibility' },
 };
 
 // StreamEvent is centralised in @/types so client and server can't
@@ -121,11 +126,13 @@ async function runAudit(
 
   // ---- STEP 3: robots.txt (15%) ----
   progress('robots_fetch', 15);
-  const { hasRobots, hasSitemap, robotsContent, sitemapUrl } = await checkRobotsAndSitemap(url, userAgent, authHeader, customHeaders);
+  const { hasRobots, hasSitemap, robotsContent, sitemapUrl, robotsFetch } = await checkRobotsAndSitemap(url, userAgent, authHeader, customHeaders);
 
   // ---- STEP 4: sitemap.xml (20%) ----
   progress('sitemap_fetch', 20);
-  const sitemapInfo = (hasSitemap && sitemapUrl && config.modules.includes('seo'))
+  // ultimate-40: the AI visibility module compares lastmod too, so it loads
+  // the sitemap as well when seo is not selected.
+  const sitemapInfo = (hasSitemap && sitemapUrl && needsSitemap(config.modules))
     ? await fetchSitemap(sitemapUrl, userAgent, authHeader, customHeaders)
     : undefined;
 
@@ -201,11 +208,27 @@ async function runAudit(
     ? await checkWwwConsistency(url, userAgent, authHeader, customHeaders)
     : undefined;
 
-  // ---- STEP 8: AI Crawler Readiness (85%) ----
+  // ---- STEP 8: AI visibility (85%) ----
+  // ultimate-40: replaces the AI crawler readiness of the seo module. Here
+  // only llms.txt of the audited origin is fetched; the seven checks run
+  // with the findings below, on what the audit already has.
   progress('ai_crawler_check', 85);
-  const aiReadiness = config.modules.includes('seo')
-    ? await checkAIReadiness(url, robotsContent, userAgent, authHeader, customHeaders)
+  const llmsInfo: LlmsTxtInfo | undefined = config.modules.includes('ai')
+    ? await fetchLlmsTxt(url, { auditHeaders: probeHeaders(userAgent, authHeader, customHeaders) as Record<string, string> | undefined })
     : undefined;
+  // Check 5 without Browserless: an optional local Chromium (AI_LOCAL_CHROMIUM,
+  // nothing downloaded) renders a sample of the pages Browserless did not
+  // render, with no network of its own (lib/ai-visibility/local-render.ts).
+  let localRender: Map<string, LocalRenderOutcome> | undefined;
+  const localChromium = process.env.AI_LOCAL_CHROMIUM;
+  if (config.modules.includes('ai') && localChromium) {
+    const sample = rawPages.filter(p => p.renderMode !== 'js').slice(0, LOCAL_RENDER_SAMPLE).map(p => p.url);
+    if (sample.length > 0) {
+      const { localRender: render } = await import('@/lib/ai-visibility/local-render');
+      const h = probeHeaders(userAgent, authHeader, customHeaders) as Record<string, string> | undefined;
+      localRender = await render({ executablePath: localChromium, auditUrl: url, urls: sample, auditHeaders: h });
+    }
+  }
 
   // ---- STEP 8b: Image-size HEAD probes ----
   // Default 20 unique images probed; user can disable by setting 0.
@@ -280,7 +303,7 @@ async function runAudit(
     allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
     allFindings.push(...generateCanonicalTargetFindings(pages, crawlStats.httpErrors));
     allFindings.push(...generateHreflangFindings(pages));
-    allFindings.push(...generateAIReadinessFindings(aiReadiness));
+    allFindings.push(...generateRobotsWildcardFindings(robotsContent));
     allFindings.push(...generateStructuredDataFindings(pages));
     allFindings.push(...generateDuplicateContentFindings(pages));
     allFindings.push(...generateCrawlStructureFindings(pages));
@@ -334,18 +357,32 @@ async function runAudit(
   if (safeBrowsingData) {
     allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
   }
+  let aiVisibility: AIVisibilityInfo | undefined;
+  if (config.modules.includes('ai') && llmsInfo) {
+    const ev = evaluateAIVisibility({
+      pages, rawPages, robots: robotsFetch, llms: llmsInfo, sitemap: sitemapInfo, modules: config.modules,
+      imprintFound: detectLegalPages(pages, allHtml.toLowerCase()).imprint.found,
+      localRender,
+    });
+    aiVisibility = ev.info;
+    allFindings.push(...ev.findings);
+  }
   // Accessibility runs as its own module — generates findings whenever
   // the user picked the module, even in static mode (where it just
   // emits the "JS-mode required" guidance finding).
   allFindings.push(...generateAccessibilityFindings(pages, config.modules.includes('accessibility')));
 
   // ---- Scores ----
-  const moduleScores: ModuleScore[] = config.modules.map(m => ({
-    module: m,
-    score: calculateModuleScore(allFindings, m),
-    label_de: MODULE_LABELS[m].de,
-    label_en: MODULE_LABELS[m].en,
-  }));
+  // ai has a score of its own (coverage, shadow entries); without an
+  // assessable check it has none and stays out of the scores and the total.
+  const moduleScores: ModuleScore[] = config.modules
+    .filter(m => m !== 'ai' || aiVisibility?.score !== undefined)
+    .map(m => ({
+      module: m,
+      score: m === 'ai' ? (aiVisibility?.score as number) : calculateModuleScore(allFindings, m),
+      label_de: MODULE_LABELS[m].de,
+      label_en: MODULE_LABELS[m].en,
+    }));
 
   if (pageSpeedData?.seoScore) {
     const seoModule = moduleScores.find(m => m.module === 'seo');
@@ -374,9 +411,9 @@ async function runAudit(
     }
   }
 
-  const totalScore = moduleScores.length > 0
-    ? Math.round(moduleScores.reduce((s, m) => s + m.score, 0) / moduleScores.length)
-    : 50;
+  // Weighted mean (ultimate-40): every module 1, ai 0.5. Without ai it is
+  // the plain mean of before.
+  const totalScore = weightedTotal(moduleScores);
 
   // ---- Strengths ----
   const strengths_de: string[] = [];
@@ -406,6 +443,10 @@ async function runAudit(
   if (pageSpeedData?.performanceScore && pageSpeedData.performanceScore >= 75) {
     strengths_de.push(`Guter PageSpeed Score: ${pageSpeedData.performanceScore}/100.`);
     strengths_en.push(`Good PageSpeed score: ${pageSpeedData.performanceScore}/100.`);
+  }
+  if (aiVisibility && ['crawlers', 'snippets'].every(c => aiVisibility?.checks.find(x => x.id === c)?.status === 'pass')) {
+    strengths_de.push('KI-Crawler für Antworten zugelassen, keine Snippet-Sperre.');
+    strengths_en.push('AI crawlers for answers allowed, no snippet block.');
   }
   if (crawlStats.brokenLinks.length === 0) {
     strengths_de.push('Keine defekten Links gefunden — saubere Link-Struktur.');
@@ -475,7 +516,7 @@ async function runAudit(
     pageSpeedData,
     safeBrowsingData,
     securityHeaders,
-    aiReadiness,
+    aiVisibility,
     sitemapInfo,
     wwwConsistency,
     pages,

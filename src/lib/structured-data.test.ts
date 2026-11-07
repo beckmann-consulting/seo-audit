@@ -6,6 +6,7 @@ import {
   hasMicrodata,
   hasRdfa,
 } from './structured-data';
+import { schemaSubstructureBug } from './schema-fields';
 
 const product = `
 <div itemscope itemtype="https://schema.org/Product">
@@ -51,6 +52,24 @@ describe('extractMicrodata', () => {
     const root = parse(product);
     const offer = (extractMicrodata(root)[0].data['offers']) as Record<string, unknown>;
     expect(offer['availability']).toBe('https://schema.org/InStock');
+  });
+
+  it('a nested item keeps its type as @type, like a nested JSON-LD object (Codex, review of 1e62f5d)', () => {
+    const offer = extractMicrodata(parse(product))[0].data['offers'] as Record<string, unknown>;
+    expect(offer['@type']).toBe('Offer');
+    const faq = extractMicrodata(parse(`
+      <div itemscope itemtype="https://schema.org/FAQPage">
+        <div itemprop="mainEntity" itemscope itemtype="https://schema.org/Question">
+          <h3 itemprop="name">Was kostet ein Audit?</h3>
+          <div itemprop="acceptedAnswer" itemscope itemtype="https://schema.org/Answer"><p itemprop="text">Ab 490 Euro.</p></div>
+        </div>
+        <div itemprop="mainEntity" itemscope itemtype="https://schema.org/Question">
+          <h3 itemprop="name">Wie lange dauert es?</h3>
+          <div itemprop="acceptedAnswer" itemscope itemtype="https://schema.org/Answer"><p itemprop="text">Eine Woche.</p></div>
+        </div>
+      </div>`))[0];
+    expect(faq.type).toBe('FAQPage');
+    expect(schemaSubstructureBug(faq.type, faq.data)).toBeNull();
   });
 
   it('parses nested itemscope as a sub-object on its parent property', () => {
@@ -141,6 +160,15 @@ describe('extractRdfa', () => {
     `);
     const item = extractRdfa(root)[0];
     expect(item.data['datePublished']).toBe('2024-05-01');
+  });
+
+  it('a nested typeof item keeps its type as @type (Codex, review of 1e62f5d)', () => {
+    const item = extractRdfa(parse(`
+      <div vocab="https://schema.org/" typeof="Article">
+        <span property="author" typeof="Person"><span property="name">Ada</span></span>
+      </div>
+    `))[0];
+    expect(item.data['author']).toEqual({ '@type': 'Person', name: 'Ada' });
   });
 
   it('parses nested typeof items', () => {

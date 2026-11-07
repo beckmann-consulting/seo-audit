@@ -75,6 +75,13 @@ function microdataPropertyValue(el: HTMLElement): string {
   }
 }
 
+// A nested item as the value of its parent's property, with its type as `@type` the way a nested
+// JSON-LD object carries it: checks of the inner structure (FAQ Question and Answer) and of an
+// article's author (Person) read it there.
+function typedData(item: ParsedSchema): Record<string, unknown> {
+  return { '@type': item.type, ...item.data };
+}
+
 function setProperty(data: Record<string, unknown>, name: string, value: unknown): void {
   if (data[name] === undefined) {
     data[name] = value;
@@ -99,7 +106,7 @@ function parseMicrodataItem(item: HTMLElement): ParsedSchema {
         const isNestedItem =
           node.getAttribute('itemscope') !== null && node.getAttribute('itemscope') !== undefined;
         const value: unknown = isNestedItem
-          ? parseMicrodataItem(node).data
+          ? typedData(parseMicrodataItem(node))
           : microdataPropertyValue(node);
         setProperty(data, propName, value);
         // A leaf itemprop has no further microdata structure under it
@@ -183,7 +190,7 @@ function parseRdfaItem(item: HTMLElement): ParsedSchema {
       if (property !== null && property !== undefined) {
         const propName = property.split(/\s+/)[0];
         const isNested = node.getAttribute('typeof') !== null && node.getAttribute('typeof') !== undefined;
-        const value: unknown = isNested ? parseRdfaItem(node).data : rdfaPropertyValue(node);
+        const value: unknown = isNested ? typedData(parseRdfaItem(node)) : rdfaPropertyValue(node);
         setProperty(data, propName, value);
         if (!isNested) return;
         return;

@@ -29,9 +29,9 @@ export function classifyAIBotRow(status: AIBotStatus): Severity {
   switch (status) {
     case 'allowed':     return 'good';
     case 'partial':     return 'warn';
-    case 'blocked':     return 'warn';   // single-row warning; total
-                                          // retrieval-block is escalated
-                                          // by generateAIReadinessFindings
+    case 'blocked':     return 'warn';   // single-row warning (audits saved
+                                          // before ultimate-40; the AI
+                                          // visibility module escalates now)
     case 'unspecified': return 'neutral';
   }
 }
