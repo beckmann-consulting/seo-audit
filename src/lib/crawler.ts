@@ -9,7 +9,7 @@ import type { PageData, CrawlStats } from '@/types';
 import type { Renderer, RenderResult } from './renderer/types';
 import { StaticRenderer } from './renderer/static';
 import { urlMatches } from './util/url-filter';
-import { classifyAfterRendererThrow } from './util/crawl-classifier';
+import { classifyAfterRendererThrow, type CrawlClassification } from './util/crawl-classifier';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; SEOAuditPro/2.0; +https://beckmanndigital.com)';
 
@@ -142,6 +142,11 @@ export async function crawlSite(
   // so a sitemap that references external domains can't drag the
   // crawler off-site.
   seedUrls?: string[],
+  // websites-27: how a page is classified when the renderer or the link
+  // parsing throws. The default HEAD-probes the URL with the global fetch;
+  // the public free check passes one that uses no network, so nothing
+  // leaves its safe-fetch transport (Codex review of c5c021d).
+  classifyThrow: (url: string, reason: string, headers: Record<string, string>) => Promise<CrawlClassification> = classifyAfterRendererThrow,
 ): Promise<{ pages: PageData[]; stats: CrawlStats }> {
   const visited = new Set<string>();
   const queue: { url: string; depth: number }[] = [{ url: startUrl, depth: 0 }];
@@ -274,7 +279,7 @@ export async function crawlSite(
         const probeHeaders: Record<string, string> = { 'User-Agent': userAgent };
         if (authHeader) probeHeaders['Authorization'] = authHeader;
         if (customHeaders) for (const [k, v] of Object.entries(customHeaders)) probeHeaders[k] = v;
-        const cls = await classifyAfterRendererThrow(url, reason, probeHeaders);
+        const cls = await classifyThrow(url, reason, probeHeaders);
         if (cls.bucket === 'httpErrors') {
           httpErrors.push({ url, status: cls.status });
         } else if (cls.bucket === 'unreachable') {

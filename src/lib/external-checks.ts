@@ -305,10 +305,11 @@ export async function checkDNS(domain: string): Promise<DNSInfo> {
 // ============================================================
 // Single PSI run — one HTTP call, one Lighthouse execution. Kept
 // as a private helper so checkPageSpeed can average multiple runs.
-async function runSinglePageSpeedCheck(url: string, apiKey: string): Promise<PageSpeedData> {
+async function runSinglePageSpeedCheck(url: string, apiKey: string, signal?: AbortSignal): Promise<PageSpeedData> {
   try {
     const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&key=${apiKey}`;
-    const resp = await fetch(endpoint, { signal: AbortSignal.timeout(30000) });
+    const timeout = AbortSignal.timeout(30000);
+    const resp = await fetch(endpoint, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
     if (!resp.ok) {
       const err = await resp.text();
       return { error: `PageSpeed API error: ${resp.status} — ${err.substring(0, 200)}` };
@@ -451,7 +452,9 @@ export async function checkPageSpeed(
   url: string,
   apiKey: string,
   runs: number = 1,
-  onRun?: (runNumber: number, totalRuns: number) => void
+  onRun?: (runNumber: number, totalRuns: number) => void,
+  // websites-27: the free check aborts the call when its run ends
+  signal?: AbortSignal,
 ): Promise<PageSpeedData> {
   const effectiveRuns = Math.max(1, Math.floor(runs));
   const results: PageSpeedData[] = [];
@@ -462,7 +465,7 @@ export async function checkPageSpeed(
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     onRun?.(i + 1, effectiveRuns);
-    const single = await runSinglePageSpeedCheck(url, apiKey);
+    const single = await runSinglePageSpeedCheck(url, apiKey, signal);
     // If any run errors, bail out immediately — averaging partial data
     // would be worse than a single-run result.
     if (single.error) return single;
@@ -597,53 +600,67 @@ export async function checkSecurityHeaders(
       signal: AbortSignal.timeout(10000),
     });
 
-    const h = resp.headers;
-    const hsts = h.get('strict-transport-security') || undefined;
-    const csp = h.get('content-security-policy') || h.get('content-security-policy-report-only') || undefined;
-    const xFrameOptions = h.get('x-frame-options') || undefined;
-    const xContentTypeOptions = h.get('x-content-type-options') || undefined;
-    const referrerPolicy = h.get('referrer-policy') || undefined;
-    const permissionsPolicy = h.get('permissions-policy') || h.get('feature-policy') || undefined;
-    const setCookie = h.get('set-cookie') || '';
-
-    // Parse HSTS max-age + includeSubDomains
-    let hstsMaxAge: number | undefined;
-    let hstsIncludeSubDomains: boolean | undefined;
-    if (hsts) {
-      const maxAgeMatch = hsts.match(/max-age\s*=\s*(\d+)/i);
-      if (maxAgeMatch) hstsMaxAge = parseInt(maxAgeMatch[1], 10);
-      hstsIncludeSubDomains = /includeSubDomains/i.test(hsts);
-    }
-
-    // Cookie security: if any cookies are set, they should have Secure flag
-    let hasCookieSecure: boolean | undefined;
-    if (setCookie) {
-      hasCookieSecure = /;\s*secure/i.test(setCookie);
-    }
-
-    // Mixed content: detect http:// resources in HTTPS-served HTML
-    let hasMixedContent: boolean | undefined;
-    if (html && url.startsWith('https://')) {
-      const mixedPattern = /(?:src|href)\s*=\s*["']http:\/\/(?!localhost)/i;
-      hasMixedContent = mixedPattern.test(html);
-    }
-
-    return {
-      hsts,
-      hstsMaxAge,
-      hstsIncludeSubDomains,
-      csp,
-      xFrameOptions,
-      xContentTypeOptions,
-      referrerPolicy,
-      permissionsPolicy,
-      hasCookieSecure,
-      hasMixedContent,
-      checkedUrl: resp.url,
-    };
+    return securityHeadersFrom(name => resp.headers.get(name), url, html, resp.url);
   } catch (err) {
     return { error: String(err) };
   }
+}
+
+/**
+ * The security headers of one response, read through `get` (websites-27:
+ * shared by checkSecurityHeaders and the free check, which fetches the page
+ * itself through safe-fetch).
+ */
+export function securityHeadersFrom(
+  get: (name: string) => string | null | undefined,
+  url: string,
+  html: string | undefined,
+  checkedUrl: string,
+): SecurityHeadersInfo {
+  const h = { get: (name: string) => get(name) ?? null };
+  const hsts = h.get('strict-transport-security') || undefined;
+  const csp = h.get('content-security-policy') || h.get('content-security-policy-report-only') || undefined;
+  const xFrameOptions = h.get('x-frame-options') || undefined;
+  const xContentTypeOptions = h.get('x-content-type-options') || undefined;
+  const referrerPolicy = h.get('referrer-policy') || undefined;
+  const permissionsPolicy = h.get('permissions-policy') || h.get('feature-policy') || undefined;
+  const setCookie = h.get('set-cookie') || '';
+
+  // Parse HSTS max-age + includeSubDomains
+  let hstsMaxAge: number | undefined;
+  let hstsIncludeSubDomains: boolean | undefined;
+  if (hsts) {
+    const maxAgeMatch = hsts.match(/max-age\s*=\s*(\d+)/i);
+    if (maxAgeMatch) hstsMaxAge = parseInt(maxAgeMatch[1], 10);
+    hstsIncludeSubDomains = /includeSubDomains/i.test(hsts);
+  }
+
+  // Cookie security: if any cookies are set, they should have Secure flag
+  let hasCookieSecure: boolean | undefined;
+  if (setCookie) {
+    hasCookieSecure = /;\s*secure/i.test(setCookie);
+  }
+
+  // Mixed content: detect http:// resources in HTTPS-served HTML
+  let hasMixedContent: boolean | undefined;
+  if (html && url.startsWith('https://')) {
+    const mixedPattern = /(?:src|href)\s*=\s*["']http:\/\/(?!localhost)/i;
+    hasMixedContent = mixedPattern.test(html);
+  }
+
+  return {
+    hsts,
+    hstsMaxAge,
+    hstsIncludeSubDomains,
+    csp,
+    xFrameOptions,
+    xContentTypeOptions,
+    referrerPolicy,
+    permissionsPolicy,
+    hasCookieSecure,
+    hasMixedContent,
+    checkedUrl,
+  };
 }
 
 // ============================================================
@@ -801,7 +818,7 @@ function extractTag(block: string, tag: string): string | undefined {
   return m ? decodeXmlEntities(m[1].trim()) : undefined;
 }
 
-function parseUrlSetBlock(xml: string): SitemapUrlEntry[] {
+export function parseUrlSetBlock(xml: string): SitemapUrlEntry[] {
   const out: SitemapUrlEntry[] = [];
   const urlBlocks = xml.match(/<url\b[^>]*>[\s\S]*?<\/url>/gi) || [];
   for (const block of urlBlocks) {
@@ -824,7 +841,7 @@ function parseUrlSetBlock(xml: string): SitemapUrlEntry[] {
   return out;
 }
 
-function parseSitemapIndexBlock(xml: string): string[] {
+export function parseSitemapIndexBlock(xml: string): string[] {
   const out: string[] = [];
   const blocks = xml.match(/<sitemap\b[^>]*>[\s\S]*?<\/sitemap>/gi) || [];
   for (const block of blocks) {

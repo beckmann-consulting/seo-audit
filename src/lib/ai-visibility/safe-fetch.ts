@@ -24,7 +24,7 @@ import * as https from 'node:https';
 import * as dns from 'node:dns';
 import * as net from 'node:net';
 import * as zlib from 'node:zlib';
-import type { Readable } from 'node:stream';
+import { pipeline, type Readable } from 'node:stream';
 import { canonicalHost, isPublicSuffix, registrableDomain } from './public-suffix';
 
 export interface Address { address: string; family: 4 | 6 }
@@ -441,9 +441,16 @@ export interface Budget { bytesLeft: number; deadline: number }
 export async function readBody(res: RawResponse, perRequest: number, budget: Budget, truncate = false): Promise<Buffer> {
   const enc = String(res.headers['content-encoding'] ?? '').toLowerCase().trim();
   let stream: Readable = res.body;
-  if (enc === 'gzip' || enc === 'x-gzip') stream = res.body.pipe(zlib.createGunzip());
-  else if (enc === 'deflate') stream = res.body.pipe(zlib.createInflate());
-  else if (enc === 'br') stream = res.body.pipe(zlib.createBrotliDecompress());
+  // pipeline, not pipe: an error or an early end of the response (an aborted
+  // request) reaches the decompressor too, so the loop below cannot wait for
+  // a stream nobody feeds any more (websites-27, Prüfer-224)
+  const unpack = (d: zlib.Gunzip | zlib.Inflate | zlib.BrotliDecompress) => {
+    pipeline(res.body, d, () => {});
+    return d;
+  };
+  if (enc === 'gzip' || enc === 'x-gzip') stream = unpack(zlib.createGunzip());
+  else if (enc === 'deflate') stream = unpack(zlib.createInflate());
+  else if (enc === 'br') stream = unpack(zlib.createBrotliDecompress());
   else if (enc && enc !== 'identity') throw new LimitError(`unknown content-encoding ${enc}`);
   const chunks: Buffer[] = [];
   let n = 0;

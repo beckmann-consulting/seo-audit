@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { crawlSite } from '@/lib/crawler';
 import { extractPageSEO } from '@/lib/extractor';
-import {
-  checkRobotsAndSitemap, checkPageSpeed, checkSecurityHeaders,
-} from '@/lib/external-checks';
+import { checkPageSpeed, securityHeadersFrom } from '@/lib/external-checks';
+import { buildScope, DEFAULT_LIMITS, safeFetch } from '@/lib/ai-visibility/safe-fetch';
+import { readJsonLimited } from '@/lib/check/body';
+import { classifyWithoutNetwork, normaliseHost, robotsAndSitemap, SafeRenderer, USER_AGENT, type SafeGet } from '@/lib/check/run-check';
+import { abortableTransport } from '@/lib/check/transport';
+import { clientAddressFrom } from '@/lib/check/service';
 import {
   generateSEOFindings, generateContentFindings, generateTechFindings,
   generatePerformanceFindings, generateSecurityHeadersFindings,
@@ -56,9 +59,8 @@ const RATE_LIMIT_PER_HOUR = 3;
 const rateLimitMap: Map<string, number[]> = new Map();
 
 function getClientIp(req: NextRequest): string {
-  const xff = req.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0].trim();
-  return req.headers.get('x-real-ip') || 'unknown';
+  // websites-27: the entry Caddy set (no proxy or CDN in front, see clientAddressFrom)
+  return clientAddressFrom(req.headers);
 }
 
 function checkRateLimit(ip: string): boolean {
@@ -126,12 +128,10 @@ export async function POST(req: NextRequest) {
   const respond = (status: number, body: unknown) =>
     NextResponse.json(body, { status, headers });
 
-  let body: WidgetRequestBody;
-  try {
-    body = await req.json();
-  } catch {
-    return respond(400, { error: 'Invalid JSON body' });
-  }
+  // websites-27 (Codex review of 6ea683b): at most 4 KB, read before anything else
+  const read = await readJsonLimited(req, 4096);
+  if (!read.ok) return respond(read.status, { error: read.status === 413 ? 'too_large' : 'Invalid JSON body' });
+  const body = (read.value ?? {}) as WidgetRequestBody;
 
   const ip = getClientIp(req);
 
@@ -154,41 +154,62 @@ export async function POST(req: NextRequest) {
     return respond(429, { error: 'rate_limited' });
   }
 
-  // Normalise URL
+  // Normalise URL: http(s) only, no credentials, no port, a hostname that is no IP literal
   let url = body.url.trim();
-  if (!url.startsWith('http')) url = 'https://' + url;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   let domain: string;
   try {
-    domain = new URL(url).hostname;
+    const u = new URL(url);
+    const host = normaliseHost(u.hostname);
+    if (!host || u.username || u.password || u.port) return respond(400, { error: 'invalid_url' });
+    domain = host;
+    url = `${u.protocol}//${host}${u.pathname}${u.search}`;
   } catch {
     return respond(400, { error: 'invalid_url' });
   }
 
   const started = Date.now();
+  // websites-27 (Codex review of 6ea683b): every fetch of the checked site goes through safe-fetch
+  // (only that host and its www or apex twin, only public addresses, pinned) on a transport that
+  // ends when the run's signal aborts, 55 s after the start.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 55_000);
 
   try {
+    const transport = abortableTransport(controller.signal);
+    const limits = { ...DEFAULT_LIMITS, requestTimeoutMs: 10_000, requestBytes: 3 * 1024 * 1024 };
+    const budget = { bytesLeft: 8 * 1024 * 1024, deadline: started + 55_000 };
+    const scope = await buildScope(url, transport, { requestTimeoutMs: limits.requestTimeoutMs });
+    if (!scope.ok) {
+      return respond(422, { error: 'unreachable', message: `Could not fetch ${domain}` });
+    }
+    const renderer = new SafeRenderer({ scope: scope.scope, transport, limits, budget, signal: controller.signal });
+    const get: SafeGet = (u, document = true, accept = '*/*') => safeFetch(u, { method: 'GET', headers: { 'user-agent': USER_AGENT, accept } },
+      { scope: scope.scope, transport, limits, budget, document });
+
     // Crawl only the homepage
-    const { pages: rawPages } = await crawlSite(url, 1);
+    const { pages: rawPages } = await crawlSite(url, 1, undefined, USER_AGENT, [], [], undefined, undefined, renderer, undefined, classifyWithoutNetwork);
     if (rawPages.length === 0) {
-      return respond(422, { error: 'unreachable', message: `Could not fetch ${url}` });
+      return respond(422, { error: 'unreachable', message: `Could not fetch ${domain}` });
     }
     const pages = rawPages.map(p => extractPageSEO(p));
 
-    // robots.txt + sitemap check (fast — ~1-2s)
-    const { hasRobots, hasSitemap, sitemapUrl } = await checkRobotsAndSitemap(url);
+    // robots.txt + sitemap check
+    const origin = new URL(rawPages[0].finalUrl || url).origin;
+    const { robots, sitemap } = await robotsAndSitemap(origin, get);
+    const hasRobots = robots.status === 'ok';
+    const hasSitemap = !!sitemap;
     pages[0].hasRobots = hasRobots;
     pages[0].hasSitemap = hasSitemap;
-    // We intentionally skip fetchSitemap() here — the full URL list is
-    // irrelevant for a homepage-only mini-audit.
-    void sitemapUrl;
 
-    // Security Headers
-    const securityHeaders = await checkSecurityHeaders(url, rawPages[0]?.html);
+    // Security Headers, from the homepage response
+    const homeHeaders = renderer.headersByUrl.get(rawPages[0].finalUrl) ?? {};
+    const securityHeaders = securityHeadersFrom(n => homeHeaders[n.toLowerCase()], rawPages[0].finalUrl, rawPages[0].html, rawPages[0].finalUrl);
 
     // PageSpeed — single run (quickMode); only when a server key is set
     const googleKey = process.env.GOOGLE_API_KEY || '';
     const pageSpeedData = googleKey
-      ? await checkPageSpeed(url, googleKey, 1)
+      ? await checkPageSpeed(url, googleKey, 1, undefined, controller.signal)
       : undefined;
 
     // Generate a focused subset of findings. Tech without SSL/DNS,
@@ -245,6 +266,9 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[widget-audit] failed:', message);
     return respond(500, { error: 'audit_failed', message });
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
   }
 }
 

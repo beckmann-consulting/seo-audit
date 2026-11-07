@@ -66,7 +66,7 @@ The app currently consumes **one** process env var. A minimal
 |-----------------------|:--------:|----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------|
 | `GOOGLE_API_KEY`      | optional | `src/app/api/audit/route.ts`, `src/app/api/widget/audit/route.ts`, `src/app/api/config/route.ts` | Enables PageSpeed Insights + Safe Browsing. Without it both checks are silently skipped; the audit still runs on everything else. | `AIzaSyDaB7_RealKeyHere`         |
 | `LEAD_WEBHOOK_URL`    | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | URL des PHP-Lead-Mailers auf beckmanndigital.com. Ohne diese Variable werden Widget-Leads nur geloggt, keine Mail verschickt. Siehe §5.4. | `https://beckmanndigital.com/seo-lead.php` |
-| `LEAD_WEBHOOK_SECRET` | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | Shared Secret für den Lead-Mailer — muss identisch mit `$SHARED_SECRET` in `seo-lead.php` sein. Generieren mit `openssl rand -hex 32`. | `3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd` |
+| `LEAD_WEBHOOK_SECRET` | optional | `src/app/api/widget/audit/route.ts` (`forwardLead`)            | Shared Secret für den Lead-Mailer — muss identisch mit `$SHARED_SECRET` in `seo-lead.php` sein. Generieren mit `openssl rand -hex 32`. | `<64 hex characters from openssl rand -hex 32>` |
 | `NODE_ENV`            | required | Next.js internals                                              | Must be `production` when running via `next start`                                                           | `production`                     |
 | `PORT`                | required | Next.js                                                        | Production port — Caddy proxies to this. Set to `3001` (port 3000 is reserved for the umami container on twb-server). | `3001`                           |
 | `BROWSERLESS_TOKEN`   | optional | `src/app/api/audit/route.ts` (only when audit config sets `rendering=js`) | Auth token for the local Browserless container. Only needed if you run the JS-rendering Docker container in `infra/browserless/`. Same value must be in `infra/browserless/.env`. | `c0f3e1…` (`openssl rand -hex 32`) |
@@ -88,7 +88,7 @@ Lege die Datei auf dem Server unter `/home/tobias/apps/seo-audit/.env.production
 ```env
 GOOGLE_API_KEY=AIzaSy…EchterKeyHier
 LEAD_WEBHOOK_URL=https://beckmanndigital.com/seo-lead.php
-LEAD_WEBHOOK_SECRET=3921bea48e47cea5637550a006e14c75da7ed1570639ff48f20a2f330d5129bd
+LEAD_WEBHOOK_SECRET=<64 hex characters from openssl rand -hex 32>
 NODE_ENV=production
 PORT=3001
 ```
