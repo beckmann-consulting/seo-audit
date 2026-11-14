@@ -193,9 +193,9 @@ export function generateTechFindings(
   const modernImages = pages.reduce((s, p) => s + p.modernImageFormats, 0);
   if (totalImages > 5 && modernImages / totalImages < 0.5) {
     findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
-      title_de: `Nur ${modernImages} von ${totalImages} Bildern in modernen Formaten (WebP/AVIF)`,
-      title_en: `Only ${modernImages} of ${totalImages} images in modern formats (WebP/AVIF)`,
+      id: id(), code: 'tech.modern-image-formats', priority: 'recommended', module: 'tech', effort: 'medium', impact: 'medium',
+      title_de: `Nur ${modernImages} von ${totalImages} Bildern in modernen Formaten (WebP/AVIF/SVG)`,
+      title_en: `Only ${modernImages} of ${totalImages} images in modern formats (WebP/AVIF/SVG)`,
       description_de: 'JPEG/PNG-Bilder sind 25–50% größer als WebP/AVIF bei gleicher Qualität.',
       description_en: 'JPEG/PNG images are 25–50% larger than WebP/AVIF at the same quality.',
       recommendation_de: 'Alle Bilder in WebP konvertieren. Squoosh.app oder cwebp für Batch-Konvertierung.',
@@ -613,7 +613,7 @@ export function generateThirdPartyScriptFindings(pages: PageSEOData[]): Finding[
   if (renderBlocking.length > 0) {
     const list = renderBlocking.slice(0, 5).map(([d, v]) => `${d} (${v.category})`).join(', ');
     findings.push({
-      id: id(), priority: 'recommended', module: 'tech', effort: 'low', impact: 'high',
+      id: id(), code: 'tech.render-blocking-third-party', priority: 'recommended', module: 'tech', effort: 'low', impact: 'high',
       title_de: `${renderBlocking.length} render-blockierende Dritt-Scripts`,
       title_en: `${renderBlocking.length} render-blocking third-party scripts`,
       description_de: `Diese externen Scripts blockieren das initiale Rendering weil sie weder async noch defer gesetzt haben: ${list}. Jeder blockierende Script kostet direkt LCP und INP.`,

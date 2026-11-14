@@ -185,7 +185,7 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
 export async function localRender(o: LocalRenderOptions): Promise<Map<string, LocalRenderOutcome>> {
   const out = new Map<string, LocalRenderOutcome>();
   // the local render may load from further hosts of the audited host's registrable domain (ultimate-40b)
-  const scope = await buildScope(o.auditUrl, o.transport, { subdomains: true, requestTimeoutMs: (o.limits ?? DEFAULT_LIMITS).requestTimeoutMs });
+  const scope = await buildScope(o.auditUrl, o.transport, { subdomains: true, requestTimeoutMs: (o.limits ?? DEFAULT_LIMITS).requestTimeoutMs, deadline: Date.now() + 55_000 });
   if (!scope.ok) {
     for (const u of o.urls) out.set(u, { incompleteReason: scope.reason });
     return out;

@@ -102,6 +102,38 @@ A page counts only if every one of its requests was served, so pages with resour
 
 **Deploy.** Nothing to do; `AI_LOCAL_CHROMIUM` is optional.
 
+## Further checks and the check log (ultimate-41)
+
+Every audit now writes a **check log**: one row per point of the ultimate-41 order, always all 18 and in a fixed order, with the status `pass`, `fail`, `not-applicable`, `not-checkable`, `not-configured` or `not-selected`, the codes of the findings it gave, and one line of numbers. The status follows what was measured: `pass` only when the rule holds, `fail` only with the findings it names; a rule broken without its finding (its module not chosen, or the finding left to a stricter rule) gives `not-checkable` and the line says why. It shows under the findings in the UI and as a table in the PDF (`src/lib/checks/check-log.ts`). Findings of these checks carry a stable `code` (`<module>.<name>`, e.g. `tech.soft-404`); `id` still counts per process.
+
+| Point | Check | Codes |
+| --- | --- | --- |
+| 1 | `script-loading`: `defer`, `async`, `type="module"` and scripts that are not run do not block | `performance.render-blocking-scripts`, `tech.render-blocking-third-party` |
+| 16 | `modern-image-formats`: WebP, AVIF, SVG and `<picture>` sources count | `tech.modern-image-formats` |
+| 17 | `cookie-consent`: a finding only with cookies or trackers and no consent tool | `legal.cookie-consent` |
+| 2 | `soft-404`: a made-up URL must answer 404 or 410, with a page of the site's own | `tech.soft-404`, `tech.soft-404-redirect`, `tech.404-probe-server-error`, `tech.404-probe-status`, `tech.no-custom-404` |
+| 3 | `http-to-https`: the http variant of the start page and up to 3 subpages: one 301 to the same HTTPS page | `tech.http-no-redirect`, `-temporary`, `-308`, `-chain`, `-wrong-target` |
+| 4 | `lighthouse-local`: Lighthouse on the server without a Google key | `performance.lighthouse-home`, `performance.lighthouse-pages` |
+| 5 | `language-consistency`: `<html lang>`, own hreflang code, language of the text and of JSON-LD texts | `seo.lang-hreflang-mismatch`, `seo.content-lang-mismatch`, `seo.jsonld-lang-mismatch` |
+| 6 | `hreflang-targets`: status and canonical of every hreflang target | `seo.hreflang-target-error`, `-redirect`, `-noindex`, `-not-canonical` |
+| 7 | `language-pairs`: language versions joined by hreflang are no duplicates | `seo.duplicate-title`, `-description`, `-h1` |
+| 19 | `lang-and-og-locale`: lang on every page, og:locale, og:locale:alternate; a start page without lang carries the older rule's finding | `seo.html-lang-missing-pages`, `seo.html-lang-missing` (start page), `seo.og-locale-missing-pages`, `seo.og-locale-alternate-missing`, `seo.og-locale-lang-mismatch` |
+| 10 | `nap-consistency`: phone, postcode, town and street in JSON-LD, imprint and footer; the name (`name`, `legalName`, the holder after © or a name with a legal form in the footer) against the imprint and each other; national numbers get the country code of `addressCountry` or of the start page's `lang`, else they match the end of international ones | `seo.nap-mismatch`, `seo.nap-name-mismatch` |
+| 11 | `maps-profile`: Google Maps or Business Profile link for a LocalBusiness | `seo.local-map-link-missing`, `seo.local-hasmap-missing` |
+| 13 | `target-keyword`: a target keyword per page in title, H1, description, URL | `seo.target-keyword-missing` |
+| 14 | `inbound-anchors`: anchor texts linking to each page | `seo.inbound-anchors-generic`, `-off-topic`, `-uniform` |
+| 18 | `meta-noindex`: meta noindex as findings of their own; a start page noindex by meta and by X-Robots-Tag gets the stricter header finding instead of `seo.noindex-home`, and the entry carries it | `seo.noindex-home`, `seo.x-robots-noindex` (start page by header too), `seo.noindex-in-sitemap`, `seo.noindex-pages` |
+| 20 | `alt-text-quality`: file name as alt, too long, other language | `content.alt-filename`, `content.alt-too-long`, `content.alt-language` |
+| E1, E2 | `ai-opening-hours`, `ai-last-modified`: the two rules of websites-33 (module ai) | `ai.schema-recommended-fields`, `seo.schema-recommended-fields`, `ai.lastmod-ahead-of-last-modified` |
+
+**Options.** `lighthouse: 'auto' | 'off'` (default `auto`; the UI has a switch). `targetKeywords: { url, keyword }[]`, at most 50, a URL or a path and a keyword of up to 80 characters; in the UI one line per page, `URL or path = keyword`.
+
+**Fetches of the new checks** (made-up URL, http variant, hreflang targets) go through `safe-fetch.ts`: public addresses only, the connection pinned to the checked address, one checked scope per redirect step (`src/lib/checks/probe.ts`). The audit's basic auth and custom headers go to the exact audited origin only; hreflang targets get none.
+
+**Local Lighthouse** (`src/lib/lighthouse/`). Without a Google key, Lighthouse 13 runs on the server: the start page and the two most internally linked pages (legal pages left out), mobile and desktop, 3 runs each; each pair is summed up by Lighthouse's own median run (`computeMedianRun`). Lab values stay in `lighthouseLocal`; only the start page's mobile median-run score sets the performance score, as PSI's does. It needs a Chromium on the server: `LIGHTHOUSE_CHROMIUM`, else `AI_LOCAL_CHROMIUM` (nothing is downloaded). Every connection of that Chromium goes through a local guard proxy (plain HTTP and CONNECT; public addresses only, pinned, ports 80 and 443 and the audited URL's, no credentials); Chromium resolves nothing itself, uses no QUIC, and WebRTC sends no UDP past the proxy (profile preferences; the switch alone let STUN through in the smoke test). Audits with basic auth or sensitive custom headers do not run it. Dependencies `lighthouse` and `chrome-launcher` take about 200 MB in `node_modules`. A smoke test with a real Chromium runs with `LIGHTHOUSE_SMOKE=1 LIGHTHOUSE_CHROMIUM=/usr/bin/chromium npx vitest run src/lib/lighthouse/smoke.test.ts`.
+
+**Time.** `next start` does not enforce the route's `maxDuration` (900 s); platforms that do stop the request there. The new checks end 30 s before it and take at most their budgets: `LIGHTHOUSE_BUDGET_MS` (360 000), `HREFLANG_PROBE_BUDGET_MS` (90 000), `PROBE_BUDGET_MS` (30 000, made-up URL and http together); values above the limit are cut to it. Further variables: `LIGHTHOUSE_PAGES` (3), `LIGHTHOUSE_RUNS` (at least 3), `HREFLANG_PROBE_MAX_REQUESTS` (300). The crawl and the older steps are not limited by this; `maxPages` limits the crawl.
+
 ## Google API Key erstellen
 
 1. https://console.cloud.google.com

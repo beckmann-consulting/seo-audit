@@ -27,7 +27,7 @@ export function finding(
   priority: Priority,
   effort: Effort,
   impact: Impact,
-  t: { title_de: string; title_en: string; description_de: string; description_en: string; recommendation_de: string; recommendation_en: string },
+  t: { title_de: string; title_en: string; description_de: string; description_en: string; recommendation_de: string; recommendation_en: string; code?: string }, // ultimate-41: code optional
   affectedUrl?: string,
 ): Finding {
   return { id: id(), priority, module: 'ai', effort, impact, ...t, ...(affectedUrl ? { affectedUrl } : {}) };

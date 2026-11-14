@@ -94,6 +94,13 @@ export function dedupKey(url: string, baseHost: string): string {
   }
 }
 
+// ultimate-41 (point 17): the names of the cookies a response set (one Set-Cookie per line), at most 20; no values
+export function cookieNamesOf(raw: string | undefined): { setCookieCount: number; setCookieNames: string[] } {
+  const lines = (raw ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  const names = [...new Set(lines.map(l => l.split(';')[0].split('=')[0].trim()).filter(Boolean))];
+  return { setCookieCount: lines.length, setCookieNames: names.slice(0, 20) };
+}
+
 // Build a PageData from a successful RenderResult. Preserves the
 // fields the rest of the audit pipeline already depends on.
 function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number): PageData {
@@ -111,6 +118,7 @@ function pageDataFromRender(r: RenderResult, requestedUrl: string, depth: number
     protocol: r.protocol,
     xRobotsTag: r.headers['x-robots-tag'] || undefined,
     lastModified: r.headers['last-modified'] || undefined,
+    ...cookieNamesOf(r.headers['set-cookie']),
     // JS-mode-only fields are passed through when present so the
     // js-rendering / js-console-errors findings can read them.
     staticHtml: r.staticHtml,

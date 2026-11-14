@@ -237,3 +237,54 @@ describe('cookie jar of the document redirect chain (Codex, review of bcfe8de, F
     expect(jar.size).toBe(0);
   });
 });
+
+describe('ultimate-41: a deadline for the resolution in buildScope, manual redirects in safeFetch', () => {
+  const never: Transport = { resolve: () => new Promise<Address[]>(() => {}), request: () => Promise.reject(new Error('no request expected')) };
+
+  it('a resolver that never answers ends at the deadline, and the host is refused', async () => {
+    const t0 = Date.now();
+    const r = await buildScope('https://example.com/', never, { deadline: t0 + 60 });
+    const took = Date.now() - t0;
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/resolution of example\.com timed out/);
+    expect(took).toBeGreaterThanOrEqual(55);
+    expect(took).toBeLessThan(1000);
+  });
+
+  it('an answer after the deadline never allows the host; a deadline already past resolves nothing', async () => {
+    const resolves: string[] = [];
+    const late: Transport = {
+      resolve: host => { resolves.push(host); return new Promise(r => setTimeout(() => r([PUBLIC]), 120)); },
+      request: () => Promise.reject(new Error('no request expected')),
+    };
+    const r = await buildScope('https://example.com/', late, { deadline: Date.now() + 40 });
+    expect(r.ok).toBe(false);
+    await new Promise(res => setTimeout(res, 150)); // the late answer arrives and changes nothing
+    expect(r.ok).toBe(false);
+    resolves.length = 0;
+    const past = await buildScope('https://example.com/', late, { deadline: Date.now() - 1 });
+    expect(past.ok).toBe(false);
+    expect(resolves).toEqual([]);
+  });
+
+  it('without a deadline buildScope behaves as before', async () => {
+    const { t } = fakeTransport({ 'example.com': [PUBLIC], 'www.example.com': [PUBLIC] }, () => ({}));
+    const r = await buildScope('https://example.com/', t);
+    expect(r.ok).toBe(true);
+  });
+
+  it('redirect: manual returns the 3xx with its Location and contacts nobody else', async () => {
+    const { t, calls } = fakeTransport({ 'example.com': [PUBLIC], 'www.example.com': [PUBLIC] },
+      url => url.pathname === '/a' ? { status: 301, headers: { location: 'https://www.example.com/a' } } : { status: 200 });
+    const s = await buildScope('https://example.com/', t);
+    if (!s.ok) throw new Error(s.reason);
+    const r = await safeFetch('https://example.com/a', { method: 'GET', headers: {} }, { scope: s.scope, transport: t, budget: budget(), document: true, redirect: 'manual' });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.res.status).toBe(301);
+      expect(r.res.headers.location).toBe('https://www.example.com/a');
+      expect(r.res.body.length).toBe(0);
+    }
+    expect(calls.map(c => c.url)).toEqual(['https://example.com/a']);
+  });
+});

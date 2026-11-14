@@ -39,11 +39,11 @@ export function generatePerformanceFindings(pageSpeed?: PageSpeedData, pages?: P
     const totalRenderBlocking = pages.reduce((s, p) => s + p.renderBlockingScripts, 0);
     if (totalRenderBlocking > 3) {
       findings.push({
-        id: id(), priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
+        id: id(), code: 'performance.render-blocking-scripts', priority: 'recommended', module: 'performance', effort: 'medium', impact: 'medium',
         title_de: `${totalRenderBlocking} render-blockierende Scripts gefunden`,
         title_en: `${totalRenderBlocking} render-blocking scripts found`,
-        description_de: 'Scripts im <head> ohne async/defer blockieren das Rendern und verlangsamen die wahrgenommene Ladezeit.',
-        description_en: 'Scripts in the <head> without async/defer block rendering and slow down perceived load time.',
+        description_de: 'Scripts im <head> ohne async, defer oder type="module" blockieren das Rendern und verlangsamen die wahrgenommene Ladezeit.',
+        description_en: 'Scripts in the <head> without async, defer or type="module" block rendering and slow down perceived load time.',
         recommendation_de: 'Externe Scripts mit defer oder async laden: <script src="..." defer>',
         recommendation_en: 'Load external scripts with defer or async: <script src="..." defer>',
       });

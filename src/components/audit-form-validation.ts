@@ -21,3 +21,6 @@ export function checkPatterns(include: string, exclude: string): PatternError | 
   }
   return null;
 }
+
+// ultimate-41 (point 13): the target-keyword field, one line per page "URL or path = keyword"
+export { parseTargetKeywords } from '@/lib/checks/target-keywords';

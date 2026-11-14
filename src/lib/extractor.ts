@@ -1,4 +1,5 @@
 import { parse } from 'node-html-parser';
+import { detectLanguage } from './util/lang-detect';
 import type { PageData, PageSEOData, ParsedSchema } from '@/types';
 import { parseXRobotsTag, xRobotsImpliesNoindex } from './util/x-robots';
 import { measurePixelWidth } from './util/pixel-width';
@@ -25,11 +26,13 @@ const MIN_WORDS_FOR_READABILITY = 200;
 // Third-party script domain → category (used by Check 4).
 // CDN domains like unpkg / cdnjs / jsdelivr intentionally map to "cdn" and
 // are NOT counted against the "too many trackers" heuristic.
-function categorizeScriptDomain(host: string): string | null {
+function categorizeScriptDomain(host: string, path = ''): string | null {
   const h = host.toLowerCase();
   if (/(google-analytics\.com|googletagmanager\.com|gtag)/i.test(h)) return 'analytics';
   if (/(doubleclick\.net|googlesyndication\.com|adsystem|adservice)/i.test(h)) return 'ads';
-  if (/facebook\.net\/tr|facebook\.com\/tr/i.test(h)) return 'ads';
+  // ultimate-41: the Meta pixel loads fbevents.js from connect.facebook.net. The former pattern tested
+  // "facebook.net/tr" against a host name and could never match.
+  if (h === 'connect.facebook.net' && /\/fbevents\.js$/i.test(path)) return 'ads';
   if (/(hotjar\.com|clarity\.ms|fullstory\.com|mouseflow\.com|luckyorange\.com)/i.test(h)) return 'heatmap';
   if (/(connect\.facebook\.net|platform\.twitter\.com|platform\.linkedin\.com|apis\.google\.com)/i.test(h)) return 'social';
   if (/(cdnjs\.cloudflare\.com|unpkg\.com|jsdelivr\.net|cdn\.jsdelivr\.net|bootstrapcdn\.com)/i.test(h)) return 'cdn';
@@ -37,8 +40,35 @@ function categorizeScriptDomain(host: string): string | null {
   return 'other';
 }
 
+// ultimate-41 (point 1): whether a <script src> blocks rendering. Boolean attributes count when present, also
+// empty (`defer=""`); node-html-parser gives '' for a bare `defer`, which the former `!getAttribute('defer')` read as
+// absent. Module scripts are deferred by the HTML standard; scripts of another type (text/plain of a consent tool,
+// JSON) are not run at all.
+export function isRenderBlockingScript(el: { hasAttribute(name: string): boolean; getAttribute(name: string): string | undefined | null }): boolean {
+  if (el.hasAttribute('async') || el.hasAttribute('defer')) return false;
+  const type = (el.getAttribute('type') ?? '').trim().toLowerCase();
+  if (type === '') return true;
+  if (type === 'module') return false;
+  return /^(text|application)\/(x-)?(java|ecma|j|live)script(\s*;.*)?$/.test(type);
+}
+
+// ultimate-41 (point 17): tracking snippets written inline, without a <script src> to a tracker host
+const INLINE_TRACKERS: { name: string; re: RegExp }[] = [
+  { name: 'gtag', re: /\bgtag\s*\(/ },
+  { name: 'google-tag-manager', re: /googletagmanager\.com\/gtm\.js/ },
+  { name: 'meta-pixel', re: /\bfbq\s*\(/ },
+  { name: 'matomo', re: /\b_paq\.push\s*\(/ },
+  { name: 'hotjar', re: /\bhj\s*\(|static\.hotjar\.com/ },
+];
+
+export function inlineTrackersIn(scriptTexts: string[]): string[] {
+  const found: string[] = [];
+  for (const t of INLINE_TRACKERS) if (scriptTexts.some(s => t.re.test(s))) found.push(t.name);
+  return found;
+}
+
 // Generic anchor text blacklist (DE + EN). Normalised to lowercase, trimmed.
-const GENERIC_ANCHOR_TEXTS = new Set([
+export const GENERIC_ANCHOR_TEXTS = new Set([
   // DE
   'hier', 'hier klicken', 'mehr erfahren', 'weiter', 'weiterlesen',
   'klicken sie hier', 'jetzt klicken', 'link', 'seite', 'öffnen',
@@ -112,8 +142,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
   }
   const hasPaginationLinks = paginationUrls.length > 0;
 
-  // Hreflang (link[rel="alternate"][hreflang])
-  const hreflangEls = root.querySelectorAll('link[rel="alternate"][hreflang]');
+  // Hreflang (link[rel~="alternate"][hreflang]). ultimate-41: rel is a list of words, so "alternate nofollow" counts
+  const hreflangEls = root.querySelectorAll('link[hreflang]').filter(el => (el.getAttribute('rel') || '').toLowerCase().split(/\s+/).includes('alternate'));
   const hreflangs = hreflangEls
     .map(el => ({
       hreflang: (el.getAttribute('hreflang') || '').trim(),
@@ -152,7 +182,8 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Meta robots — look for noindex in <meta name="robots"> or <meta name="googlebot">
   const robotsMeta = root.querySelector('meta[name="robots" i]')?.getAttribute('content') || '';
   const googlebotMeta = root.querySelector('meta[name="googlebot" i]')?.getAttribute('content') || '';
-  const hasNoindex = /\bnoindex\b/i.test(robotsMeta) || /\bnoindex\b/i.test(googlebotMeta);
+  // ultimate-41 (point 18): "none" means noindex, nofollow, as in the X-Robots-Tag parser (util/x-robots.ts)
+  const hasNoindex = /\b(noindex|none)\b/i.test(robotsMeta) || /\b(noindex|none)\b/i.test(googlebotMeta);
 
   // X-Robots-Tag (HTTP response header) — parsed alongside <meta robots>
   // because the two can disagree, and the union is what Google obeys.
@@ -205,9 +236,14 @@ export function extractPageSEO(page: PageData): PageSEOData {
     const alt = img.getAttribute('alt');
     return alt === null || alt === undefined;
   }).length;
+  // ultimate-41 (point 16): modern means WebP, AVIF or SVG (a vector needs no raster alternative), also an <img>
+  // inside a <picture> that offers a WebP or AVIF <source>
   const modernImageFormats = images.filter(img => {
     const src = img.getAttribute('src') || '';
-    return /\.(webp|avif)(\?|$)/i.test(src);
+    if (/\.(webp|avif|svg)(\?|#|$)/i.test(src) || /^data:image\/svg\+xml/i.test(src)) return true;
+    const parent = img.parentNode as unknown as { rawTagName?: string; querySelectorAll?: (sel: string) => { getAttribute(n: string): string | undefined }[] } | null;
+    if (parent?.rawTagName?.toLowerCase() !== 'picture' || !parent.querySelectorAll) return false;
+    return parent.querySelectorAll('source').some(srcEl => /^image\/(webp|avif)$/i.test((srcEl.getAttribute('type') || '').trim()));
   }).length;
   const lazyLoadedImages = images.filter(img => img.getAttribute('loading') === 'lazy').length;
   const imageDetails = images.map(img => {
@@ -347,6 +383,11 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const visibleBodyText = visibleBodyRaw.replace(/\s+/g, ' ').trim();
   const textHtmlRatio = page.html.length > 0 ? visibleBodyText.length / page.html.length : 0;
 
+  // ultimate-41 (point 5): the language of the visible text, from function words (lib/util/lang-detect.ts), read
+  // from at most the first 5 000 words; no answer when the evidence is not clear
+  const guess = detectLanguage(visibleBodyText.split(' ').slice(0, 5000).join(' '));
+  const detectedLang = guess ? { lang: guess.lang, confidence: Math.round(guess.confidence * 100) / 100 } : undefined;
+
   // Mobile usability: scan inline styles for fixed widths > 400px and small fonts < 12px
   let fixedWidthElements = 0;
   let smallFontElements = 0;
@@ -383,9 +424,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
   // Render-blocking scripts in head
   const head = root.querySelector('head');
   const headScripts = head ? head.querySelectorAll('script[src]') : [];
-  const renderBlockingScripts = headScripts.filter(
-    s => !s.getAttribute('async') && !s.getAttribute('defer')
-  ).length;
+  const renderBlockingScripts = headScripts.filter(s => isRenderBlockingScript(s)).length;
 
   // Check 3 — Font loading
   const fontPreloads = root.querySelectorAll('link[rel="preload"][as="font"]').length;
@@ -410,18 +449,21 @@ export function extractPageSEO(page: PageData): PageSEOData {
   const seenDomains = new Set<string>();
   for (const s of allScripts) {
     const src = s.getAttribute('src') || '';
-    if (!src || src.startsWith('/') || src.startsWith('./') || src.startsWith('#')) continue;
+    // `//host/x.js` is another host (protocol-relative), not a path of this site
+    if (!src || (src.startsWith('/') && !src.startsWith('//')) || src.startsWith('./') || src.startsWith('#')) continue;
     let host: string;
+    let path = '';
     try {
       const u = new URL(src, page.url);
       host = u.hostname;
+      path = u.pathname;
     } catch {
       continue;
     }
     if (!host || host === pageHost) continue;
-    const category = categorizeScriptDomain(host);
+    const category = categorizeScriptDomain(host, path);
     if (category === null) continue;
-    const isRenderBlocking = !s.getAttribute('async') && !s.getAttribute('defer');
+    const isRenderBlocking = isRenderBlockingScript(s);
     if (!seenDomains.has(host)) {
       seenDomains.add(host);
       thirdPartyScripts.push({ domain: host, category, isRenderBlocking });
@@ -506,6 +548,9 @@ export function extractPageSEO(page: PageData): PageSEOData {
     hasFontDisplaySwap,
     hasExternalFonts,
     thirdPartyScripts,
+    // ultimate-41 (point 17): inline tracking snippets, and the cookies the server set (names only)
+    inlineTrackers: inlineTrackersIn(root.querySelectorAll('script').filter(sc => !sc.hasAttribute('src')).map(sc => sc.text)),
+    ...(page.setCookieCount !== undefined ? { setCookieCount: page.setCookieCount, setCookieNames: page.setCookieNames ?? [] } : {}),
     hasFavicon,
     hasAppleTouchIcon,
     hasWebManifest,
@@ -529,6 +574,7 @@ export function extractPageSEO(page: PageData): PageSEOData {
     textHtmlRatio,
     readabilityScore,
     readabilityLang,
+    ...(detectedLang ? { detectedLang } : {}),
     smallTouchTargetCount: countSmallTouchTargets(root),
     renderMode: page.renderMode,
     staticWordCount: page.staticWordCount,

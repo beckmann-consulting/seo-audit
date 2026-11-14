@@ -69,6 +69,12 @@ export type UserAgentPreset =
   | 'perplexitybot'
   | 'custom';
 
+// ultimate-41 (point 13)
+export interface TargetKeyword {
+  url: string; // an absolute URL or a path such as /leistungen
+  keyword: string;
+}
+
 export interface AuditConfig {
   url: string;
   googleApiKey?: string;
@@ -110,6 +116,11 @@ export interface AuditConfig {
   // count for the sampled pages — turn on when you suspect lazy-
   // loaded content or hidden-by-default mobile sections.
   mobileDesktopParityCheck?: boolean;
+  // ultimate-41 (point 4): Lighthouse on this server when there is no Google key ('auto', the default) or never
+  // ('off'). With a key PSI runs as before.
+  lighthouse?: 'auto' | 'off';
+  // ultimate-41 (point 13): a target keyword per page (URL or path), at most 50; checked in title, H1, description, URL
+  targetKeywords?: TargetKeyword[];
   mobileDesktopParitySampleSize?: number; // default 10
   // Render mode for the crawl.
   // 'static' — plain HTTP fetch, what every audit historically did.
@@ -141,6 +152,10 @@ export interface PageData {
   protocol: string | null; // 'h2' if alt-svc advertises HTTP/2+, else null (unknown)
   xRobotsTag?: string; // raw X-Robots-Tag response header on the final hop, joined if multi-valued
   lastModified?: string; // raw Last-Modified response header on the final hop (ultimate-40, sitemap lastmod check)
+  // ultimate-41 (point 17): cookies the final response set; names only, at most 20, no values. Undefined when the
+  // pipeline does not collect them (widget, free check): then the cookie-consent rule of before applies.
+  setCookieCount?: number;
+  setCookieNames?: string[];
   // JS-mode only: captured for the static-vs-rendered diff finding.
   staticHtml?: string;
   staticWordCount?: number;
@@ -171,6 +186,53 @@ export interface Finding {
   recommendation_de: string;
   recommendation_en: string;
   affectedUrl?: string;
+  // ultimate-41: a stable key of the rule, `<module>.<name>` (e.g. `tech.soft-404`). `id` counts per process and is
+  // not stable; tests, the check log and proof runs match on `code`. Absent in audits saved before ultimate-41 and on
+  // findings no later order has touched.
+  code?: string;
+}
+
+// ultimate-41: one entry per point of the order, in a fixed order, so a run shows "passed" and "not checkable" as
+// well as findings. `check` is stable and separate from the finding codes the check may give.
+export type CheckStatus = 'pass' | 'fail' | 'not-applicable' | 'not-checkable' | 'not-configured' | 'not-selected';
+
+export interface CheckLogEntry {
+  check: string;
+  point: string; // the number in the order's list, or E1 / E2
+  module: Module;
+  status: CheckStatus;
+  findingCodes: string[];
+  summary_de: string;
+  summary_en: string;
+}
+
+// ultimate-41 (point 4): local Lighthouse, lab values of one run (the median run of a page and strategy)
+export interface LighthouseLabMetrics {
+  score: number; // 0..100
+  fcp?: number; // ms
+  lcp?: number; // ms
+  tbt?: number; // ms
+  cls?: number;
+  si?: number; // ms
+}
+
+export interface LighthousePair {
+  url: string;
+  strategy: 'mobile' | 'desktop';
+  runScores: number[]; // every finished run, in order
+  medianScore?: number; // the median of runScores
+  median?: LighthouseLabMetrics; // the median run (Lighthouse's computeMedianRun)
+  errors: string[];
+}
+
+export interface LighthouseLocalInfo {
+  lighthouseVersion?: string;
+  chromiumVersion?: string;
+  durationMs: number;
+  runsPerPair: number; // runs planned per page and strategy
+  pairs: LighthousePair[]; // every planned pair, also those not run
+  complete: boolean; // every planned pair has runsPerPair runs
+  notes: string[];
 }
 
 export interface ModuleScore {
@@ -428,8 +490,8 @@ export interface PageSEOData {
   hasRobots?: boolean; // only homepage
   hasSitemap?: boolean; // only homepage
   hasCanonical: boolean;
-  renderBlockingScripts: number;
-  modernImageFormats: number;
+  renderBlockingScripts: number; // ultimate-41: without async, defer, type=module or a type that is not run
+  modernImageFormats: number; // ultimate-41: WebP, AVIF or SVG, or an <img> in a <picture> with a WebP/AVIF source
   lazyLoadedImages: number;
   hreflangs: { hreflang: string; href: string }[];
   viewportBlocksZoom: boolean;
@@ -443,6 +505,8 @@ export interface PageSEOData {
   genericAnchors: { text: string; href: string }[];
   emptyAnchors: number; // internal links with no usable anchor text and no aria-label
   hasNoindex: boolean; // meta robots contains "noindex"
+  // ultimate-41 (point 5): the language of the visible text, when the function words say so clearly
+  detectedLang?: { lang: string; confidence: number };
   // Check 2 — image optimisation details (per page)
   imageDetails: {
     src: string;
@@ -462,6 +526,11 @@ export interface PageSEOData {
     category: string;
     isRenderBlocking: boolean;
   }[];
+  // ultimate-41 (point 17): inline tracking snippets (gtag, google-tag-manager, meta-pixel, matomo, hotjar)
+  inlineTrackers?: string[];
+  // ultimate-41 (point 17): cookies the server set on this page (from PageData); undefined when not collected
+  setCookieCount?: number;
+  setCookieNames?: string[];
   // Check 5 — favicon / web app manifest
   hasFavicon: boolean;
   hasAppleTouchIcon: boolean;
@@ -635,6 +704,11 @@ export interface AuditResult {
   // disabled / site-not-found / api-error / ok. See BingResult.
   bingResult?: BingResult;
   topFindings: Finding[]; // top 5 highest-impact findings, ranked by findingImpactScore
+  // ultimate-41: the check log, one entry per point of the order (lib/checks/check-log.ts). Absent in older audits.
+  checkLog?: CheckLogEntry[];
+  // ultimate-41 (point 4): local Lighthouse lab runs, without a Google key (lib/lighthouse/local.ts). Lab values
+  // only; pageSpeedData keeps PSI's data and its CrUX field values.
+  lighthouseLocal?: LighthouseLocalInfo;
   claudePrompt: string;
   summary_de: string;
   summary_en: string;

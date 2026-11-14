@@ -1,11 +1,33 @@
 import type { Finding, PageSEOData } from '@/types';
 import { detectLegalPages } from '../util/legal-page-detection';
 import { id } from './utils';
+import type { CheckLog } from '../checks/check-log';
+
+// ultimate-41 (point 17): third-party script categories that need consent (extractor categorizeScriptDomain)
+const CONSENT_CATEGORIES = new Set(['analytics', 'ads', 'heatmap', 'social']);
+
+export interface ConsentEvidence {
+  cookiesKnown: boolean; // false when the pipeline collects no Set-Cookie (widget, free check)
+  cookieNames: string[];
+  cookiePages: number;
+  trackers: string[]; // tracker hosts and inline snippets
+}
+
+export function consentEvidence(pages: PageSEOData[]): ConsentEvidence {
+  const cookiesKnown = pages.some(p => p.setCookieCount !== undefined);
+  const cookieNames = [...new Set(pages.flatMap(p => p.setCookieNames ?? []))];
+  const cookiePages = pages.filter(p => (p.setCookieCount ?? 0) > 0).length;
+  const trackers = [...new Set(pages.flatMap(p => [
+    ...(p.thirdPartyScripts ?? []).filter(t => CONSENT_CATEGORIES.has(t.category)).map(t => `${t.domain} (${t.category})`),
+    ...(p.inlineTrackers ?? []).map(n => `${n} (inline)`),
+  ]))];
+  return { cookiesKnown, cookieNames, cookiePages, trackers };
+}
 
 // ============================================================
 //  LEGAL FINDINGS
 // ============================================================
-export function generateLegalFindings(pages: PageSEOData[], allHtml: string): Finding[] {
+export function generateLegalFindings(pages: PageSEOData[], allHtml: string, log?: CheckLog): Finding[] {
   const findings: Finding[] = [];
   const allText = allHtml.toLowerCase();
   const detection = detectLegalPages(pages, allText);
@@ -62,15 +84,45 @@ export function generateLegalFindings(pages: PageSEOData[], allHtml: string): Fi
     allText.includes('cookie-consent') ||
     allText.includes('gdpr-cookie');
 
-  if (!hasCMPScript) {
-    findings.push({
-      id: id(), priority: 'important', module: 'legal', effort: 'medium', impact: 'high',
+  // ultimate-41 (point 17): a finding only when the pages set cookies or load a tracker that needs consent, and no
+  // consent tool is there. Where the pipeline collects no cookies (widget, free check), the rule of before applies.
+  const ev = consentEvidence(pages);
+  const needsConsent = ev.cookiesKnown ? ev.cookiePages > 0 || ev.trackers.length > 0 : true;
+  if (!hasCMPScript && needsConsent) {
+    const seen_de: string[] = [];
+    const seen_en: string[] = [];
+    if (ev.cookiePages > 0) {
+      seen_de.push(`Cookies auf ${ev.cookiePages} Seite(n): ${ev.cookieNames.slice(0, 5).join(', ')}`);
+      seen_en.push(`cookies on ${ev.cookiePages} page(s): ${ev.cookieNames.slice(0, 5).join(', ')}`);
+    }
+    if (ev.trackers.length > 0) {
+      seen_de.push(`Tracker: ${ev.trackers.slice(0, 5).join(', ')}`);
+      seen_en.push(`trackers: ${ev.trackers.slice(0, 5).join(', ')}`);
+    }
+    const what_de = seen_de.length > 0 ? ` Erkannt: ${seen_de.join('; ')}.` : '';
+    const what_en = seen_en.length > 0 ? ` Seen: ${seen_en.join('; ')}.` : '';
+    const finding: Finding = {
+      id: id(), code: 'legal.cookie-consent', priority: 'important', module: 'legal', effort: 'medium', impact: 'high',
       title_de: 'Kein aktives Cookie-Consent-Banner erkennbar',
       title_en: 'No active cookie consent banner detected',
-      description_de: 'Kein bekanntes Consent-Management-System (Cookiebot, CookieYes, Usercentrics etc.) im Quellcode gefunden. Bei Nutzung von Analytics/Tracking ist ein Consent-Banner nach DSGVO Pflicht.',
-      description_en: 'No known consent management system (Cookiebot, CookieYes, Usercentrics etc.) found in source. If using analytics/tracking, a consent banner is mandatory under GDPR.',
+      description_de: `Kein bekanntes Consent-Management-System (Cookiebot, CookieYes, Usercentrics etc.) im Quellcode gefunden.${what_de} Bei Cookies oder Tracking, die nicht unbedingt nötig sind, ist eine Einwilligung nach DSGVO und TTDSG Pflicht.`,
+      description_en: `No known consent management system (Cookiebot, CookieYes, Usercentrics etc.) found in source.${what_en} Cookies or tracking that are not strictly necessary need consent under GDPR and ePrivacy rules.`,
       recommendation_de: 'Cookiebot oder CookieYes integrieren (beide haben kostenlose Tiers). Einwilligung vor dem Setzen nicht-essentieller Cookies einholen.',
       recommendation_en: 'Integrate Cookiebot or CookieYes (both have free tiers). Obtain consent before setting non-essential cookies.',
+    };
+    findings.push(finding);
+    log?.record('cookie-consent', {
+      status: 'fail', findings: [finding],
+      summary_de: `Cookies oder Tracker ohne Consent-Werkzeug.${what_de}`,
+      summary_en: `Cookies or trackers without a consent tool.${what_en}`,
+    });
+  } else if (hasCMPScript) {
+    log?.record('cookie-consent', { status: 'pass', summary_de: 'Consent-Werkzeug erkannt.', summary_en: 'Consent tool found.' });
+  } else {
+    log?.record('cookie-consent', {
+      status: 'pass',
+      summary_de: 'Keine Cookies und keine einwilligungspflichtigen Tracker erkannt (statische Prüfung: Cookies, die erst JavaScript setzt, sieht sie nicht).',
+      summary_en: 'No cookies and no trackers that need consent (static check: cookies set by JavaScript only are not seen).',
     });
   }
 

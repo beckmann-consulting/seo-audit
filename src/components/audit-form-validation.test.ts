@@ -46,3 +46,21 @@ describe('checkPatterns — live regex validation', () => {
     expect(checkPatterns('[first\n(second', '')).toEqual({ which: 'include', pattern: '[first' });
   });
 });
+
+describe('parseTargetKeywords (ultimate-41, point 13)', () => {
+  it('one line per page, "URL or path = keyword"; empty lines skipped', async () => {
+    const { parseTargetKeywords } = await import('./audit-form-validation');
+    expect(parseTargetKeywords('/leistungen = Webdesign Hamburg\n\nhttps://example.com/kontakt = Kontakt')).toEqual({
+      entries: [{ url: '/leistungen', keyword: 'Webdesign Hamburg' }, { url: 'https://example.com/kontakt', keyword: 'Kontakt' }],
+    });
+    expect(parseTargetKeywords('')).toEqual({ entries: [] });
+  });
+
+  it('errors name the line', async () => {
+    const { parseTargetKeywords } = await import('./audit-form-validation');
+    expect(parseTargetKeywords('/a = x\nkein Gleichheitszeichen').error).toMatchObject({ line: 2, en: 'Expected: URL or path = keyword.' });
+    expect(parseTargetKeywords(`/a = ${'x'.repeat(81)}`).error?.line).toBe(1);
+    expect(parseTargetKeywords('ftp://x.org/a = y').error?.en).toMatch(/Neither a path nor an http\(s\) URL/);
+    expect(parseTargetKeywords(Array.from({ length: 51 }, (_, i) => `/p${i} = k`).join('\n')).error?.line).toBe(51);
+  });
+});

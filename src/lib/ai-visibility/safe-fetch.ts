@@ -172,11 +172,30 @@ async function checkHost(transport: Transport, host: string): Promise<{ ok: true
 }
 
 /**
+ * checkHost with an end (ultimate-41, plan 1.3): the resolution ends at `until`; an answer at or after it never
+ * allows the host, and a late answer is dropped. Without `until` it waits as long as the resolver does.
+ */
+async function checkHostUntil(transport: Transport, host: string, until?: number): Promise<{ ok: true; address: Address } | { ok: false; reason: string }> {
+  if (until === undefined) return checkHost(transport, host);
+  const timedOut = { ok: false as const, reason: `resolution of ${host} timed out` };
+  const left = until - Date.now();
+  if (left <= 0) return timedOut;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<typeof timedOut>(resolve => { timer = setTimeout(() => resolve(timedOut), left); });
+  try {
+    const r = await Promise.race([checkHost(transport, host), expiry]);
+    return r.ok && Date.now() >= until ? timedOut : r;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * The allowed hosts of an audit: its host and the www or apex counterpart, each only with public
  * addresses; with `subdomains` (the local render, ultimate-40b) also the further hosts of its
  * registrable domain, checked when first asked for (admit).
  */
-export async function buildScope(auditUrl: string, transport: Transport = nodeTransport, opts: { subdomains?: boolean; requestTimeoutMs?: number } = {}): Promise<ScopeResult> {
+export async function buildScope(auditUrl: string, transport: Transport = nodeTransport, opts: { subdomains?: boolean; requestTimeoutMs?: number; deadline?: number } = {}): Promise<ScopeResult> {
   let u: URL;
   try { u = new URL(auditUrl); } catch { return { ok: false, reason: 'invalid URL' }; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: `scheme ${u.protocol} not allowed` };
@@ -185,8 +204,11 @@ export async function buildScope(auditUrl: string, transport: Transport = nodeTr
   if (!ip && !canonicalHost(host)) return { ok: false, reason: `host ${host} not supported (trailing dot or invalid name)` };
   const twin = host.startsWith('www.') ? host.slice(4) : `www.${host}`;
   const hosts = new Map<string, Address>();
+  // ultimate-41: with a deadline, each resolution ends at the earlier of it and the request timeout, as in admit
+  const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_LIMITS.requestTimeoutMs;
   for (const h of ip ? [host] : [host, twin]) {
-    const r = await checkHost(transport, h);
+    const until = opts.deadline === undefined ? undefined : Math.min(opts.deadline, Date.now() + requestTimeoutMs);
+    const r = await checkHostUntil(transport, h, until);
     if (!r.ok) {
       if (h === host) return { ok: false, reason: r.reason };
       continue; // the counterpart may not exist; never allow one that points inwards
@@ -499,6 +521,9 @@ export interface SafeFetchOptions {
   auditHeaders?: Record<string, string>; // basic auth and custom headers of the audit, for the audited origin only
   jar?: CookieJar; // the document's redirect chain: cookies of each step go to the next
   truncate?: boolean; // read only the first limits.requestBytes bytes instead of failing beyond them
+  // ultimate-41: 'manual' returns a 3xx with its headers (Location) and an empty body instead of following it or
+  // refusing it; the caller checks and fetches every step itself (lib/checks/probe.ts)
+  redirect?: 'follow' | 'manual';
 }
 
 function sameOrigin(a: URL, b: URL): boolean {
@@ -531,6 +556,7 @@ export async function safeFetch(rawUrl: string, init: { method: string; headers:
     if (o.jar) for (const c of Array.isArray(sc) ? sc : sc ? [sc] : []) o.jar.setFrom(url, c);
     if (res.status >= 300 && res.status < 400 && res.headers.location) {
       res.body.destroy();
+      if (o.redirect === 'manual') return { ok: true, res: { finalUrl: url.href, status: res.status, headers: fulfillHeaders(res.headers), body: Buffer.alloc(0) } };
       if (!o.document || method === 'POST') return { ok: false, reason: `redirect of a ${o.document ? 'POST' : 'resource'} not followed (${res.status})` };
       if (hop >= limits.redirects) return { ok: false, reason: 'too many redirects' };
       const step = await admit(o.scope, new URL(String(res.headers.location), url).href, o.budget.deadline);

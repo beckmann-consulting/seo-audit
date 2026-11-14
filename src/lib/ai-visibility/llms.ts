@@ -38,7 +38,7 @@ export interface LlmsFetchOptions {
 export async function fetchLlmsTxt(auditUrl: string, o: LlmsFetchOptions = {}): Promise<LlmsTxtInfo> {
   const origin = new URL(auditUrl).origin;
   const url = `${origin}/llms.txt`;
-  const scope = await buildScope(auditUrl, o.transport);
+  const scope = await buildScope(auditUrl, o.transport, { deadline: Date.now() + (o.timeoutMs ?? 8000) * 2 });
   if (!scope.ok) return { status: 'error', url, reason: scope.reason };
   const limits = { ...DEFAULT_LIMITS, requestBytes: LLMS_MAX_BYTES, requestTimeoutMs: o.timeoutMs ?? 8000 };
   const budget = () => ({ bytesLeft: LLMS_MAX_BYTES + 1, deadline: Date.now() + (o.timeoutMs ?? 8000) * 2 });

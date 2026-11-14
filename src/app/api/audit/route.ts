@@ -50,8 +50,25 @@ import { resolveBingResult, emitBingWarning } from '@/lib/external-bing/route-he
 import { getBingApiKey } from '@/lib/external-bing/auth';
 import type { GscResult, BingResult, StreamEvent, SSLInfo } from '@/types';
 import type { AuditConfig, AuditResult, ModuleScore, Module, Finding } from '@/types';
+import { CheckLog, outcome, type CheckOutcome } from '@/lib/checks/check-log';
+import { newChecksDeadline, stepBudget, readNewCheckBudgets, budgetNote } from '@/lib/util/platform-limit';
+import { checkSoft404 } from '@/lib/checks/soft-404';
+import { checkHttpToHttps } from '@/lib/checks/http-https';
+import { generateLanguageFindings } from '@/lib/findings/language';
+import { generateMetaNoindexFindings, generateMapLinkFindings } from '@/lib/findings/local-and-index';
+import { generateAltQualityFindings } from '@/lib/findings/alt-quality';
+import { generateInboundAnchorFindings } from '@/lib/findings/inbound-anchors';
+import { generateNapFindings } from '@/lib/findings/nap';
+import { generateTargetKeywordFindings, validateTargetKeywords } from '@/lib/checks/target-keywords';
+import { recordOpeningHours, recordLastModified } from '@/lib/checks/part-e';
+import { recordScriptLoading, recordModernFormats } from '@/lib/checks/part-a';
+import { checkHreflangTargets, DEFAULT_MAX_REQUESTS } from '@/lib/checks/hreflang-targets';
+import { normaliseUrl } from '@/lib/util/url-normalize';
+import { measureLighthouse, pickLighthousePages, lighthouseFindings, RUN_MS, DEFAULT_PAGES, MIN_RUNS } from '@/lib/lighthouse/local';
+import { isSensitiveHeader } from '@/lib/util/auth';
+import type { LighthouseLocalInfo } from '@/types';
 
-export const maxDuration = 300; // 5 min timeout
+export const maxDuration = 900; // = PLATFORM_MAX_DURATION_S (lib/util/platform-limit.ts); `next start` ignores it, see there
 
 // A9.2 — When sitemap.xml is found, feed up to this many URLs into the
 // crawler queue as additional seeds. Tighter than the parser's 5000-cap
@@ -107,6 +124,12 @@ async function runAudit(
   // this line.
   const authHeader = buildBasicAuthHeader(config.basicAuth);
   const customHeaders = config.customHeaders;
+
+  // ultimate-41: the check log (one entry per point of the order), and the end of the new checks: 30 s before the
+  // platform limit (lib/util/platform-limit.ts); budgets from the environment, cut to that limit
+  const checkLog = new CheckLog(config.modules);
+  const checksDeadline = newChecksDeadline(Date.now());
+  const budgets = readNewCheckBudgets();
 
   // ---- STEP 1: DNS (5%) ----
   progress('dns_check', 5);
@@ -196,6 +219,50 @@ async function runAudit(
   const safeBrowsingData = googleKey
     ? await checkSafeBrowsing(url, googleKey)
     : undefined;
+
+  // ultimate-41 (point 4): Lighthouse on this server when there is no Google key (lib/lighthouse/local.ts). Its lab
+  // values stay in lighthouseLocal; only the start page's mobile median-run score sets the performance score below.
+  let lighthouseLocal: LighthouseLocalInfo | undefined;
+  const lighthouseFound: Finding[] = [];
+  let lighthouseHomeMobile: number | undefined;
+  if (checkLog.isSelected('lighthouse-local')) {
+    const chromePath = process.env.LIGHTHOUSE_CHROMIUM || process.env.AI_LOCAL_CHROMIUM || '';
+    const sensitive = Boolean(authHeader) || Object.keys(customHeaders ?? {}).some(isSensitiveHeader);
+    const otherHeaders = Object.keys(customHeaders ?? {}).filter(h => !isSensitiveHeader(h));
+    const budgetMs = stepBudget(budgets.lighthouse.ms, checksDeadline);
+    const note = budgetNote('LIGHTHOUSE_BUDGET_MS', budgets.lighthouse);
+    if (googleKey) {
+      checkLog.record('lighthouse-local', { status: 'not-applicable', summary_de: 'Google-Schlüssel vorhanden: PageSpeed Insights misst statt Lighthouse lokal.', summary_en: 'Google key present: PageSpeed Insights measures instead of local Lighthouse.' });
+    } else if (config.lighthouse === 'off') {
+      checkLog.record('lighthouse-local', { status: 'not-configured', summary_de: 'Lighthouse lokal ist ausgeschaltet.', summary_en: 'Local Lighthouse is switched off.' });
+    } else if (sensitive) {
+      checkLog.record('lighthouse-local', { status: 'not-checkable', summary_de: 'Lighthouse lokal läuft nicht mit Zugangsdaten (Basic Auth oder sensible eigene Header): Lighthouse sendet Kopfzeilen an alle Ursprünge.', summary_en: 'Local Lighthouse does not run with credentials (basic auth or sensitive custom headers): Lighthouse sends headers to every origin.' });
+    } else if (!chromePath) {
+      checkLog.record('lighthouse-local', { status: 'not-checkable', summary_de: 'Kein Chromium eingerichtet (LIGHTHOUSE_CHROMIUM oder AI_LOCAL_CHROMIUM).', summary_en: 'No Chromium set up (LIGHTHOUSE_CHROMIUM or AI_LOCAL_CHROMIUM).' });
+    } else if (budgetMs < RUN_MS) {
+      checkLog.record('lighthouse-local', withNote({ status: 'not-checkable', summary_de: 'Zeit bis zur Plattformgrenze reicht für keinen Lauf.', summary_en: 'Not enough time before the platform limit for a single run.' }, note));
+    } else {
+      const pagesWanted = config.quickMode ? 1 : positiveInt(process.env.LIGHTHOUSE_PAGES, DEFAULT_PAGES);
+      const runs = Math.max(MIN_RUNS, positiveInt(process.env.LIGHTHOUSE_RUNS, MIN_RUNS));
+      const auditPort = Number(new URL(url).port) || undefined;
+      const { createChromeRunner } = await import('@/lib/lighthouse/runner');
+      progress('lighthouse_local', 76);
+      try {
+        const runner = await createChromeRunner({ chromePath, extraPorts: auditPort ? [auditPort] : undefined });
+        lighthouseLocal = await measureLighthouse({
+          urls: pickLighthousePages(pages, pagesWanted), runs, deadline: Date.now() + budgetMs, runner,
+          onProgress: detail => progress('lighthouse_local', 77, detail),
+        });
+        if (otherHeaders.length > 0) lighthouseLocal.notes.push(`custom headers not sent: ${otherHeaders.join(', ')}`);
+        const lf = lighthouseFindings(lighthouseLocal);
+        lighthouseFound.push(...lf.findings);
+        lighthouseHomeMobile = lf.homeMobileScore;
+        checkLog.record('lighthouse-local', withNote(lf.outcome, note));
+      } catch (e) {
+        checkLog.record('lighthouse-local', { status: 'not-checkable', summary_de: `Lighthouse lokal scheiterte: ${String((e as Error)?.message ?? e)}`, summary_en: `Local Lighthouse failed: ${String((e as Error)?.message ?? e)}` });
+      }
+    }
+  }
 
   // ---- STEP 7: Security Headers (80%) ----
   progress('security_headers', 80);
@@ -295,6 +362,45 @@ async function runAudit(
   // in which case sslInfo.pendingSlow is set and downstream code
   // treats it as a neutral "scan still running" outcome.
   const sslInfo = await sslInfoPromise;
+  // ultimate-41 (points 2 and 3): a made-up URL, and http → https, through checked and pinned fetches; both share
+  // one budget (PROBE_BUDGET_MS). The audit's own headers go to its exact origin only (lib/checks/probe.ts).
+  const probeFindings: Finding[] = [];
+  if (checkLog.isSelected('soft-404') || checkLog.isSelected('http-to-https')) {
+    progress('probe_checks', 89);
+    const budgetMs = stepBudget(budgets.probes.ms, checksDeadline);
+    const note = budgetNote('PROBE_BUDGET_MS', budgets.probes);
+    if (budgetMs < 10_000) {
+      const tooLate: CheckOutcome = { status: 'not-checkable', summary_de: 'Zeit bis zur Plattformgrenze reicht nicht.', summary_en: 'Not enough time left before the platform limit.' };
+      checkLog.record('soft-404', withNote(tooLate, note));
+      checkLog.record('http-to-https', withNote(tooLate, note));
+    } else {
+      const probeOpts = {
+        auditUrl: url, userAgent, deadline: Date.now() + budgetMs, scopes: new Map(),
+        auditHeaders: probeHeaders(undefined, authHeader, customHeaders) as Record<string, string> | undefined,
+      };
+      const soft = await checkSoft404({ ...probeOpts, startUrl: pages[0]?.url ?? url });
+      checkLog.record('soft-404', withNote(soft.outcome, note));
+      probeFindings.push(...soft.findings);
+      const http = await checkHttpToHttps({ ...probeOpts, pages });
+      checkLog.record('http-to-https', withNote(http.outcome, note));
+      probeFindings.push(...http.findings);
+    }
+  }
+
+  // ultimate-41 (point 6): status and canonical of every hreflang target; crawled ones from the crawl, the others
+  // fetched without the audit's credentials, within HREFLANG_PROBE_BUDGET_MS and HREFLANG_PROBE_MAX_REQUESTS
+  const hreflangFound: Finding[] = [];
+  if (checkLog.isSelected('hreflang-targets')) {
+    progress('hreflang_targets', 89);
+    const budgetMs = stepBudget(budgets.hreflangProbes.ms, checksDeadline);
+    const r = await checkHreflangTargets({
+      pages, httpErrors: crawlStats.httpErrors, userAgent, deadline: Date.now() + budgetMs,
+      maxRequests: positiveInt(process.env.HREFLANG_PROBE_MAX_REQUESTS, DEFAULT_MAX_REQUESTS),
+    });
+    checkLog.record('hreflang-targets', withNote(r.outcome, budgetNote('HREFLANG_PROBE_BUDGET_MS', budgets.hreflangProbes)));
+    hreflangFound.push(...r.findings);
+  }
+
   progress('findings_generation', 90);
   const allHtml = rawPages.map(p => p.html).join('\n');
   const allFindings: Finding[] = [];
@@ -303,9 +409,12 @@ async function runAudit(
     allFindings.push(...generateSEOFindings(pages, hasRobots, hasSitemap));
     allFindings.push(...generateCanonicalTargetFindings(pages, crawlStats.httpErrors));
     allFindings.push(...generateHreflangFindings(pages));
+    allFindings.push(...hreflangFound);
     allFindings.push(...generateRobotsWildcardFindings(robotsContent));
     allFindings.push(...generateStructuredDataFindings(pages));
-    allFindings.push(...generateDuplicateContentFindings(pages));
+    allFindings.push(...generateDuplicateContentFindings(pages, checkLog));
+    // ultimate-41 (points 5 and 19): languages per page; og:locale:alternate read from the crawled HTML only here
+    allFindings.push(...generateLanguageFindings(pages, new Map(rawPages.map(rp => [normaliseUrl(rp.url), rp.html])), checkLog, allFindings));
     allFindings.push(...generateCrawlStructureFindings(pages));
     allFindings.push(...generateSitemapCoverageFindings(pages, sitemapInfo));
     allFindings.push(...generateAnchorTextFindings(pages));
@@ -315,6 +424,15 @@ async function runAudit(
     allFindings.push(...generateRichResultsFindings(pages, pageSpeedData));
     allFindings.push(...generateURLQualityFindings(pages));
     allFindings.push(...generateXRobotsFindings(pages));
+    // ultimate-41 (points 18 and 11)
+    allFindings.push(...generateMetaNoindexFindings(pages, sitemapInfo, checkLog, allFindings));
+    allFindings.push(...generateMapLinkFindings(pages, checkLog));
+    // ultimate-41 (point 14): the link graph with anchor texts, from the crawled HTML, during the analysis only
+    allFindings.push(...generateInboundAnchorFindings(pages, rawPages, checkLog));
+    // ultimate-41 (point 10): name, address, phone from JSON-LD, imprint and footer
+    allFindings.push(...generateNapFindings(pages, rawPages, checkLog));
+    // ultimate-41 (point 13)
+    allFindings.push(...generateTargetKeywordFindings(pages, config.targetKeywords, checkLog));
     allFindings.push(...generatePixelWidthFindings(pages));
     allFindings.push(...generateMixedStructuredDataFindings(pages));
     allFindings.push(...generateMobileDesktopParityFindings(mobileDesktopParity));
@@ -324,6 +442,8 @@ async function runAudit(
   if (config.modules.includes('content')) {
     allFindings.push(...generateContentFindings(pages));
     allFindings.push(...generateImageDetailFindings(pages));
+    // ultimate-41 (point 20): alt texts by content, read from the crawled HTML during the analysis only
+    allFindings.push(...generateAltQualityFindings(pages, rawPages, checkLog));
     allFindings.push(...generateBodyDuplicateFindings(pages));
     allFindings.push(...generateTextHtmlRatioFindings(pages));
     allFindings.push(...generateReadabilityFindings(pages));
@@ -341,9 +461,10 @@ async function runAudit(
     allFindings.push(...generateWwwConsistencyFindings(wwwConsistency));
     allFindings.push(...generateInsecureLinkFindings(pages));
     allFindings.push(...generateJsRenderingFindings(pages));
+    allFindings.push(...probeFindings);
   }
   if (config.modules.includes('legal')) {
-    allFindings.push(...generateLegalFindings(pages, allHtml));
+    allFindings.push(...generateLegalFindings(pages, allHtml, checkLog));
   }
   if (config.modules.includes('ux')) {
     allFindings.push(...generateUXFindings(pages));
@@ -353,6 +474,7 @@ async function runAudit(
   }
   if (config.modules.includes('performance')) {
     allFindings.push(...generatePerformanceFindings(pageSpeedData, pages));
+    allFindings.push(...lighthouseFound);
   }
   if (safeBrowsingData) {
     allFindings.push(...generateSafeBrowsingFindings(safeBrowsingData));
@@ -371,6 +493,14 @@ async function runAudit(
   // the user picked the module, even in static mode (where it just
   // emits the "JS-mode required" guidance finding).
   allFindings.push(...generateAccessibilityFindings(pages, config.modules.includes('accessibility')));
+
+  // ultimate-41, part E (websites-33 did the work, journal plan section 6): the log shows both rules per run
+  recordOpeningHours(checkLog, pages, allFindings);
+  recordLastModified(checkLog, pages.map((p, i) => ({ url: p.url, seo: p, lastModified: rawPages[i]?.lastModified })), sitemapInfo, allFindings);
+
+  // ultimate-41 (points 1 and 16): corrected rules of before; their log entries follow from what was measured
+  recordScriptLoading(checkLog, pages, config.modules, allFindings);
+  recordModernFormats(checkLog, pages, allFindings);
 
   // ---- Scores ----
   // ai has a score of its own (coverage, shadow entries); without an
@@ -409,6 +539,9 @@ async function runAudit(
     if (cruxAvailableCount < 2) {
       perfModule.score = pageSpeedData.performanceScore;
     }
+  } else if (perfModule && lighthouseHomeMobile !== undefined) {
+    // ultimate-41 (point 4): without PSI there are no field values; the module is the lab score, as with PSI above
+    perfModule.score = lighthouseHomeMobile;
   }
 
   // Weighted mean (ultimate-40): every module 1, ai 0.5. Without ai it is
@@ -526,6 +659,8 @@ async function runAudit(
     gscResult,
     bingResult,
     topFindings: getTopFindings(allFindings, 5),
+    checkLog: checkLog.entries(),
+    lighthouseLocal,
     claudePrompt: '',
     summary_de,
     summary_en,
@@ -551,6 +686,11 @@ export async function POST(req: NextRequest) {
   if (!config.url) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
   }
+
+  // ultimate-41 (point 13): target keywords checked before the stream opens, like the filter patterns below
+  const kw = validateTargetKeywords(config.targetKeywords);
+  if (!kw.ok) return NextResponse.json({ error: kw.error }, { status: 400 });
+  config.targetKeywords = kw.value;
 
   // Validate include/exclude patterns BEFORE opening the stream so the
   // UI can show a clear inline error instead of a mid-audit failure.
@@ -658,4 +798,16 @@ export async function POST(req: NextRequest) {
       'X-Accel-Buffering': 'no',
     },
   });
+}
+
+// ultimate-41: a budget setting that was not taken as given is named in the check log line
+function withNote(o: CheckOutcome, note: { de: string; en: string } | undefined): CheckOutcome {
+  if (!note) return o;
+  return { ...o, summary_de: `${o.summary_de} ${note.de}`, summary_en: `${o.summary_en} ${note.en}` };
+}
+
+// ultimate-41: a whole positive number from the environment, else the default
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number((raw ?? '').trim());
+  return raw !== undefined && /^\d+$/.test(raw.trim()) && n > 0 ? n : fallback;
 }

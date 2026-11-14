@@ -38,6 +38,9 @@ function detectProtocol(headers: Headers): string | null {
 function headersToObject(h: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   h.forEach((value, name) => { out[name.toLowerCase()] = value; });
+  // ultimate-41 (point 17): every Set-Cookie, not just one; the crawler keeps only their names
+  const cookies = typeof h.getSetCookie === 'function' ? h.getSetCookie() : [];
+  if (cookies.length > 0) out['set-cookie'] = cookies.join('\n');
   return out;
 }
 

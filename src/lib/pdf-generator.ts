@@ -13,6 +13,8 @@ import {
   moduleGridLayout, type Severity,
 } from './util/severity-classifier';
 import { findingImpactScore } from './findings/utils';
+import { checkLogRows, checkLogHeadline } from './checks/check-log-view';
+import { lighthouseRows, lighthouseTitle, lighthouseFooter } from './lighthouse/view';
 
 // ============================================================
 //  Brand palette
@@ -757,6 +759,20 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   sortedFindings.forEach(renderFinding);
 
   // ============================================================
+  //  Check log (ultimate-41): one row per point of the order
+  // ============================================================
+  if (result.checkLog && result.checkLog.length > 0) {
+    y += 4;
+    h1(t('Prüfprotokoll', 'Check log'));
+    renderTechTable(checkLogHeadline(result.checkLog, lang), checkLogRows(result.checkLog, lang).map(r => ({
+      label: `${r.point} · ${r.check}`,
+      value: `${r.statusLabel}: ${r.summary}`,
+      severity: r.severity,
+      note: r.codes || undefined,
+    })));
+  }
+
+  // ============================================================
   //  Strengths
   // ============================================================
   y += 4;
@@ -778,13 +794,26 @@ export async function generatePDF(result: AuditResult, lang: Lang, diff?: AuditD
   //  Technical Details (all tech-data blocks)
   // ============================================================
   const hasAnyTechData =
-    result.sslInfo || result.dnsInfo || result.pageSpeedData ||
+    result.sslInfo || result.dnsInfo || result.pageSpeedData || result.lighthouseLocal ||
     result.securityHeaders || result.aiReadiness || result.aiVisibility || result.sitemapInfo ||
     result.safeBrowsingData;
 
   if (hasAnyTechData) {
     y += 4;
     h1(t('Technische Details', 'Technical Details'));
+
+    // ultimate-41 (point 4): local Lighthouse lab values
+    if (result.lighthouseLocal) {
+      const ll = result.lighthouseLocal;
+      renderTechTable(lighthouseTitle(ll, lang), [
+        ...lighthouseRows(ll, lang).map(r => ({
+          label: `${r.strategy}: ${r.url}`,
+          value: `Score ${r.score} · LCP ${r.lcp} · CLS ${r.cls} · TBT ${r.tbt}`,
+          note: `${t('Läufe', 'Runs')}: ${r.runs}`,
+        })),
+        { label: t('Stand', 'Basis'), value: lighthouseFooter(ll, lang) },
+      ]);
+    }
 
     // SSL / TLS
     if (result.sslInfo) {

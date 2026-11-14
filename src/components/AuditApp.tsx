@@ -6,11 +6,14 @@ import { computeDiff, isValidAuditResult } from '@/lib/audit-diff';
 import { TITLE_LIMIT_MOBILE_PX, META_DESC_LIMIT_PX } from '@/lib/util/pixel-width';
 import { formatDate } from '@/lib/util/format';
 import { StatusBanner } from './StatusBanner';
+import { CheckLogSection } from './CheckLogSection';
+import { LighthouseLocalTable } from './LighthouseLocalTable';
 import { GscRowsTable } from './GscRowsTable';
 import { getVisibleGscWarnings } from './gsc-warnings';
 import { BingRowsTable } from './BingRowsTable';
 import { getVisibleBingWarnings } from './bing-warnings';
-import { checkPatterns, type PatternError } from './audit-form-validation';
+import { checkPatterns, parseTargetKeywords, type PatternError } from './audit-form-validation';
+import { TargetKeywordsField, TARGET_KEYWORDS_ID } from './TargetKeywordsField';
 import { formatMetricRow, formatComparator, type MetricKey, type MetricRating } from '@/lib/util/metric-thresholds';
 import {
   classifyAIBotRow, classifyLlmsTxt,
@@ -152,6 +155,10 @@ export default function AuditApp() {
   const [basicAuthUser, setBasicAuthUser] = useState('');
   const [basicAuthPass, setBasicAuthPass] = useState('');
   const [customHeadersText, setCustomHeadersText] = useState('');
+  // ultimate-41 (point 13): target keyword per page
+  const [targetKeywordsText, setTargetKeywordsText] = useState('');
+  const targetKeywords = parseTargetKeywords(targetKeywordsText);
+  const targetKeywordsRef = useRef<HTMLDivElement>(null);
   const [csvTable, setCsvTable] = useState<'findings' | 'pages' | 'broken-links' | 'error-pages' | 'sitemap-urls' | 'redirects'>('findings');
   const [imageProbeLimit, setImageProbeLimit] = useState(20);
   // 0 = unlimited; matches the existing route-level default.
@@ -161,6 +168,8 @@ export default function AuditApp() {
   const [quickMode, setQuickMode] = useState<boolean>(false);
   const [mobileDesktopParity, setMobileDesktopParity] = useState(false);
   const [deepImageFormatCheck, setDeepImageFormatCheck] = useState(false);
+  // ultimate-41 (point 4): Lighthouse on the server when there is no Google key
+  const [lighthouseLocal, setLighthouseLocal] = useState(true);
   const [rendering, setRendering] = useState<'static' | 'js' | 'auto'>('auto');
   const [includeScreenshots, setIncludeScreenshots] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -215,6 +224,9 @@ export default function AuditApp() {
     pagespeed_check: { de: 'PageSpeed wird geprüft…', en: 'Checking PageSpeed…' },
     security_headers: { de: 'Security Headers werden geprüft…', en: 'Checking security headers…' },
     ai_crawler_check: { de: 'AI-Crawler-Readiness wird geprüft…', en: 'Checking AI crawler readiness…' },
+    probe_checks: { de: 'Erfundene URL und http-Weiterleitung werden geprüft…', en: 'Checking a made-up URL and the http redirect…' },
+    lighthouse_local: { de: 'Lighthouse misst lokal…', en: 'Running Lighthouse locally…' },
+    hreflang_targets: { de: 'hreflang-Ziele werden geprüft…', en: 'Checking hreflang targets…' },
     findings_generation: { de: 'Findings werden generiert…', en: 'Generating findings…' },
     complete: { de: 'Fertig!', en: 'Done!' },
   };
@@ -317,6 +329,14 @@ export default function AuditApp() {
     // server-side with a 400. setError is intentionally NOT set: the
     // inline message is the surfaced error, top-level setError is
     // reserved for non-form failures.
+    if (targetKeywords.error) {
+      requestAnimationFrame(() => {
+        targetKeywordsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.getElementById(TARGET_KEYWORDS_ID)?.focus({ preventScroll: true });
+      });
+      return;
+    }
+
     const submitTimeError = checkPatterns(includePatterns, excludePatterns);
     if (submitTimeError) {
       setPatternError(submitTimeError);
@@ -372,8 +392,10 @@ export default function AuditApp() {
         ? { username: basicAuthUser, password: basicAuthPass }
         : undefined,
       customHeaders: parseHeaders(customHeadersText),
+      targetKeywords: targetKeywords.entries.length > 0 ? targetKeywords.entries : undefined,
       imageHeadCheckLimit: Number.isFinite(imageProbeLimit) ? Math.max(0, imageProbeLimit) : 20,
       deepImageFormatCheck,
+      lighthouse: lighthouseLocal ? 'auto' : 'off',
       mobileDesktopParityCheck: mobileDesktopParity,
       rendering,
       includeScreenshots: rendering === 'js' ? includeScreenshots : undefined,
@@ -643,6 +665,21 @@ export default function AuditApp() {
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input
                     type="checkbox"
+                    data-testid="lighthouse-local-toggle"
+                    checked={lighthouseLocal}
+                    onChange={e => setLighthouseLocal(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>
+                    {t('Lighthouse lokal, wenn kein Google-Schlüssel', 'Local Lighthouse when there is no Google key')}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    ({t('3 Seiten, mobil und Desktop, je 3 Läufe; einige Minuten', '3 pages, mobile and desktop, 3 runs each; a few minutes')})
+                  </span>
+                </label>
+
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
                     checked={quickMode}
                     onChange={e => setQuickMode(e.target.checked)}
                   />
@@ -768,6 +805,17 @@ export default function AuditApp() {
                     placeholder={'Cookie: session=abc\nX-CF-Bypass: token'}
                     rows={2}
                     style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', fontSize: 11, height: 'auto', padding: '6px 10px' }}
+                  />
+                </div>
+
+                <div ref={targetKeywordsRef}>
+                  <TargetKeywordsField
+                    value={targetKeywordsText}
+                    onChange={setTargetKeywordsText}
+                    error={targetKeywords.error}
+                    lang={lang}
+                    labelStyle={labelStyle}
+                    inputStyle={inputStyle}
                   />
                 </div>
 
@@ -1105,6 +1153,9 @@ export default function AuditApp() {
                 );
               })}
 
+              {/* ultimate-41: the check log, one row per point of the order */}
+              {result.checkLog && <CheckLogSection entries={result.checkLog} lang={lang} />}
+
               {/* Strengths */}
               <div style={{ marginTop: '1rem', background: 'var(--pass-bg)', border: '1px solid var(--pass-border)', borderRadius: 10, padding: '14px 16px' }}>
                 <h3 style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600, color: 'var(--pass)' }}>
@@ -1200,7 +1251,7 @@ export default function AuditApp() {
 
           {/* Tech tab */}
           {activeTab === 'tech' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: '1.5rem' }}>
+            <div className="tech-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginBottom: '1.5rem' }}>
               {/* SSL */}
               {result.sslInfo && (() => {
                 // Grade severity:
@@ -1283,6 +1334,9 @@ export default function AuditApp() {
                   </div>
                 );
               })()}
+
+              {/* ultimate-41 (point 4): local Lighthouse lab values, when it ran instead of PSI */}
+              {result.lighthouseLocal && <LighthouseLocalTable info={result.lighthouseLocal} lang={lang} />}
 
               {/* PageSpeed — every row shows the canonical web.dev /
                   Lighthouse threshold below the value as a muted note,
@@ -2134,10 +2188,11 @@ const primaryBtnStyle: React.CSSProperties = {
   ...btnStyle, background: 'var(--text)', color: 'var(--surface)', border: '1px solid var(--text)',
 };
 
+// no outline here: the keyboard focus ring for fields comes from globals.css (:focus-visible)
 const inputStyle: React.CSSProperties = {
   flex: 1, height: 40, padding: '0 12px', fontSize: 14,
   border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)',
-  color: 'var(--text)', outline: 'none',
+  color: 'var(--text)',
 };
 
 const labelStyle: React.CSSProperties = {

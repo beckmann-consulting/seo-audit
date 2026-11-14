@@ -175,6 +175,7 @@ export function checkStructured(input: StructuredInput): CheckOutput {
   if (missingRecommended.length > 0) {
     if (seoActive) shadow.push({ signal: 'schema-recommended', owner: 'seo', priority: 'optional' });
     else findings.push(finding('optional', 'low', 'low', {
+      code: 'ai.schema-recommended-fields', // ultimate-41, E1
       title_de: `Empfohlene Felder fehlen in ${missingRecommended.length} Schema(s) für Antworten (darunter sameAs)`,
       title_en: `Recommended fields missing in ${missingRecommended.length} answer schema(s) (sameAs among them)`,
       description_de: `Beispiele: ${sample(missingRecommended, 3)}`,

@@ -100,3 +100,14 @@ describe('StaticRenderer', () => {
     await expect(new StaticRenderer({ userAgent: 'UA' }).close()).resolves.toBeUndefined();
   });
 });
+
+describe('StaticRenderer keeps every Set-Cookie (ultimate-41, point 17)', () => {
+  it('two Set-Cookie headers arrive as two lines', async () => {
+    const headers = new Headers({ 'content-type': 'text/html; charset=utf-8' });
+    headers.append('set-cookie', 'sid=1; Path=/');
+    headers.append('set-cookie', '_ga=GA1; Max-Age=60');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('<html></html>', { status: 200, headers }));
+    const r = await new StaticRenderer({ userAgent: 'UA' }).fetch('https://example.com/');
+    expect(r.headers['set-cookie']).toBe('sid=1; Path=/\n_ga=GA1; Max-Age=60');
+  });
+});

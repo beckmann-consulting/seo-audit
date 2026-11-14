@@ -23,6 +23,9 @@
   --text-muted: #6b6b68;
   --text-faint: #9b9b98;
   --accent: #ff7a00;
+  /* keyboard focus ring: #ff7a00 gave 2.61:1 on #ffffff and 2.46:1 on #f8f8f6; this one 5.85:1 and 5.50:1 (WCAG 1.4.11
+     asks for 3:1) */
+  --focus-ring: #a34c00;
   --pass: #3b6d11;
   /* Strengths-bullet on pass-bg — needs higher contrast than --pass. */
   --pass-strong: #27500a;
@@ -108,3 +111,15 @@ body { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; colo
 /* ---- Empty state ---- */
 .empty { text-align: center; padding: 4rem 1rem; color: var(--text-muted); }
 .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
+
+/* ---- Tech tab: one column on narrow screens (ultimate-41, Codex review of 32e99e2094, finding 4) ---- */
+@media (max-width: 640px) {
+  .tech-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+/* ---- Keyboard focus for the form fields (ultimate-41, Codex review of 8a236e0713): the fields' inline style
+   set outline: none and nothing replaced it ---- */
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

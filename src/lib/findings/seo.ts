@@ -1,4 +1,5 @@
 import { parseRobots, botVerdict } from '../ai-visibility/robots';
+import type { CheckLog } from '../checks/check-log';
 import { SCHEMA_REQUIRED_FIELDS, SCHEMA_RECOMMENDED, hasField, hasFieldOrEquivalent, schemaTableType, schemaSubstructureBug, SCHEMA_SUBSTRUCTURE_BUG_DE, SCHEMA_SUBSTRUCTURE_BUG_EN } from '../schema-fields';
 import type {
   Finding, PageSEOData, PageSpeedData,
@@ -174,7 +175,7 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
   // pronunciation. Real accessibility impact, not just SEO hygiene.
   if (!homepage.lang) {
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
+      id: id(), code: 'seo.html-lang-missing', priority: 'important', module: 'seo', effort: 'low', impact: 'medium',
       title_de: 'HTML lang-Attribut fehlt',
       title_en: 'HTML lang attribute missing',
       description_de: 'Das <html>-Tag hat kein lang-Attribut. Suchmaschinen und Screenreader können die Sprache nicht erkennen.',
@@ -237,7 +238,9 @@ export function generateSEOFindings(pages: PageSEOData[], hasRobots: boolean, ha
 // Valid hreflang values: ISO 639-1 (2-letter language),
 // optionally followed by "-" and ISO 3166-1 alpha-2 region,
 // or the special value "x-default".
-const HREFLANG_PATTERN = /^(x-default|[a-z]{2}(-[A-Z]{2})?)$/;
+// ultimate-41: case does not matter (Google reads en-gb like en-GB); a region may be three digits (es-419) and a
+// script may come before it (zh-Hant, zh-Hant-TW)
+const HREFLANG_PATTERN = /^(x-default|[a-z]{2,3}(-[a-z]{4})?(-([a-z]{2}|\d{3}))?)$/i;
 
 export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
   const findings: Finding[] = [];
@@ -286,7 +289,7 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
     // 3) Self-reference missing
     const hasSelfRef = hreflangs.some(h => {
       try {
-        return new URL(h.href).href === new URL(page.url).href;
+        return normalizeUrl(new URL(h.href).href) === normalizeUrl(new URL(page.url).href);
       } catch {
         return false;
       }
@@ -338,12 +341,12 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
   // 6) Bidirectional reciprocity — only checkable across crawled pages.
   // If page A lists hreflang pointing to page B (within the crawl), B must list A back.
   const pageUrlSet = new Set(pages.map(p => {
-    try { return new URL(p.url).href; } catch { return p.url; }
+    try { return normalizeUrl(new URL(p.url).href); } catch { return p.url; }
   }));
   const hreflangsByUrl = new Map<string, { hreflang: string; href: string }[]>();
   for (const p of pagesWithHreflang) {
     try {
-      hreflangsByUrl.set(new URL(p.url).href, p.hreflangs);
+      hreflangsByUrl.set(normalizeUrl(new URL(p.url).href), p.hreflangs);
     } catch {
       hreflangsByUrl.set(p.url, p.hreflangs);
     }
@@ -355,7 +358,7 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
       if (hl.hreflang === 'x-default') continue;
       let targetUrl: string;
       try {
-        targetUrl = new URL(hl.href).href;
+        targetUrl = normalizeUrl(new URL(hl.href).href);
       } catch {
         continue;
       }
@@ -364,7 +367,7 @@ export function generateHreflangFindings(pages: PageSEOData[]): Finding[] {
       const targetHreflangs = hreflangsByUrl.get(targetUrl) || [];
       const linksBack = targetHreflangs.some(h => {
         try {
-          return new URL(h.href).href === fromUrl;
+          return normalizeUrl(new URL(h.href).href) === fromUrl;
         } catch {
           return false;
         }
@@ -503,9 +506,73 @@ function normalizeUrl(u: string): string {
   }
 }
 
-export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[] {
+// ultimate-41 (point 7): language versions as one group. Pages joined by hreflang (in either direction) form a
+// group; within a duplicate group, the pages of one hreflang group with different languages count once, so a DE/EN
+// pair with the same title or H1 is no duplicate. Only explicit hreflang links, no path guessing.
+export function languageGroups(pages: PageSEOData[]): { groupOf: Map<string, string>; langOf: Map<string, string> } {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  const union = (a: string, b: string) => {
+    if (!parent.has(a)) parent.set(a, a);
+    if (!parent.has(b)) parent.set(b, b);
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  const langOf = new Map<string, string>();
+  for (const p of pages) {
+    const self = normalizeUrl(p.url);
+    for (const h of p.hreflangs) {
+      const code = h.hreflang.toLowerCase();
+      if (code === 'x-default') continue;
+      const target = normalizeUrl(h.href);
+      union(self, target);
+      if (!langOf.has(target)) langOf.set(target, code.split(/[-_]/)[0]);
+    }
+  }
+  for (const p of pages) {
+    const self = normalizeUrl(p.url);
+    if (!langOf.has(self) && p.lang) langOf.set(self, p.lang.toLowerCase().split(/[-_]/)[0]);
+  }
+  const groupOf = new Map<string, string>();
+  for (const k of parent.keys()) groupOf.set(k, find(k));
+  return { groupOf, langOf };
+}
+
+/** The URLs of a duplicate group that are still duplicates once language versions count once; [] when none. */
+export function withoutLanguageVersions(urls: string[], g: ReturnType<typeof languageGroups>): string[] {
+  const unitOf = (u: string) => {
+    const n = normalizeUrl(u);
+    const group = g.groupOf.get(n);
+    const lang = g.langOf.get(n);
+    if (!group || !lang) return n;
+    // one unit per hreflang group, as long as every member of this duplicate group in it has its own language
+    const members = urls.filter(x => g.groupOf.get(normalizeUrl(x)) === group);
+    const langs = members.map(x => g.langOf.get(normalizeUrl(x)));
+    return new Set(langs).size === members.length && langs.every(Boolean) ? `group:${group}` : n;
+  };
+  const units = new Set(urls.map(unitOf));
+  return units.size > 1 ? urls : [];
+}
+
+export function generateDuplicateContentFindings(pages: PageSEOData[], log?: CheckLog): Finding[] {
   const findings: Finding[] = [];
-  if (pages.length < 2) return findings;
+  if (pages.length < 2) {
+    log?.record('language-pairs', { status: 'not-applicable', summary_de: 'Weniger als zwei Seiten.', summary_en: 'Fewer than two pages.' });
+    return findings;
+  }
+  const lg = languageGroups(pages);
+  let pairsExcluded = 0;
+  const keep = (groups: [string, string[]][]): [string, string[]][] => groups.flatMap(([k, urls]) => {
+    const rest = withoutLanguageVersions(urls, lg);
+    if (rest.length === 0) { pairsExcluded++; return []; }
+    return [[k, rest] as [string, string[]]];
+  });
 
   // --- Duplicate titles ---
   const titleGroups = new Map<string, string[]>();
@@ -516,12 +583,12 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
     list.push(p.url);
     titleGroups.set(t, list);
   }
-  const dupeTitles = [...titleGroups.entries()].filter(([, urls]) => urls.length > 1);
+  const dupeTitles = keep([...titleGroups.entries()].filter(([, urls]) => urls.length > 1));
   if (dupeTitles.length > 0) {
     const totalAffected = dupeTitles.reduce((s, [, urls]) => s + urls.length, 0);
     const sample = dupeTitles.slice(0, 2).map(([t, urls]) => `"${t.slice(0, 50)}" (${urls.length}x)`).join(', ');
     findings.push({
-      id: id(), priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
+      id: id(), code: 'seo.duplicate-title', priority: 'important', module: 'seo', effort: 'medium', impact: 'high',
       title_de: `Duplikate im Title: ${dupeTitles.length} Gruppen, ${totalAffected} Seiten`,
       title_en: `Duplicate titles: ${dupeTitles.length} groups, ${totalAffected} pages`,
       description_de: `Mehrere Seiten teilen denselben Title-Tag. Das verwässert Ranking-Signale und erschwert Google die Auswahl der relevanten Version. Beispiele: ${sample}`,
@@ -540,11 +607,11 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
     list.push(p.url);
     descGroups.set(d, list);
   }
-  const dupeDesc = [...descGroups.entries()].filter(([, urls]) => urls.length > 1);
+  const dupeDesc = keep([...descGroups.entries()].filter(([, urls]) => urls.length > 1));
   if (dupeDesc.length > 0) {
     const totalAffected = dupeDesc.reduce((s, [, urls]) => s + urls.length, 0);
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      id: id(), code: 'seo.duplicate-description', priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
       title_de: `Duplikate in Meta-Description: ${dupeDesc.length} Gruppen, ${totalAffected} Seiten`,
       title_en: `Duplicate meta descriptions: ${dupeDesc.length} groups, ${totalAffected} pages`,
       description_de: 'Mehrere Seiten verwenden dieselbe Meta-Description. Google schreibt diese häufig ohnehin um, eindeutige Descriptions verbessern aber die CTR im SERP.',
@@ -563,11 +630,11 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
     list.push(p.url);
     h1Groups.set(h1, list);
   }
-  const dupeH1 = [...h1Groups.entries()].filter(([, urls]) => urls.length > 1);
+  const dupeH1 = keep([...h1Groups.entries()].filter(([, urls]) => urls.length > 1));
   if (dupeH1.length > 0) {
     const totalAffected = dupeH1.reduce((s, [, urls]) => s + urls.length, 0);
     findings.push({
-      id: id(), priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
+      id: id(), code: 'seo.duplicate-h1', priority: 'recommended', module: 'seo', effort: 'medium', impact: 'medium',
       title_de: `Duplikate im H1: ${dupeH1.length} Gruppen, ${totalAffected} Seiten`,
       title_en: `Duplicate H1s: ${dupeH1.length} groups, ${totalAffected} pages`,
       description_de: 'Mehrere Seiten verwenden denselben H1. Der H1 sollte das jeweilige Seitenthema eindeutig benennen — generische Werte wie "Willkommen" oder "Home" schwächen die semantische Struktur.',
@@ -576,6 +643,13 @@ export function generateDuplicateContentFindings(pages: PageSEOData[]): Finding[
       recommendation_en: 'Give each page a unique H1 that describes the page topic.',
     });
   }
+
+  // ultimate-41 (point 7): the check log entry covers the three duplicate rules
+  const dupes = findings.filter(f => f.code === 'seo.duplicate-title' || f.code === 'seo.duplicate-description' || f.code === 'seo.duplicate-h1');
+  const groupCount = new Set(lg.groupOf.values()).size;
+  log?.record('language-pairs', dupes.length > 0
+    ? { status: 'fail', findings: dupes, summary_de: `${groupCount} hreflang-Gruppe(n); ${pairsExcluded} Duplikatgruppe(n) als Sprachversionen ausgenommen; Duplikate bleiben.`, summary_en: `${groupCount} hreflang group(s); ${pairsExcluded} duplicate group(s) excluded as language versions; duplicates remain.` }
+    : { status: 'pass', summary_de: `${groupCount} hreflang-Gruppe(n); ${pairsExcluded} Duplikatgruppe(n) als Sprachversionen ausgenommen; keine Duplikate.`, summary_en: `${groupCount} hreflang group(s); ${pairsExcluded} duplicate group(s) excluded as language versions; no duplicates.` });
 
   // --- Canonical issues ---
   const pageUrlMap = new Map<string, PageSEOData>();
@@ -1007,7 +1081,7 @@ function checkRecommendedProperties(pages: PageSEOData[]): Finding[] {
       // schema.org "recommended" fields per spec — even more optional
       // than required ones; only relevant if the user is actively
       // chasing rich-result coverage.
-      id: id(), priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
+      id: id(), code: 'seo.schema-recommended-fields', priority: 'optional', module: 'seo', effort: 'low', impact: 'low',
       title_de: `Schema-Empfehlungen: ${list.length} Page(s) mit unvollständigem ${type}-Schema`,
       title_en: `Schema recommendations: ${list.length} page(s) with incomplete ${type} schema`,
       description_de: `${list.length} Page(s) haben ein vollständiges ${type}-Schema (alle Pflichtfelder OK), aber empfohlene Felder fehlen: ${missingList}. Google rendert das Rich Result trotzdem, aber qualitativ schwächer (z.B. ohne Beschreibung im SERP). Beispiele: ${sample}`,
@@ -1945,7 +2019,7 @@ export function generateXRobotsFindings(pages: PageSEOData[]): Finding[] {
     // Homepage noindex via header is critical — the entire site is excluded.
     const priority: 'critical' | 'important' = homepageAffected ? 'critical' : 'important';
     findings.push({
-      id: id(), priority, module: 'seo', effort: 'low', impact: 'high',
+      id: id(), code: 'seo.x-robots-noindex', priority, module: 'seo', effort: 'low', impact: 'high',
       title_de: `X-Robots-Tag setzt noindex auf ${noindexed.length} Seite(n)`,
       title_en: `X-Robots-Tag sets noindex on ${noindexed.length} page(s)`,
       description_de: `Der HTTP-Header "X-Robots-Tag" enthält "noindex" (oder eine Googlebot-spezifische Variante). Diese Seiten werden aus dem Google-Index entfernt — auch wenn das HTML kein <meta name="robots" content="noindex"> enthält. Beispiele: ${sample}`,

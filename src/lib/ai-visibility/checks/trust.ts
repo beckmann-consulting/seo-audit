@@ -39,6 +39,32 @@ function days(a: string, b: string): number | undefined {
   return Math.abs(ta - tb) / 86_400_000;
 }
 
+/**
+ * Last-Modified against sitemap lastmod per page (websites-33): `gaps` where lastmod is more than DATE_GAP_DAYS
+ * newer (a finding), `newer` where Last-Modified is (a note: a full upload stamps every file). ultimate-41 (E2) reads
+ * the same numbers for the check log.
+ */
+export function compareLastModified(pages: { url: string; seo: { finalUrl?: string }; lastModified?: string }[], sitemap: SitemapInfo | undefined): { compared: number; gaps: string[]; newer: string[]; withLastModified: number; withLastmod: number } {
+  const entries = sitemap?.urls ?? [];
+  const byUrl = new Map(entries.filter(e => e.lastmod).map(e => [norm(e.url), e.lastmod as string]));
+  const gaps: string[] = [];
+  const newer: string[] = [];
+  let compared = 0;
+  for (const p of pages) {
+    const lastmod = byUrl.get(norm(p.seo.finalUrl || p.url));
+    const lm = p.lastModified;
+    if (!lastmod || !lm) continue;
+    compared++;
+    const h = days(lm, lastmod);
+    if (h !== undefined && h > DATE_GAP_DAYS) {
+      const item = `${p.url} (Last-Modified ${lm}, lastmod ${lastmod})`;
+      if (Date.parse(lastmod) > Date.parse(lm)) gaps.push(item);
+      else newer.push(item);
+    }
+  }
+  return { compared, gaps, newer, withLastModified: pages.filter(p => p.lastModified).length, withLastmod: byUrl.size };
+}
+
 function norm(u: string): string {
   try {
     const x = new URL(u);
@@ -134,21 +160,13 @@ export function checkTrust(input: TrustInput): CheckOutput {
     // websites-33: only a lastmod newer than Last-Modified is a finding (the sitemap claims content the
     // server does not deliver yet); a newer Last-Modified is what every full upload does (FTP deploys stamp
     // every file), so it is a note without points
-    const headerGaps: string[] = [];
-    const headerNewer: string[] = [];
+    const { gaps: headerGaps, newer: headerNewer } = compareLastModified(pages, sitemap);
     for (const p of pages) {
       const lastmod = byUrl.get(norm(p.seo.finalUrl || p.url));
       if (!lastmod) continue;
       const dm = dateModifiedOf(p);
       const g = dm ? days(dm, lastmod) : undefined;
       if (g !== undefined && g > DATE_GAP_DAYS) gaps.push(`${p.url} (dateModified ${dm}, lastmod ${lastmod})`);
-      const lm = p.lastModified;
-      const h = lm ? days(lm, lastmod) : undefined;
-      if (lm && h !== undefined && h > DATE_GAP_DAYS) {
-        const item = `${p.url} (Last-Modified ${lm}, lastmod ${lastmod})`;
-        if (Date.parse(lastmod) > Date.parse(lm)) headerGaps.push(item);
-        else headerNewer.push(item);
-      }
     }
     if (gaps.length > 0) {
       findings.push(finding('optional', 'low', 'low', {
@@ -174,6 +192,7 @@ export function checkTrust(input: TrustInput): CheckOutput {
     }
     if (headerGaps.length > 0) {
       findings.push(finding('optional', 'low', 'low', {
+        code: 'ai.lastmod-ahead-of-last-modified', // ultimate-41, E2
         title_de: `Sitemap-lastmod ist auf ${headerGaps.length} Seite(n) mehr als ${DATE_GAP_DAYS} Tage neuer als Last-Modified`,
         title_en: `Sitemap lastmod is more than ${DATE_GAP_DAYS} days newer than Last-Modified on ${headerGaps.length} page(s)`,
         description_de: `Die Sitemap meldet neueren Inhalt, als der Server ausliefert. Beispiele: ${sample(headerGaps, 3)}`,

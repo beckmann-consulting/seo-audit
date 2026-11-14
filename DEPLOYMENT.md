@@ -31,7 +31,9 @@ Hetzner CPX32). The target layout is:
 ### Hardware — minimum sizing
 
 Based on the actual workload (sequential HTTP crawl of up to ~5000 pages,
-one concurrent audit fits within 300s, parallel audits double RAM):
+one audit at a time, parallel audits double RAM; without a Google key the
+local Lighthouse adds up to 6 minutes and one Chromium at a time, see
+README "Further checks"):
 
 | Resource | Recommended baseline | Why                                                                             |
 |----------|---------------------:|---------------------------------------------------------------------------------|
@@ -635,11 +637,16 @@ Sites ~6-10s Mehr-Laufzeit pro Hauptaudit. Deaktivierung möglich via
 
 `crawlSite` nutzt `AbortSignal.timeout(12000)` pro Seitenanfrage. Bei
 einer Site mit 500 Seiten und durchschnittlich 4s Response-Zeit dauert
-der Crawl ~35 Minuten — **über der Next.js `maxDuration = 300s` Grenze**.
+der Crawl ~35 Minuten.
 
-Der Audit wird dann hart abgebrochen. Empfehlung: `config.maxPages`
-im Client-Payload auf ein vernünftiges Limit setzen (Default: `0` =
-unlimited). Wir empfehlen 200 für Produktions-Audits.
+`maxDuration` der Route (900 s) wirkt bei `next start` nicht: Next 16
+liest es nur für Typen und TypeScript-Regeln, und ein Audit lief im
+Versuch 335 s durch Caddy und `next start` bis zum Ergebnis
+(ultimate-41). Ein langer Crawl läuft also bis zum Ende; begrenzt wird
+er nur über `config.maxPages` (Default `0` = unbegrenzt, wir empfehlen
+200 für Produktions-Audits). Plattformen, die `maxDuration` beachten,
+brechen bei 900 s ab; die neuen Prüfungen von ultimate-41 enden 30 s
+vorher.
 
 ### 8.7 widget.js Caching auf Embedder-Seite
 
