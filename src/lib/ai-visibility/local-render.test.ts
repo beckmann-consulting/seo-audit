@@ -4,7 +4,8 @@
 // check of production runs unchanged and nothing leaves the machine.
 
 import { describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { localRender } from './local-render';
@@ -34,6 +35,12 @@ function siteTransport(routes: Record<string, Answer | ((body?: string, headers?
 const chromiumCount = () => {
   // "[c]hromium" matches the browser's command line but not this pgrep's own
   try { return Number(execSync(`pgrep -c -f '[c]hromium.*proxy-server=127\\.0\\.0\\.1:9' || true`).toString().trim() || '0'); } catch { return 0; }
+};
+// a closed Chromium's helper processes may need a moment to exit (ultimate-55: one Chromium per page now): wait up to
+// 3 s for the count to fall to the number wanted, then give the count as it is
+const chromiumCountSettled = async (wanted: number) => {
+  for (let i = 0; i < 30 && chromiumCount() > wanted; i++) await new Promise(r => setTimeout(r, 100));
+  return chromiumCount();
 };
 
 describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () => {
@@ -90,7 +97,7 @@ describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () =
     expect(get('/ws')?.incompleteReason).toMatch(/WebSocket blocked/);
     expect(get('/popup')?.incompleteReason).toBeUndefined();
     // no Chromium of this test is left running
-    expect(chromiumCount()).toBe(before);
+    expect(await chromiumCountSettled(before)).toBe(before);
   }, 120_000);
 
   it('resources of a subdomain of the same registrable domain are served; other domains and inward subdomains are not (ultimate-40b)', async () => {
@@ -123,7 +130,20 @@ describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () =
     expect(get('/evil')?.incompleteReason).toMatch(/another host blocked \(beckmanndigital\.com\.evil\.example: another domain/);
     expect(get('/inward')?.incompleteReason).toMatch(/non-public address \(10\.0\.0\.5\)/);
     expect(hits.some(h => h.includes('evil.example') || h.startsWith('GET intern.'))).toBe(false);
-    expect(chromiumCount()).toBe(before);
+    expect(await chromiumCountSettled(before)).toBe(before);
+  }, 60_000);
+
+  // ultimate-55: each page's Chromium has a profile of its own (WebRTC preferences), removed with it
+  it('every page gets a fresh profile, and none is left afterwards', async () => {
+    const profiles = () => readdirSync(os.tmpdir()).filter(n => n.startsWith('aiv-render-') && !n.startsWith('aiv-render-test-')).sort();
+    const before = profiles();
+    const running = chromiumCount();
+    const { t } = siteTransport({ '/': { body: PAGE('<main><h1>A</h1></main>') }, '/b': { body: PAGE('<main><h1>B</h1></main>') } });
+    const out = await localRender({ executablePath: CHROMIUM, auditUrl: 'https://site.test/', urls: ['https://site.test/', 'https://site.test/b'], transport: t, quietMs: 300 });
+    expect(out.get('https://site.test/')?.renderedHtml).toContain('<h1>A</h1>');
+    expect(out.get('https://site.test/b')?.renderedHtml).toContain('<h1>B</h1>');
+    expect(profiles()).toEqual(before);
+    expect(await chromiumCountSettled(running)).toBe(running);
   }, 60_000);
 
   it('a page that never gets quiet is not assessable', async () => {
@@ -143,10 +163,11 @@ describe.skipIf(!existsSync(CHROMIUM))('local render with a real Chromium', () =
     const before = chromiumCount();
     const started = Date.now();
     const out = await localRender({ executablePath: CHROMIUM, auditUrl: 'https://site.test/', urls: ['https://site.test/stuck', 'https://site.test/stuck-later'], transport: t, limits: { ...DEFAULT_LIMITS, pageTimeMs: 3000 }, quietMs: 500 });
-    expect(out.get('https://site.test/stuck')?.incompleteReason).toMatch(/time budget/);
-    expect(out.get('https://site.test/stuck-later')?.incompleteReason).toMatch(/time budget/);
+    // a blocked renderer is over its budget, never just "not quiet" (ultimate-55: the quiet check got a grace period)
+    expect(out.get('https://site.test/stuck')?.incompleteReason).toMatch(/^page over its time budget/);
+    expect(out.get('https://site.test/stuck-later')?.incompleteReason).toMatch(/^page over its time budget/);
     expect(Date.now() - started).toBeLessThan(30_000);
-    expect(chromiumCount()).toBe(before);
+    expect(await chromiumCountSettled(before)).toBe(before);
   }, 60_000);
 
   it('cookies of the document redirect chain reach Chromium with their attributes (Codex, review of bcfe8de, F-003)', async () => {

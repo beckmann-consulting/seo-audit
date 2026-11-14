@@ -3,6 +3,7 @@
 // Lighthouse is loaded only here and only when a run starts (next.config.js keeps it out of the bundle).
 import * as chromeLauncher from 'chrome-launcher';
 import { startGuardProxy, type GuardProxy, type GuardProxyOptions } from './guard-proxy';
+import { WEBRTC_PREFS, WEBRTC_SWITCH } from '@/lib/util/webrtc-lock';
 import type { LhrLike, LighthouseRunner, Strategy } from './local';
 
 /** The switches of the local render (lib/ai-visibility/local-render.ts CHROMIUM_ARGS) with our proxy, plus no QUIC. */
@@ -12,7 +13,7 @@ export function chromiumFlags(proxyPort: number): string[] {
     `--proxy-server=http://127.0.0.1:${proxyPort}`,
     '--proxy-bypass-list=<-loopback>', // loopback goes through the proxy too
     '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1', // Chromium resolves nothing itself
-    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', // no UDP past the proxy
+    WEBRTC_SWITCH, // no UDP past the proxy, together with WEBRTC_PREFS in the profile
     '--disable-quic', // no HTTP/3 over UDP
     '--disable-background-networking',
     '--disable-component-update',
@@ -26,11 +27,9 @@ export function chromiumFlags(proxyPort: number): string[] {
 }
 
 // The switch --force-webrtc-ip-handling-policy alone did not keep WebRTC off UDP: in the smoke test (smoke.test.ts)
-// STUN packets still reached a loopback port. The same policy as profile preferences (the ones the extension API
-// privacy.network sets), written by chrome-launcher into the run's own temporary profile:
-export const WEBRTC_PREFS = {
-  webrtc: { ip_handling_policy: 'disable_non_proxied_udp', multiple_routes_enabled: false, nonproxied_udp_enabled: false },
-};
+// STUN packets still reached a loopback port. chrome-launcher writes the same policy as profile preferences
+// (WEBRTC_PREFS, lib/util/webrtc-lock.ts, shared with the local render of check 5) into the run's own temporary profile.
+export { WEBRTC_PREFS };
 
 export interface ChromeRunnerOptions {
   chromePath: string;

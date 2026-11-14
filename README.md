@@ -94,7 +94,8 @@ Every shared signal has one owner: with SEO, content, legal or tech active, the 
 - the audited host, its www or apex counterpart and, since ultimate-40b, further hosts of the same registrable domain (for `beckmanndigital.com` also `umami.beckmanndigital.com`), at most 10 of them per run;
 - the registrable domain comes from the Public Suffix List in `src/lib/ai-visibility/public-suffix-list.json` (both sections, so two projects under `github.io` are two domains); a host no listed rule covers keeps the old rule of host and counterpart;
 - every host only with the scheme and port of the audit and only with public addresses, pinned against DNS rebinding; redirects only for the document, each step checked; limits per request and per page;
-- the audit's own headers and credentials go to the audited origin only; cookies follow their domain, a `Domain` that is a public suffix is refused.
+- the audit's own headers and credentials go to the audited origin only; cookies follow their domain, a `Domain` that is a public suffix is refused;
+- since ultimate-55 each page gets a Chromium of its own with a fresh temporary profile that holds the WebRTC preferences of `src/lib/util/webrtc-lock.ts` (shared with local Lighthouse), and no QUIC: WebRTC sends no UDP and reaches no address. The switch `--force-webrtc-ip-handling-policy` alone let 3 STUN packets reach a loopback port. A smoke test with a real Chromium runs with `LOCAL_RENDER_SMOKE=1 AI_LOCAL_CHROMIUM=/usr/bin/chromium npx vitest run src/lib/ai-visibility/local-render.smoke.test.ts` (`LOCAL_RENDER_SMOKE_OUT=<file>` appends its numbers there).
 
 A page counts only if every one of its requests was served, so pages with resources from other registrable domains cannot be assessed locally; Browserless can. Without either, check 5 is not checkable.
 

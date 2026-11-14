@@ -27,6 +27,9 @@ import * as zlib from 'node:zlib';
 import { pipeline, type Readable } from 'node:stream';
 import { canonicalHost, isPublicSuffix, registrableDomain } from './public-suffix';
 
+/** The reason of a request the page's deadline cut off (local-render.ts reads it as a page that was not quiet in time). */
+export const PAGE_OVER_TIME = 'page over its time budget';
+
 export interface Address { address: string; family: 4 | 6 }
 
 export interface RawResponse {
@@ -488,7 +491,7 @@ export async function readBody(res: RawResponse, perRequest: number, budget: Bud
       n += b.length;
       if (n > perRequest) throw new LimitError(`response over ${perRequest} bytes (unpacked)`);
       if (n > budget.bytesLeft) throw new LimitError('page over its byte budget (unpacked)');
-      if (Date.now() > budget.deadline) throw new LimitError('page over its time budget');
+      if (Date.now() > budget.deadline) throw new LimitError(PAGE_OVER_TIME);
       chunks.push(b);
     }
   } finally {
@@ -542,7 +545,7 @@ export async function safeFetch(rawUrl: string, init: { method: string; headers:
   const startOrigin = url;
   let pageHeaders = forwardHeaders(init.headers);
   for (let hop = 0; ; hop++) {
-    if (Date.now() > o.budget.deadline) return { ok: false, reason: 'page over its time budget' };
+    if (Date.now() > o.budget.deadline) return { ok: false, reason: PAGE_OVER_TIME };
     const headers: Record<string, string> = { ...pageHeaders, ...auditHeadersFor(url, o.scope, o.auditHeaders) };
     const jarCookie = o.jar?.header(url);
     if (jarCookie) headers.cookie = headers.cookie ? `${headers.cookie}; ${jarCookie}` : jarCookie;

@@ -15,12 +15,17 @@
 // - The DOM is taken after a quiet phase: no request running and no change
 //   to nodes, text or the head attributes the head comparison reads, for
 //   QUIET_MS; not quiet within the page budget means incomplete.
-// - The browser is closed in finally; Playwright's temporary profile goes
-//   with it.
+// - Each page gets a Chromium of its own with a fresh profile that holds the
+//   WebRTC preferences (lib/util/webrtc-lock.ts, as local Lighthouse does):
+//   the switch alone let STUN packets reach a loopback UDP port
+//   (local-render.smoke.test.ts, ultimate-55). The browser is closed in
+//   finally and its profile directory removed.
 
-import type { Browser, Page } from 'playwright-core';
-import { buildScope, admit, safeFetch, CookieJar, DEFAULT_LIMITS, type Limits, type Scope, type Transport } from './safe-fetch';
+import type { BrowserContext, BrowserType, Page } from 'playwright-core';
+import { rm } from 'node:fs/promises';
+import { buildScope, admit, safeFetch, CookieJar, DEFAULT_LIMITS, PAGE_OVER_TIME, type Limits, type Scope, type Transport } from './safe-fetch';
 import type { LocalRenderOutcome } from './index';
+import { WEBRTC_SWITCH, profileWithWebrtcLock } from '@/lib/util/webrtc-lock';
 
 export const LOCAL_RENDER_SAMPLE = 5; // the start page and up to 4 more
 export const QUIET_MS = 1000;
@@ -29,7 +34,8 @@ export const CHROMIUM_ARGS = [
   '--host-resolver-rules=MAP * ~NOTFOUND',
   '--proxy-server=127.0.0.1:9',
   '--proxy-bypass-list=<-loopback>',
-  '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+  WEBRTC_SWITCH, // with the WebRTC preferences of the profile (profileWithWebrtcLock); alone it is not enough
+  '--disable-quic', // no HTTP/3 over UDP
   '--disable-background-networking',
   '--disable-component-update',
   '--disable-sync',
@@ -66,6 +72,18 @@ export interface LocalRenderOptions {
   quietMs?: number;
 }
 
+/** How each page's Chromium starts: the switches above, its own profile (the directory), no service workers. */
+export function launchOptions(o: Pick<LocalRenderOptions, 'executablePath' | 'auditHeaders'>) {
+  const ua = Object.entries(o.auditHeaders ?? {}).find(([k]) => k.toLowerCase() === 'user-agent')?.[1];
+  return { executablePath: o.executablePath, headless: true, args: CHROMIUM_ARGS, serviceWorkers: 'block' as const, ...(ua ? { userAgent: ua } : {}) };
+}
+
+/**
+ * How long past the deadline the renderer may take to answer the quiet check: one that answers in that time was not
+ * quiet within the budget; one that does not answer is blocked, and the watchdog (a second later) closes it.
+ */
+export const QUIET_CHECK_GRACE_MS = 500;
+
 function hostOf(u: string): string {
   try { return new URL(u).host; } catch { return u; }
 }
@@ -79,7 +97,7 @@ function beforeDeadline<T>(p: Promise<T>, deadline: number): Promise<T> {
   return Promise.race([p, limit]).finally(() => clearTimeout(timer));
 }
 
-async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRenderOptions): Promise<LocalRenderOutcome> {
+async function renderOne(chromium: BrowserType, url: string, scope: Scope, o: LocalRenderOptions): Promise<LocalRenderOutcome> {
   const limits = o.limits ?? DEFAULT_LIMITS;
   const quietMs = o.quietMs ?? QUIET_MS;
   const budget = { bytesLeft: limits.pageBytes, deadline: Date.now() + limits.pageTimeMs };
@@ -94,15 +112,21 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
   if (doc.res.status >= 400) return { incompleteReason: `document: HTTP ${doc.res.status}` };
   const finalUrl = doc.res.finalUrl;
 
-  const ua = Object.entries(o.auditHeaders ?? {}).find(([k]) => k.toLowerCase() === 'user-agent')?.[1];
-  const context = await browser.newContext({ serviceWorkers: 'block', ...(ua ? { userAgent: ua } : {}) });
+  const profile = await profileWithWebrtcLock('aiv-render-');
+  let context: BrowserContext;
+  try {
+    context = await chromium.launchPersistentContext(profile, launchOptions(o));
+  } catch (err) {
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+    return { incompleteReason: `local Chromium failed: ${String((err as Error).message ?? err)}` };
+  }
   let page: Page | undefined;
   // a watchdog independent of the page: a renderer that blocks its main thread after load cannot keep
   // page.evaluate or page.content waiting past the deadline; the context is closed then
   const watchdog = setTimeout(() => { mark('page over its time budget (watchdog)'); context.close().catch(() => {}); }, Math.max(1, budget.deadline - Date.now()) + 1000);
   try {
     if (jar.size > 0) await context.addCookies(jar.forPlaywright());
-    page = await context.newPage();
+    page = context.pages()[0] ?? await context.newPage();
     const main = page;
     context.on('page', p => { if (p !== main) p.close().catch(() => {}); }); // popups
     await context.routeWebSocket(/.*/, ws => { mark('WebSocket blocked'); ws.close().catch(() => {}); });
@@ -147,7 +171,9 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
         let headers: Record<string, string>;
         try { headers = await req.allHeaders(); } catch { mark('request headers not readable'); await route.abort('blockedbyclient'); return; }
         const r = await safeFetch(req.url(), { method, headers, body }, { scope, transport: o.transport, limits, budget, document: false, auditHeaders: o.auditHeaders });
-        if (!r.ok) { mark(r.reason); await route.abort('blockedbyclient'); return; }
+        // a request the deadline cut off: the page was still busy then, so it was not quiet in time (ultimate-55: this
+        // reason raced the quiet loop's; a renderer that stops answering is still "over its time budget")
+        if (!r.ok) { mark(r.reason === PAGE_OVER_TIME ? 'not quiet within the time budget' : r.reason); await route.abort('blockedbyclient'); return; }
         if (r.res.status >= 400) mark(`HTTP ${r.res.status} for ${req.url()}`);
         await route.fulfill({ status: r.res.status, headers: r.res.headers, body: r.res.body });
       } catch (err) {
@@ -163,9 +189,12 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
     await main.goto(finalUrl, { waitUntil: 'load', timeout: Math.max(1, budget.deadline - Date.now()) });
     for (;;) {
       if (Date.now() > budget.deadline) { mark('not quiet within the time budget'); break; }
-      const lastMutation = await beforeDeadline(main.evaluate(() => (window as unknown as { __aivLastMutation?: number }).__aivLastMutation ?? 0), budget.deadline);
+      // a renderer that answers just after the deadline was not quiet in time; only one that does not answer within the
+      // grace is over its budget (ultimate-55: the deadline inside this call gave that reason by chance)
+      const lastMutation = await beforeDeadline(main.evaluate(() => (window as unknown as { __aivLastMutation?: number }).__aivLastMutation ?? 0), budget.deadline + QUIET_CHECK_GRACE_MS);
       const now = Date.now();
       if (inflight === 0 && now - lastNet >= quietMs && now - lastMutation >= quietMs) break;
+      if (now > budget.deadline) { mark('not quiet within the time budget'); break; }
       await main.waitForTimeout(100);
     }
     const renderedHtml = await beforeDeadline(main.content(), budget.deadline + 1000);
@@ -176,8 +205,9 @@ async function renderOne(browser: Browser, url: string, scope: Scope, o: LocalRe
     return { incompleteReason: incomplete ?? (late ? `page over its time budget (${msg.split('\n')[0]})` : `render failed: ${msg}`) };
   } finally {
     clearTimeout(watchdog);
-    // closing must not hang either; the browser is closed in localRender's finally in any case
+    // closing must not hang either; closing the persistent context ends this page's Chromium
     await beforeDeadline(context.close(), Date.now() + 5000).catch(() => {});
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -190,15 +220,11 @@ export async function localRender(o: LocalRenderOptions): Promise<Map<string, Lo
     for (const u of o.urls) out.set(u, { incompleteReason: scope.reason });
     return out;
   }
-  let browser: Browser | undefined;
   try {
     const { chromium } = await import('playwright-core');
-    browser = await chromium.launch({ executablePath: o.executablePath, headless: true, args: CHROMIUM_ARGS });
-    for (const u of o.urls) out.set(u, await renderOne(browser, u, scope.scope, o));
+    for (const u of o.urls) out.set(u, await renderOne(chromium, u, scope.scope, o));
   } catch (err) {
     for (const u of o.urls) if (!out.has(u)) out.set(u, { incompleteReason: `local Chromium failed: ${String((err as Error).message ?? err)}` });
-  } finally {
-    if (browser) await browser.close().catch(() => {});
   }
   return out;
 }
